@@ -6,6 +6,9 @@ sID=sub-74277
 hemi=lh
 nsteps=200
 step_size="0.1"
+surf_type=white
+target_type=fsaverage5
+doSimplify=0
 
 ### Laplacian field
 echolor yellow "[INFO] Calculating Laplace Field"
@@ -29,21 +32,39 @@ else
 fi
 
 
+if [ $doSimplify -eq 1 ]
+then
+    ### Simplify the surface
+    echolor yellow "[INFO] Simplify the ${surf_type} surface to $target_type"
+    my_do_cmd resample_surface.sh \
+    $sID \
+    $hemi \
+    $surf_type \
+    $target_type
+    surf=${SUBJECTS_DIR}/${sID}/surf/${hemi}_${surf_type}_${target_type}.surf.gii
+else
+    echolor yellow "[INFO] Not simplifying surface"
+    surf=${SUBJECTS_DIR}/${sID}/surf/${hemi}.white
+    target_type="fsnative"
+fi
+
 
 
 ### Streamlines
  echolor yellow "[INFO] Computing streamlines"
 
 
-# convert surfaces for later use
-mris_convert --to-scanner \
-  ${SUBJECTS_DIR}/${sID}/surf/${hemi}.white \
-  ${SUBJECTS_DIR}/${sID}/surf/${hemi}_white_scanner.surf.gii 
+# convert surfaces to scanner coordinates
+my_do_cmd mris_convert --to-scanner \
+  $surf \
+  ${SUBJECTS_DIR}/${sID}/surf/${hemi}_${surf_type}_${target_type}_scanner.surf.gii
+surf=${SUBJECTS_DIR}/${sID}/surf/${hemi}_${surf_type}_${target_type}_scanner.surf.gii
 
 
-in_surf=${SUBJECTS_DIR}/${sID}/surf/${hemi}_white_scanner.surf.gii
+#in_surf=${SUBJECTS_DIR}/${sID}/surf/${hemi}_white_scanner.surf.gii
+in_surf=$surf
 in_vec=${SUBJECTS_DIR}/${sID}/mri/laplace-wm_vec.nii.gz
-out_tck=${SUBJECTS_DIR}/${sID}/mri/${hemi}_laplace-wm-streamlines.tck
+out_tck=${SUBJECTS_DIR}/${sID}/mri/${hemi}_${surf_type}_${target_type}_laplace-wm-streamlines.tck
 python cortical_streamlines.py \
   $in_surf \
   $in_vec \
