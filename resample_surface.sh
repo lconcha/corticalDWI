@@ -42,8 +42,6 @@ do
   then
     echolor red "[ERROR] File not found: $f"
     isOK=0
-  else
-    echolor green "[INFO] Found file: $f"
   fi
 done
 
