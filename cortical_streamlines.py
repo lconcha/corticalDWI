@@ -54,7 +54,6 @@ volvecnorm = volvec / np.expand_dims(L2, 3)
 
 # transform vertex coordinates
 V2 = V.copy()
-V2 = V2 - vec.affine[:3,3].T
 nvertices = V.shape[0]
 for vindex in range(nvertices):
     thisv = V[vindex,:];
