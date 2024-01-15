@@ -51,15 +51,17 @@ then
 fi
 
 
-echolor yellow "sub_orig_surf   : $sub_orig_surf"
-echolor yellow "sub_orig_sphere : $sub_orig_sphere"
-echolor yellow "out_surface     : $out_surface"
-echolor yellow "target_surf     : $target_surf"
+echo "  sub_orig_surf   : $sub_orig_surf"
+echo "  sub_orig_sphere : $sub_orig_sphere"
+echo "  out_surface     : $out_surface"
+echo "  target_surf     : $target_surf"
 
 
 tmpDir=$(mktemp -d)
 
-my_do_cmd mris_convert \
+
+echolor green "------- to scanner ------------ "
+my_do_cmd mris_convert --to-scanner \
   $sub_orig_surf \
   ${tmpDir}/sub_orig.surf.gii
 
