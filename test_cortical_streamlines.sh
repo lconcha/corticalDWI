@@ -8,7 +8,7 @@ nsteps=200
 step_size="0.1"
 surf_type=white
 target_type=fsaverage5
-doSimplify=0
+doSimplify=1
 
 ### Laplacian field
 echolor yellow "[INFO] Calculating Laplace Field"
@@ -65,9 +65,16 @@ surf=${SUBJECTS_DIR}/${sID}/surf/${hemi}_${surf_type}_${target_type}_scanner.sur
 in_surf=$surf
 in_vec=${SUBJECTS_DIR}/${sID}/mri/laplace-wm_vec.nii.gz
 out_tck=${SUBJECTS_DIR}/${sID}/mri/${hemi}_${surf_type}_${target_type}_laplace-wm-streamlines.tck
-python cortical_streamlines.py \
+my_do_cmd python cortical_streamlines.py \
   $in_surf \
   $in_vec \
   $nsteps \
   $step_size \
   $out_tck
+
+
+my_do_cmd tckresample -force -quiet -endpoints $out_tck ${out_tck%.tck}_endsOnly.tck
+
+echolor cyan "mrview ${SUBJECTS_DIR}/${sID}/mri/aparc+aseg.nii.gz ${SUBJECTS_DIR}/${sID}/mri/laplace-wm_vec.nii.gz \
+  -tractography.load $out_tck -tractography.geometry lines \
+  -tractography.load ${out_tck%.tck}_endsOnly.tck -tractography.geometry points"
