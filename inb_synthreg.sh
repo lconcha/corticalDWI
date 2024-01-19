@@ -31,6 +31,7 @@ print_help () {
                    Default is to use the segmentation of all tissue types, including basal ganglia,
                    but this option is useful if you want to refine the cortical ribbon segmentation 
                    (e.g. if you want to then use this to register cortical surfaces).
+                   NOT IMPLEMENTED YET.
   
 
   LU15 (0N(H4
@@ -90,7 +91,6 @@ echo "[INFO]  fixed  : $fixed"
 echo "[INFO]  moving : $moving"
 echo "[INFO]  outbase: $outbase"
 
-exit 2
 
 
 fixed_seg=${outbase}_fixed_seg.nii
@@ -111,6 +111,16 @@ my_do_cmd mri_synthseg \
    --i $moving \
    --o $moving_seg \
    --resample ${outbase}_moving_resampled.nii
+
+
+if [ $doCortexOnly -eq 1 ]
+then
+   my_do_cmd mrcalc $fixed_seg 42 -999 -replace 3 -999 -replace -999 -eq ${outbase}_fixed_seg_cortex.nii
+   fixed_seg=${outbase}_fixed_seg_cortex.nii
+
+   my_do_cmd mrcalc $moving_seg 42 -999 -replace 3 -999 -replace -999 -eq ${outbase}_moving_seg_cortex.nii
+   moving_seg=${outbase}_moving_seg_cortex.nii
+fi
 
 
 my_do_cmd antsRegistrationSyN.sh -d 3 \
