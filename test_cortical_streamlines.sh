@@ -95,3 +95,10 @@ my_do_cmd tckresample -force -quiet -endpoints $out_tck ${out_tck%.tck}_endsOnly
 echolor cyan "mrview ${SUBJECTS_DIR}/${sID}/mri/aparc+aseg.nii.gz ${SUBJECTS_DIR}/${sID}/mri/laplace-wm_vec.nii.gz \
   -tractography.load $out_tck -tractography.geometry lines \
   -tractography.load ${out_tck%.tck}_endsOnly.tck -tractography.geometry points"
+
+
+## Intermodal registration
+t1=$SUBJECTS_DIR/$sID/mri/brain.mgz
+dwi=
+
+#inb_synthreg.sh
