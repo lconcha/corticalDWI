@@ -27,8 +27,8 @@ md=${SUBJECTS_DIR}/${sID}/dwi/md.nii.gz
 ad=${SUBJECTS_DIR}/${sID}/dwi/ad.nii.gz
 rd=${SUBJECTS_DIR}/${sID}/dwi/rd.nii.gz
 
-dwiextract -bzero $dwimif - | mrmath -axis 3 - mean $b0
 dwi2mask $dwimif $maskdwi
+dwiextract -bzero $dwimif - | mrmath -axis 3 - mean - | mrcalc $maskdwi - -mul $b0
 dwi2tensor -mask $maskdwi $dwimif $dt
 tensor2metric \
   -fa  $fa \
