@@ -101,7 +101,29 @@ echolor cyan "mrview ${SUBJECTS_DIR}/${sID}/mri/aparc+aseg.nii.gz ${SUBJECTS_DIR
 
 cortical_register_t1_to_dwi.sh $sID
 
-cortical_warp_tck_to_dwi.sh $sID
+# xfm_lin_t1_to_b0=${SUBJECTS_DIR}/${sID}/dwi/t1native_to_b0_0GenericAffine.mat
+# xfm_nlin_t1_to_b0=${SUBJECTS_DIR}/${sID}/dwi/t1native_to_b0_1Warp.nii.gz
+# xfm_nlin_t1_to_b0_inv=${SUBJECTS_DIR}/${sID}/dwi/t1native_to_b0_1InverseWarp.nii.gz
+
+# # warp tck
+# # https://community.mrtrix.org/t/registration-using-transformations-generated-from-other-packages/2259
+# tmpDir=$(mktemp -d)
+# warpinit $b0 ${tmpDir}/inv_identity_warp[].nii
+# for i in {0..2}; do
+#     antsApplyTransforms -d 3 \
+#     -e 0 \
+#     -i ${tmpDir}/inv_identity_warp${i}.nii \
+#     -o ${tmpDir}/inv_mrtrix_warp${i}.nii \
+#     -r $b0 \
+#     -t [$xfm_lin_t1_to_b0, 1] \
+#     -t $xfm_nlin_t1_to_b0_inv \
+#     --default-value 2147483647
+# done
+# warpcorrect ${tmpDir}/inv_mrtrix_warp[].nii ${tmpDir}/inv_mrtrix_warp_corrected.mif -marker 2147483647
+# out_tck_dwispace=${SUBJECTS_DIR}/${sID}/dwi/$(basename ${out_tck%.tck}_dwispace.tck)
+# tcktransform $out_tck ${tmpDir}/inv_mrtrix_warp_corrected.mif $out_tck_dwispace
+# rm -fR $tmpDir
+
 
 
 
