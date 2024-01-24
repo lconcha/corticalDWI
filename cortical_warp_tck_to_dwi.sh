@@ -43,7 +43,7 @@ for i in {0..2}; do
     --default-value 2147483647
 done
 my_do_cmd warpcorrect ${tmpDir}/inv_mrtrix_warp[].nii ${tmpDir}/inv_mrtrix_warp_corrected.mif -marker 2147483647
-tck_dwispace=${SUBJECTS_DIR}/${sID}/dwi/$(basename ${out_tck%.tck}_dwispace.tck)
+tck_dwispace=${SUBJECTS_DIR}/${sID}/dwi/${hemi}_${target_type}_laplace-wm-streamlines_dwispace.tck
 my_do_cmd tcktransform $tck_t1space ${tmpDir}/inv_mrtrix_warp_corrected.mif $tck_dwispace
 rm -fR $tmpDir
 
