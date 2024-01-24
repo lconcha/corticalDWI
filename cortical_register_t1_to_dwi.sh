@@ -10,6 +10,13 @@ then
 fi
 
 
+fcheck=${SUBJECTS_DIR}/${sID}/dwi/t1native_to_b0_1Warp.nii.gz
+if [ -f $fcheck ]
+then
+  echolor orange "[INFO] File found $fcheck"
+  echolor orange "       Will not overwrite. Exitting now."
+  exit 0
+fi
 
 
 ## Intermodal registration
@@ -37,5 +44,4 @@ inb_synthreg.sh \
   -fixed $b0 \
   -moving $t1 \
   -outbase ${SUBJECTS_DIR}/${sID}/dwi/t1native_to_b0_ \
-  -threads_max \
-  -neocortex
+  -threads_max
