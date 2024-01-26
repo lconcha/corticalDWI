@@ -1,5 +1,5 @@
-function VALUES = displasia_tckfixelsample(f_tck, f_PDD, f_nComp, ff_values_in, f_prefix)
-% VALUES = displasia_tckfixelsample(f_tck, f_PDD, f_nComp, ff_values_in, f_prefix)
+function VALUES = cortical_tckfixelsample(f_tck, f_PDD, f_nComp, ff_values_in, f_prefix)
+% VALUES = cortical_tckfixelsample(f_tck, f_PDD, f_nComp, ff_values_in, f_prefix)
 %
 % f_tck         : Filename for the streamlines tck
 % f_PDD         : Filename for the Principal Diffusion Directions file (MRDS, 4D).
