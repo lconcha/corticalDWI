@@ -48,7 +48,7 @@ tck = read_mrtrix_tracks(tmptck);
 %% Load voxel data for PDD and nComp
 
 fprintf('Loading %s\n',f_PDD);
-PDD    = niftiread(f_PDD);
+PDD    = cortical_readnifti(f_PDD);
 info = niftiinfo(f_PDD);
 if ndims(PDD) ~= 4
     fprintf(1,'ERROR. %s does not have 4 dimensions. It should be a 4D volume with nvolumes = 3, 6, 9 or 12. Bye.\n',f_PDD);
@@ -56,7 +56,7 @@ if ndims(PDD) ~= 4
     return
 end
 fprintf('Loading %s\n',f_nComp);
-nComp    = niftiread(f_nComp);
+nComp    = cortical_readnifti(f_nComp);
 info = niftiinfo(f_nComp);
 if ndims(nComp) ~= 3
     fprintf(1,'ERROR. %s should have three dimensions Bye.\n',f_nComp);
@@ -93,8 +93,9 @@ tsf_dot_perp2slicenormal        = tck_world;
 
 %% Identify parallel/perpendicular
 fprintf(1,'Identifying par/perp... ')
+tic
 for s = 1 : length(tck.data)
-   if mod(s,10) == 0
+   if mod(s,100) == 0
         fprintf (1,'%d ',length(tck.data)-s);
    end
    this_streamline      = tck.data{s};
@@ -102,17 +103,17 @@ for s = 1 : length(tck.data)
    this_index_perp      = zeros(size(this_streamline,1),1);
    this_nComp           = zeros(size(this_streamline,1),1);
    this_dot_parallel2streamline = zeros(size(this_streamline,1),1);
-   this_dot_perp2slicenormal    = zeros(size(this_streamline,1),1);
+   %this_dot_perp2slicenormal    = zeros(size(this_streamline,1),1);
 
    Rxyz1 = this_streamline(1,:);
    origin = [0 0 0];
    Rxyz3 = this_streamline(end,:);
 
-   PLANE = createPlane(normalizeVector3d(Rxyz1), origin ,normalizeVector3d(Rxyz3)); % create a plane centered at origin
-   NORMAL = planeNormal(PLANE);
+   %PLANE = createPlane(normalizeVector3d(Rxyz1), origin ,normalizeVector3d(Rxyz3)); % create a plane centered at origin
+   %NORMAL = planeNormal(PLANE);
 
 
-   for p = 1 : size(this_streamline,1);
+   for p = 1 : size(this_streamline,1)
        Axyz = this_streamline(p,:);
        if p == size(this_streamline,1)
         Bxyz = this_streamline(p-1,:);
@@ -127,17 +128,17 @@ for s = 1 : length(tck.data)
 %        matlab_indices = uint8(vox_indices + 1);
          mindices = Axyz +1;
 
-       PDD1(1) =  interp3(PDD(:,:,:,1),mindices(2), mindices(1), mindices(3)); % I cannot get interpn to work, so I do this stupid thing.
-       PDD1(2) =  interp3(PDD(:,:,:,2),mindices(2), mindices(1), mindices(3));
-       PDD1(3) =  interp3(PDD(:,:,:,3),mindices(2), mindices(1), mindices(3));
+       PDD1(1) =  interp3(PDD(:,:,:,1),mindices(2), mindices(1), mindices(3), 'nearest'); % I cannot get interpn to work, so I do this stupid thing.
+       PDD1(2) =  interp3(PDD(:,:,:,2),mindices(2), mindices(1), mindices(3), 'nearest');
+       PDD1(3) =  interp3(PDD(:,:,:,3),mindices(2), mindices(1), mindices(3), 'nearest');
 
-       PDD2(1) =  interp3(PDD(:,:,:,4),mindices(2), mindices(1), mindices(3)); 
-       PDD2(2) =  interp3(PDD(:,:,:,5),mindices(2), mindices(1), mindices(3));
-       PDD2(3) =  interp3(PDD(:,:,:,6),mindices(2), mindices(1), mindices(3));
+       PDD2(1) =  interp3(PDD(:,:,:,4),mindices(2), mindices(1), mindices(3), 'nearest'); 
+       PDD2(2) =  interp3(PDD(:,:,:,5),mindices(2), mindices(1), mindices(3), 'nearest');
+       PDD2(3) =  interp3(PDD(:,:,:,6),mindices(2), mindices(1), mindices(3), 'nearest');
 
-       PDD3(1) =  interp3(PDD(:,:,:,7),mindices(2), mindices(1), mindices(3)); 
-       PDD3(2) =  interp3(PDD(:,:,:,8),mindices(2), mindices(1), mindices(3));
-       PDD3(3) =  interp3(PDD(:,:,:,9),mindices(2), mindices(1), mindices(3));
+       PDD3(1) =  interp3(PDD(:,:,:,7),mindices(2), mindices(1), mindices(3), 'nearest'); 
+       PDD3(2) =  interp3(PDD(:,:,:,8),mindices(2), mindices(1), mindices(3), 'nearest');
+       PDD3(3) =  interp3(PDD(:,:,:,9),mindices(2), mindices(1), mindices(3), 'nearest');
 
        normPDD1= PDD1./norm(PDD1);
        normPDD2= PDD2./norm(PDD2);
@@ -175,11 +176,11 @@ for s = 1 : length(tck.data)
        % Streamline to parallel tensor
        this_dot_parallel2streamline(p,1)  = abs(dots(indexpar));
        % Slice normal to perpendicular tensor
-       if thisnComp > 1
-        this_dot_perp2slicenormal(p,1)     = abs(dot(normPDDs(indexperp,:),NORMAL));
-       else
-        this_dot_perp2slicenormal(p,1) = -999; % cannot calculate this value if we only found one tensor. -999 is a placeholder for trash.
-       end
+       % if thisnComp > 1
+       %  this_dot_perp2slicenormal(p,1)     = abs(dot(normPDDs(indexperp,:),NORMAL));
+       % else
+       %  this_dot_perp2slicenormal(p,1) = -999; % cannot calculate this value if we only found one tensor. -999 is a placeholder for trash.
+       % end
 
        
 
@@ -190,23 +191,24 @@ for s = 1 : length(tck.data)
     tsf_index_perp.data{s}                = this_index_perp;
     tsf_ncomp.data{s}                     = this_nComp;
     tsf_dot_parallel2streamline.data{s}   = this_dot_parallel2streamline;
-    tsf_dot_perp2slicenormal.data{s}      = this_dot_perp2slicenormal;
-    VALUES.dot_parallel2streamline(s,:)   = this_dot_parallel2streamline;
-    VALUES.dot_perp2slicenormal(s,:)      = this_dot_perp2slicenormal;
+   %tsf_dot_perp2slicenormal.data{s}      = this_dot_perp2slicenormal;
+   %VALUES.dot_parallel2streamline(s,:)   = this_dot_parallel2streamline;
+   %VALUES.dot_perp2slicenormal(s,:)      = this_dot_perp2slicenormal;
     VALUES.ncomp{s}                       = this_nComp;
    catch
     fprintf(1,'Hey!')
    end
 end
 fprintf (1,'\nFinished identifying par/perp\n',s);
-
+toc
 
 
 %% Do the sampling
+tic
 for i = 1 : length(ff_values_in)
     f_values_in = ff_values_in{i};
     fprintf('Loading %s ... ',f_values_in);
-    V    = niftiread(f_values_in);
+    V    = cortical_readnifti(f_values_in);
     fprintf(1,'\n');
     info      = niftiinfo(f_values_in);
     [fold,fname,ext] = fileparts(info.Filename);
@@ -283,44 +285,44 @@ for i = 1 : length(ff_values_in)
     VALUES.par.(varName)  = tsf_par.data;
     VALUES.perp.(varName) = tsf_perp.data;
 end
-
+toc
 
 %%%%% writer overall tsf files
 fprintf(1,'[INFO] Writing tsf files\n');
 f_tsf_dot_parallel2streamline = [f_prefix '_dot_parallel2streamline.tsf'];
-f_tsf_dot_perp2slicenormal    = [f_prefix '_dot_perp2slicenormal.tsf'];
+%f_tsf_dot_perp2slicenormal    = [f_prefix '_dot_perp2slicenormal.tsf'];
 f_tsf_ncomp                   = [f_prefix '_ncomp.tsf'];
 fprintf(1,'  [INFO] Writing tsf_dot_parallel2streamline: %s\n',f_tsf_dot_parallel2streamline);
 write_mrtrix_tsf(tsf_dot_parallel2streamline,f_tsf_dot_parallel2streamline);
-fprintf(1,'  [INFO] Writing tsf_dot_perp2slicenormal: %s\n',f_tsf_dot_perp2slicenormal);
-write_mrtrix_tsf(tsf_dot_perp2slicenormal,f_tsf_dot_perp2slicenormal);
+%fprintf(1,'  [INFO] Writing tsf_dot_perp2slicenormal: %s\n',f_tsf_dot_perp2slicenormal);
+%write_mrtrix_tsf(tsf_dot_perp2slicenormal,f_tsf_dot_perp2slicenormal);
 fprintf(1,'  [INFO] Writing tsf_ncomp: %s\n',f_tsf_ncomp);
 write_mrtrix_tsf(tsf_ncomp,f_tsf_ncomp);
 f_tsf_par_index_out = [f_prefix '_par_index.tsf'];
 fprintf(1,'  [INFO] Writing tsf_index_par: %s\n',f_tsf_par_index_out);
 write_mrtrix_tsf(tsf_index_par,f_tsf_par_index_out)
 
-fprintf(1,'[INFO] Writing text files\n');
-varNames = fieldnames(VALUES.par);
-for n = 1 : length(varNames)
-  thisVarName = varNames{n};
-  f_txt = [f_prefix '_' thisVarName '_par.txt'];
-    thismat = cell2mat(VALUES.par.(thisVarName));
-    fprintf(1,'  [INFO] Writing %s\n',f_txt);
-    save(f_txt,'thismat','-ascii');
-  f_txt = [f_prefix '_' thisVarName '_perp.txt'];
-    thismat = cell2mat(VALUES.perp.(thisVarName));
-    fprintf(1,'  [INFO] Writing %s\n',f_txt);
-    save(f_txt,'thismat','-ascii');   
-end
+% fprintf(1,'[INFO] Writing text files\n');
+% varNames = fieldnames(VALUES.par);
+% for n = 1 : length(varNames)
+%   thisVarName = varNames{n};
+%   f_txt = [f_prefix '_' thisVarName '_par.txt'];
+%     thismat = cell2mat(VALUES.par.(thisVarName));
+%     fprintf(1,'  [INFO] Writing %s\n',f_txt);
+%     save(f_txt,'thismat','-ascii');
+%   f_txt = [f_prefix '_' thisVarName '_perp.txt'];
+%     thismat = cell2mat(VALUES.perp.(thisVarName));
+%     fprintf(1,'  [INFO] Writing %s\n',f_txt);
+%     save(f_txt,'thismat','-ascii');   
+% end
 f_txt = [f_prefix '_dot_parallel2streamline.txt'];
     thismat = VALUES.dot_parallel2streamline;
     fprintf(1,'  [INFO] Writing %s\n',f_txt);
     save(f_txt,'thismat','-ascii');   
-f_txt = [f_prefix '_dot_perp2slicenormal.txt'];
-    thismat = VALUES.dot_perp2slicenormal;
-    fprintf(1,'  [INFO] Writing %s\n',f_txt);
-    save(f_txt,'thismat','-ascii');   
+% f_txt = [f_prefix '_dot_perp2slicenormal.txt'];
+%     thismat = VALUES.dot_perp2slicenormal;
+%     fprintf(1,'  [INFO] Writing %s\n',f_txt);
+%     save(f_txt,'thismat','-ascii');   
 f_txt = [f_prefix '_nComp.txt'];
     thismat = cell2mat(VALUES.ncomp);
     fprintf(1,'  [INFO] Writing %s\n',f_txt);

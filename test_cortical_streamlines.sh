@@ -4,7 +4,8 @@ source `which my_do_cmd`
 ## PREPARE ENVIRONMENT
 # path_add /misc/lauterbur/lconcha/code/corticalDWI
 # anaconda_on
-# module load freesurfer/7.4.0 ANTs/ workbench_con# conda activate micapipe  # crucial to do after module load to get the correct python in path
+# module load freesurfer/7.4.0 ANTs/ workbench_con
+# conda activate micapipe  # crucial to do after module load to get the correct python in path
 
 
 export SUBJECTS_DIR=/misc/lauterbur/lconcha/TMP/glaucoma/fs_glaucoma
@@ -12,7 +13,7 @@ sID=sub-74277
 nsteps=100
 step_size="0.1"
 tck_step_size=0.5
-target_type=fsLR-32k
+target_type=fsLR-5k
 
 
 
