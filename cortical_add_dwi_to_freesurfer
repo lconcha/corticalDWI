@@ -18,6 +18,18 @@ fi
 
 mkdir -p ${SUBJECTS_DIR}/${sID}/dwi
 
+dwinii=${SUBJECTS_DIR}/${sID}/dwi/dwi.nii.gz
+bvec=${SUBJECTS_DIR}/${sID}/dwi/dwi.bvec
+bval=${SUBJECTS_DIR}/${sID}/dwi/dwi.bval
+scheme=${SUBJECTS_DIR}/${sID}/dwi/dwi.scheme
+
+mrconvert -strides 1,2,3,4 \
+  -export_grad_fsl $bvec $bval \
+  -export_grad_mrtrix $scheme \
+  $dwimif \
+  $dwinii
+
+sed -i '/^#/d' $scheme
 
 maskdwi=${SUBJECTS_DIR}/${sID}/dwi/mask.nii.gz
 b0=${SUBJECTS_DIR}/${sID}/dwi/b0.nii.gz
@@ -26,13 +38,17 @@ fa=${SUBJECTS_DIR}/${sID}/dwi/fa.nii.gz
 md=${SUBJECTS_DIR}/${sID}/dwi/md.nii.gz
 ad=${SUBJECTS_DIR}/${sID}/dwi/ad.nii.gz
 rd=${SUBJECTS_DIR}/${sID}/dwi/rd.nii.gz
+v1=${SUBJECTS_DIR}/${sID}/dwi/v1.nii.gz
 
-dwi2mask $dwimif $maskdwi
-dwiextract -bzero $dwimif - | mrmath -axis 3 - mean - | mrcalc $maskdwi - -mul $b0
-dwi2tensor -mask $maskdwi $dwimif $dt
+dwi2mask   -fslgrad $bvec $bval $dwinii $maskdwi
+dwiextract -fslgrad $bvec $bval -bzero $dwinii - | \
+  mrmath -axis 3 - mean - | \
+  mrcalc $maskdwi - -mul $b0
+dwi2tensor -mask $maskdwi -fslgrad $bvec $bval $dwinii $dt
 tensor2metric \
   -fa  $fa \
   -adc $md \
   -rd  $rd \
   -ad  $ad \
+  -vector $v1 \
   $dt
