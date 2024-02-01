@@ -19,6 +19,20 @@ bval=${SUBJECTS_DIR}/${sID}/dwi/dwi.bval
 scheme=${SUBJECTS_DIR}/${sID}/dwi/dwi.scheme
 mask=${SUBJECTS_DIR}/${sID}/dwi/mask.nii.gz
 
+isOK=1
+for f in $dwi $mask $scheme
+do
+  if [ -f "$f" ]
+  then
+    echolor green "[INFO] Found $f"
+  else
+    echolor red "[ERROR] File not found: $f"
+    isOK=0
+  fi
+done
+if [ $isOK -eq 0 ]; then exit 2; fi
+
+
 
 resp_wm=${SUBJECTS_DIR}/${sID}/dwi/response_wm.txt
 resp_gm=${SUBJECTS_DIR}/${sID}/dwi/response_gm.txt
