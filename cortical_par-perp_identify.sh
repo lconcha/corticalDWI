@@ -50,3 +50,4 @@ tsf_lh=${SUBJECTS_DIR}/${sID}/dwi/lh_${surf_type}_laplace-wm-streamlines_dwispac
 tsf_rh=${SUBJECTS_DIR}/${sID}/dwi/rh_${surf_type}_laplace-wm-streamlines_dwispace_parIndices_csd.tsf
 my_do_cmd $tckfixeldots $fixels_csd $tck_lh $tsf_lh
 my_do_cmd $tckfixeldots $fixels_csd $tck_rh $tsf_rh
+
