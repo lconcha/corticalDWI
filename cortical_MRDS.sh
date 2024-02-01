@@ -22,16 +22,6 @@ nVoxPerJob=1000
 scratch_dir=${SUBJECTS_DIR}/${sID}/dwi/tmp/
 
 
-fcheck=${outbase}_MRDS_Diff_BIC_FA.nii.gz
-echo "Looking for file: $fcheck"
-if [ -f $fcheck ]
-then
-  echolor orange "[INFO] File found $fcheck"
-  echolor orange "       Will not overwrite. Exiting now."
-  exit 0
-fi
-
-
 isOK=1
 for f in $dwi $scheme $mask
 do
@@ -46,10 +36,48 @@ done
 if [ $isOK -eq 0 ]; then exit 2; fi
 
 
-my_do_cmd  inb_mrds_sge.sh \
-  $dwi \
-  $scheme \
-  $mask \
-  $outbase \
-  $nVoxPerJob \
-  $scratch_dir
+doComputeMRDS=1
+fcheck=${outbase}_MRDS_Diff_BIC_FA.nii.gz
+echolor cyan "[INFO] Looking for file: $fcheck"
+if [ -f $fcheck ]
+then
+  echolor orange "[INFO] File found $fcheck"
+  echolor orange "       Will not overwrite."
+  doComputeMRDS=0
+fi
+
+doFixels=1
+fcheck=${SUBJECTS_DIR}/${sID}/dwi/mrds_fixels/index.mif
+echolor cyan  "[INFO] Looking for file: $fcheck"
+if [ -f $fcheck ]
+then
+  echolor orange "[INFO] File found $fcheck"
+  echolor orange "       Will not overwrite."
+  doFixels=0
+fi
+
+
+
+if [ $doComputeMRDS -eq 1 ]
+then
+    my_do_cmd -fake inb_mrds_sge.sh \
+    $dwi \
+    $scheme \
+    $mask \
+    $outbase \
+    $nVoxPerJob \
+    $scratch_dir
+fi
+
+
+if [ $doFixels -eq 1 ]
+then
+    my_do_cmd inb_mrds_scalePDDs.sh \
+        ${outbase}_MRDS_Diff_BIC_PDDs_CARTESIAN.nii.gz \
+        ${outbase}_MRDS_Diff_BIC_COMP_SIZE.nii.gz \
+        ${outbase}_MRDS_Diff_BIC_PDDs_CARTESIAN_scaled.nii.gz
+
+    my_do_cmd peaks2fixel \
+        ${outbase}_MRDS_Diff_BIC_PDDs_CARTESIAN_scaled.nii.gz \
+        ${SUBJECTS_DIR}/${sID}/dwi/mrds_fixels
+fi
