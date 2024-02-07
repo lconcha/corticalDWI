@@ -18,8 +18,9 @@ bval=${SUBJECTS_DIR}/${sID}/dwi/dwi.bval
 scheme=${SUBJECTS_DIR}/${sID}/dwi/dwi.scheme
 mask=${SUBJECTS_DIR}/${sID}/dwi/mask.nii.gz
 outbase=${SUBJECTS_DIR}/${sID}/dwi/${sID}
-nVoxPerJob=1000
-scratch_dir=${SUBJECTS_DIR}/${sID}/dwi/tmp/
+nVoxPerJob=2500
+#scratch_dir=${SUBJECTS_DIR}/${sID}/dwi/tmp/
+scratch_dir=/misc/tesla1/lconcha/tmp
 
 
 isOK=1
@@ -60,7 +61,7 @@ fi
 
 if [ $doComputeMRDS -eq 1 ]
 then
-    my_do_cmd -fake inb_mrds_sge.sh \
+    my_do_cmd  inb_mrds_sge.sh \
     $dwi \
     $scheme \
     $mask \
@@ -72,6 +73,9 @@ fi
 
 if [ $doFixels -eq 1 ]
 then
+  fcheck=${outbase}_MRDS_Diff_BIC_PDDs_CARTESIAN.nii.gz
+  if [ -f $fcheck ]
+  then
     my_do_cmd inb_mrds_scalePDDs.sh \
         ${outbase}_MRDS_Diff_BIC_PDDs_CARTESIAN.nii.gz \
         ${outbase}_MRDS_Diff_BIC_COMP_SIZE.nii.gz \
@@ -80,4 +84,7 @@ then
     my_do_cmd peaks2fixel \
         ${outbase}_MRDS_Diff_BIC_PDDs_CARTESIAN_scaled.nii.gz \
         ${SUBJECTS_DIR}/${sID}/dwi/mrds_fixels
+  else
+    echolor red "[ERROR] Cannot compute fixels. Missing file: $fcheck"
+  fi
 fi
