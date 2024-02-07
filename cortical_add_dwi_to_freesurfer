@@ -1,19 +1,46 @@
 #!/bin/bash
 source `which my_do_cmd`
 
+# export SUBJECTS_DIR=/misc/mansfield/lconcha/exp/glaucoma/fs_glaucoma
+#bids_dir=/misc/mansfield/lconcha/exp/glaucoma/bids
+
 
 sID=$1;      # subject ID in the form of sub-74277
-dwimif=$2;   # full path to preprocessed dwi.mif
+bids_dir=$2
+#dwimif=$2;   # full path to preprocessed dwi.mif
              # example /misc/lauterbur/lconcha/TMP/glaucoma/bids/derivatives/sub-74277/dwi/sub-74277_acq-hb_dwi_de.mif
 
 
+
+
+
+isOK=1
 
 if [ ! -d ${SUBJECTS_DIR}/${sID} ]
 then
   echolor red "[ERROR] Cannot find directory ${SUBJECTS_DIR}/${sID}"
   echolor red "        Check your SUBJECTS_DIR and sID"
-  exit 2
+  isOK=0
 fi
+
+dwimif=${bids_dir}/derivatives/${sID}/dwi/${sID}_acq-hb_dwi_de.mif
+if [ ! -f $dwimif ]
+then
+  echolor red "[ERROR] Cannot find file: $dwimif"
+  echolor red "        Check your bids derivatives folder and make sure you have the dwi file."
+  isOK=0
+fi
+
+
+
+if [ $isOK -eq 0 ]
+then
+  echolor red "[ERROR] Cannot continue."
+  exit 2
+else
+  echolor green "[INFO] Got everything we need!"
+fi
+
 
 
 mkdir -p ${SUBJECTS_DIR}/${sID}/dwi
