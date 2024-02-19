@@ -18,14 +18,6 @@ then
 fi
 
 
-# fcheck=${SUBJECTS_DIR}/${sID}/dwi/t1native_to_b0_1Warp.nii.gz
-# if [ -f $fcheck ]
-# then
-#   echolor orange "[INFO] File found $fcheck"
-#   echolor orange "       Will not overwrite. Exitting now."
-#   exit 0
-# fi
-
 tck_lh=${SUBJECTS_DIR}/${sID}/dwi/lh_${surf_type}_laplace-wm-streamlines_dwispace.tck
 tck_rh=${SUBJECTS_DIR}/${sID}/dwi/rh_${surf_type}_laplace-wm-streamlines_dwispace.tck
 fixels_csd=${SUBJECTS_DIR}/${sID}/dwi/csd_fixels/directions.mif
