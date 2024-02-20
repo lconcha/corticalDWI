@@ -59,6 +59,7 @@ my_do_cmd dwi2fod msmt_csd \
 
 csd_fixeldir=${SUBJECTS_DIR}/${sID}/dwi/csd_fixels
 my_do_cmd fod2fixel \
+  -fmls_no_thresholds \
   -afd afd_fixels.nii.gz \
   -peak peak_fixels.nii.gz \
   -disp disp_fixels.nii.gz \
