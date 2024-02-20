@@ -28,12 +28,7 @@ end
 for s = 1 : length(parIndices_tsf.data)
   this_parIndex = parIndices_tsf.data{s};
   this_parIndex = this_parIndex +1; % fix matlab offset
-  this_FA3 = [FA_tsf{1}.data{s} FA_tsf{2}.data{s} FA_tsf{3}.data{s}];
-  this_MD3 = [MD_tsf{1}.data{s} MD_tsf{2}.data{s} MD_tsf{3}.data{s}];
-  for p = 1 : length(this_parIndex)
-      this_FA_par(p) = this_FA3(p,this_parIndex(p));
-      this_MD_par(p) = this_MD3(p,this_parIndex(p));
-  end
+  this_data3 = [FA_tsf{1}.data{s} FA_tsf{2}.data{s} FA_tsf{3}.data{s}];
 end
 
 
