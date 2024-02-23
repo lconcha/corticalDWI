@@ -4,38 +4,125 @@ addpath(fullfile(mrtrixDir,'matlab'))
 
 SUBJECTS_DIR = getenv("SUBJECTS_DIR");
 sID          = 'sub-26651';
-hemi         = 'lh';
+hemi         = 'rh';
 surf_type    = 'fsLR-5k';
 
-
-f_tsf_parIndices = [SUBJECTS_DIR '/' sID '/dwi/' hemi '_' surf_type '_laplace-wm-streamlines_dwispace_parIndices_mrds.tsf']
+% Load stuff
+f_tsf_parIndices = [SUBJECTS_DIR '/' sID '/dwi/mrds_fixels/' hemi '_' surf_type '_mrds_par_indices.tsf'];
 parIndices_tsf = read_mrtrix_tsf(f_tsf_parIndices);
-
+fprefix = [SUBJECTS_DIR '/' sID '/dwi/mrds_fixels/' hemi '_' surf_type '_' sID];
 for t = 0:2
-  this_f_tsf = [SUBJECTS_DIR '/' sID '/dwi/mrds_fixels/' sID '_MRDS_Diff_BIC_FA_' num2str(t) '.tsf'];
+  this_f_tsf = [fprefix '_MRDS_Diff_BIC_FA_' num2str(t) '.tsf'];
+  fprintf(1,'Loading %s\n',this_f_tsf);
   this_tsf = read_mrtrix_tsf(this_f_tsf);
   FA_tsf{t+1} = this_tsf;
-
-  this_f_tsf = [SUBJECTS_DIR '/' sID '/dwi/mrds_fixels/' sID '_MRDS_Diff_BIC_MD_' num2str(t) '.tsf'];
+  
+  this_f_tsf = [fprefix '_MRDS_Diff_BIC_MD_' num2str(t) '.tsf'];
+  fprintf(1,'Loading %s\n',this_f_tsf);
   this_tsf = read_mrtrix_tsf(this_f_tsf);
   MD_tsf{t+1} = this_tsf;
   
-  this_f_tsf = [SUBJECTS_DIR '/' sID '/dwi/mrds_fixels/' sID '_MRDS_Diff_BIC_COMP_SIZE_' num2str(t) '.tsf'];
+  this_f_tsf = [fprefix '_MRDS_Diff_BIC_COMP_SIZE_' num2str(t) '.tsf'];
+  fprintf(1,'Loading %s\n',this_f_tsf);
   this_tsf = read_mrtrix_tsf(this_f_tsf);
   COMPSIZE_tsf{t+1} = this_tsf;
 end
 
-for s = 1 : length(parIndices_tsf.data)
+
+% prepare tsfs
+tsf_master          = FA_tsf{1};  % pick a tsf I know I loaded
+tsf_CSpar.data{s}   = tsf_master; % and use it as template for output files
+tsf_CSperp.data{s}  = tsf_master;
+tsf_FApar.data{s}   = tsf_master;
+tsf_FAperp.data{s}  = tsf_master;
+tsf_MDpar.data{s}   = tsf_master;
+tsf_MDperp.data{s}  = tsf_master;
+tsf_FAwpar.data{s}  = tsf_master;
+tsf_FAwperp.data{s} = tsf_master;
+tsf_MDwpar.data{s}  = tsf_master;
+tsf_MDwperp.data{s} = tsf_master;
+
+
+
+
+% Get data
+nStreamlines = length(parIndices_tsf.data);
+fprintf(1,'Loop through %d streamlines...',nStreamlines);
+onetwothree = [1:1:3];
+for s = 1 : nStreamlines
+  if mod(s,1000) == 0; fprintf(1,'.');end
   this_parIndex = parIndices_tsf.data{s};
   this_parIndex = this_parIndex +1; % fix matlab offset
+  nPoints = length(this_parIndex);
   this_FA3 = [FA_tsf{1}.data{s} FA_tsf{2}.data{s} FA_tsf{3}.data{s}];
   this_MD3 = [MD_tsf{1}.data{s} MD_tsf{2}.data{s} MD_tsf{3}.data{s}];
+  this_CS3 = [COMPSIZE_tsf{1}.data{s} COMPSIZE_tsf{2}.data{s} COMPSIZE_tsf{3}.data{s}];
+  
+  this_FA_par   = zeros(nPoints,1);
+  this_MD_par   = zeros(nPoints,1);
+  this_CS_par   = zeros(nPoints,1);
+  this_FA_perp  = zeros(nPoints,1);
+  this_MD_perp  = zeros(nPoints,1);
+  this_CS_perp  = zeros(nPoints,1);
+  this_FAw_par  = zeros(nPoints,1);
+  this_MDw_par  = zeros(nPoints,1);
+  this_FAw_perp = zeros(nPoints,1);
+  this_MDw_perp = zeros(nPoints,1);
   for p = 1 : length(this_parIndex)
-      this_FA_par(p) = this_FA3(p,this_parIndex(p));
-      this_MD_par(p) = this_MD3(p,this_parIndex(p));
+      
+      this_p_parIndex     = onetwothree == this_p_parIndex;
+      this_p_perpIndex    = onetwothree ~= this_p_parIndex & this_CS3(p,:) > 0;
+
+      this_CS_par(p)      = this_CS3(p,this_p_parIndex);
+      this_CS_perp(p)     = sum(this_CS3(p,this_p_perpIndex)); %this should be the complement of this_CS_par, because they add up to one. Therefore it is the sum, rather than the mean
+      
+      % non-weighted
+      this_p_FA3          = this_FA3(p,:); % see? no weighting
+      this_p_MD3          = this_MD3(p,:); % no weighting here, either.
+      this_FA_par(p)      = mean(this_p_FA3(this_p_parIndex));
+      this_MD_par(p)      = mean(this_p_MD3(this_p_parIndex));
+      this_FA_perp(p)     = mean(this_p_FA3(this_p_perpIndex));
+      this_MD_perp(p)     = mean(this_p_MD3(this_p_perpIndex));
+      
+      % weighted
+      this_p_FA3w          = this_FA3(p,:) .* this_CS3(p,:); % here is the weighting, in case you were wondering
+      this_p_MD3w          = this_MD3(p,:) .* this_CS3(p,:); % here, too.
+      this_FAw_par(p)      = mean(this_p_FA3w(this_p_parIndex));
+      this_MDw_par(p)      = mean(this_p_MD3w(this_p_parIndex));
+      this_FAw_perp(p)     = mean(this_p_FA3w(this_p_perpIndex));
+      this_MDw_perp(p)     = mean(this_p_MD3w(this_p_perpIndex));
+
+
+
+
   end
+  % put it in tsfs 
+  tsf_CSpar.data{s}   = this_CS_par;
+  tsf_CSperp.data{s}  = this_CS_perp;
+  tsf_FApar.data{s}   = this_FA_par;
+  tsf_FAperp.data{s}  = this_FA_perp;
+  tsf_MDpar.data{s}   = this_MD_par;
+  tsf_MDperp.data{s}  = this_MD_perp;
+  tsf_FAwpar.data{s}  = this_FAw_par;
+  tsf_FAwperp.data{s} = this_FAw_perp;
+  tsf_MDwpar.data{s}  = this_MDw_par;
+  tsf_MDwperp.data{s} = this_MDw_perp;
+
+end
+fprintf(1,' done.\n');
+
+% write tsf files
+fprintf(1,'We are freaking ready to write awesome tsf files\n');
+
+tsfvarnames = {'CSpar','CSperp','FApar','FAperp','MDpar','MDperp','FAwpar','FAwperp','MDwpar','MDwperp'};
+for v = 1:length(tsfvarnames)
+    this_varname = tsfvarnames{v};
+    eval(['this_tsf = tsf_' this_varname ';']);
+    this_fname = [fprefix '_MRDS_Diff_BIC_fixelsampled_' this_varname '.tsf'];
+    fprintf(1, 'Saving %s\n',this_fname);
+    write_mrtrix_tsf(this_tsf,this_fname);
 end
 
 
 
-%VALUES = cortical_tckfixelsample(f_tck, f_PDD, f_nComp, ff_values_in, f_prefix)
+
