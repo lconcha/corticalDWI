@@ -45,7 +45,7 @@ cortical_register_t1_to_dwi.sh $sID
 
 ############## 5 #################
 for hemi in lh rh; do
-cortical_warp_tck_to_dwi.sh $sID $hemi $target_type
+  cortical_warp_tck_to_dwi.sh $sID $hemi $target_type
 done
 ############## /5 ################
 
