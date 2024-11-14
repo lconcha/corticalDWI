@@ -3,6 +3,42 @@ source `which my_do_cmd`
 
 
 sID=$1;      # subject ID in the form of sub-74277
+doParallel=1
+
+print_help () {
+  echo "
+  `basename $0` <sID> [-no_parallel]
+
+  Options:
+
+  -no_parallel  : Do not multiplex this command as jobs sent to the cluster.
+                  Compute locally (a lot longer).
+
+  "
+}
+
+
+if [ $# -lt 1 ]
+then
+  echolor red "Not enough arguments"
+  print_help
+  exit 0
+fi
+
+for arg in "$@"
+do
+  case "${arg}" in
+    -h|-help)
+        print_help
+        exit 0
+    ;;
+    -no_parallel)
+      doParallel=0
+    ;;
+  esac
+done
+
+
 
 if [ ! -d ${SUBJECTS_DIR}/${sID} ]
 then
@@ -46,21 +82,20 @@ then
   doComputeMRDS=0
 fi
 
-doFixels=1
-fcheck=${SUBJECTS_DIR}/${sID}/dwi/mrds_fixels/index.mif
-echolor cyan  "[INFO] Looking for file: $fcheck"
-if [ -f $fcheck ]
+
+
+
+## Define if parallel or not
+if [ $doParallel -eq 1 ]
 then
-  echolor orange "[INFO] File found $fcheck"
-  echolor orange "       Will not overwrite."
-  doFixels=0
+  mrds_command="inb_mrds_sge.sh"
+else
+  mrds_command="inb_mrds.sh"
 fi
-
-
 
 if [ $doComputeMRDS -eq 1 ]
 then
-    my_do_cmd -fake inb_mrds_sge.sh \
+    my_do_cmd $mrds_command \
     $dwi \
     $scheme \
     $mask \
@@ -70,14 +105,35 @@ then
 fi
 
 
-if [ $doFixels -eq 1 ]
-then
-    my_do_cmd inb_mrds_scalePDDs.sh \
-        ${outbase}_MRDS_Diff_BIC_PDDs_CARTESIAN.nii.gz \
-        ${outbase}_MRDS_Diff_BIC_COMP_SIZE.nii.gz \
-        ${outbase}_MRDS_Diff_BIC_PDDs_CARTESIAN_scaled.nii.gz
+# doFixels=1
+# fcheck=${SUBJECTS_DIR}/${sID}/dwi/mrds_fixels/index.mif
+# #echolor cyan  "[INFO] Looking for file: $fcheck"
+# if [ -f $fcheck ]
+# then
+#   echolor orange "[INFO] File found $fcheck"
+#   echolor orange "       Will not overwrite."
+#   doFixels=0
+# fi
 
-    my_do_cmd peaks2fixel \
-        ${outbase}_MRDS_Diff_BIC_PDDs_CARTESIAN_scaled.nii.gz \
-        ${SUBJECTS_DIR}/${sID}/dwi/mrds_fixels
-fi
+
+# for f in ${outbase}_MRDS_Diff_BIC_{PDDs_CARTESIAN,COMP_SIZE}.nii.gz
+# do
+#   if [ ! -f $f ]
+#   then
+#     echolor red "[ERROR] File not found: $f "
+#     doFixels=0
+#   fi 
+# done
+
+
+# if [ $doFixels -eq 1 ]
+# then
+#     my_do_cmd inb_mrds_scalePDDs.sh \
+#         ${outbase}_MRDS_Diff_BIC_PDDs_CARTESIAN.nii.gz \
+#         ${outbase}_MRDS_Diff_BIC_COMP_SIZE.nii.gz \
+#         ${outbase}_MRDS_Diff_BIC_PDDs_CARTESIAN_scaled.nii.gz
+
+#     my_do_cmd peaks2fixel \
+#         ${outbase}_MRDS_Diff_BIC_PDDs_CARTESIAN_scaled.nii.gz \
+#         ${SUBJECTS_DIR}/${sID}/dwi/mrds_fixels
+# fi
