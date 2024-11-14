@@ -13,11 +13,11 @@ then
 fi
 
 
-dwi=${SUBJECTS_DIR}/${sID}/dwi/dwi.nii.gz
+dwi=${SUBJECTS_DIR}/${sID}/dwi/dwi.mif
 bvec=${SUBJECTS_DIR}/${sID}/dwi/dwi.bvec
 bval=${SUBJECTS_DIR}/${sID}/dwi/dwi.bval
 scheme=${SUBJECTS_DIR}/${sID}/dwi/dwi.scheme
-mask=${SUBJECTS_DIR}/${sID}/dwi/mask.nii.gz
+mask=${SUBJECTS_DIR}/${sID}/dwi/mask.mif
 
 isOK=1
 for f in $dwi $mask $scheme
@@ -45,9 +45,9 @@ my_do_cmd dwi2response dhollander \
   $resp_wm $resp_gm $resp_csf
 
 
-fod_wm=${SUBJECTS_DIR}/${sID}/dwi/fod_wm.nii.gz
-fod_gm=${SUBJECTS_DIR}/${sID}/dwi/fod_gm.nii.gz
-fod_csf=${SUBJECTS_DIR}/${sID}/dwi/fod_csf.nii.gz
+fod_wm=${SUBJECTS_DIR}/${sID}/dwi/fod_wm.mif
+fod_gm=${SUBJECTS_DIR}/${sID}/dwi/fod_gm.mif
+fod_csf=${SUBJECTS_DIR}/${sID}/dwi/fod_csf.mif
 
 my_do_cmd dwi2fod msmt_csd \
   -mask $mask \
@@ -59,8 +59,8 @@ my_do_cmd dwi2fod msmt_csd \
 
 csd_fixeldir=${SUBJECTS_DIR}/${sID}/dwi/csd_fixels
 my_do_cmd fod2fixel \
-  -afd afd_fixels.nii.gz \
-  -peak peak_fixels.nii.gz \
-  -disp disp_fixels.nii.gz \
+  -afd afd_fixels.mif \
+  -peak peak_fixels.mif \
+  -disp disp_fixels.mif \
   $fod_wm \
   $csd_fixeldir
