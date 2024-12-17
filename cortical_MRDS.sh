@@ -54,8 +54,8 @@ bval=${SUBJECTS_DIR}/${sID}/dwi/dwi.bval
 scheme=${SUBJECTS_DIR}/${sID}/dwi/dwi.scheme
 mask=${SUBJECTS_DIR}/${sID}/dwi/mask.nii.gz
 outbase=${SUBJECTS_DIR}/${sID}/dwi/${sID}
-nVoxPerJob=1000
-scratch_dir=${SUBJECTS_DIR}/${sID}/dwi/tmp/
+nVoxPerJob=10000
+scratch_dir=${SUBJECTS_DIR}/${sID}/dwi/tmp
 
 
 isOK=1
@@ -74,7 +74,6 @@ if [ $isOK -eq 0 ]; then exit 2; fi
 
 doComputeMRDS=1
 fcheck=${outbase}_MRDS_Diff_BIC_FA.nii.gz
-echolor cyan "[INFO] Looking for file: $fcheck"
 if [ -f $fcheck ]
 then
   echolor orange "[INFO] File found $fcheck"
@@ -93,9 +92,17 @@ else
   mrds_command="inb_mrds.sh"
 fi
 
+
+if [ ! -d $scratch_dir ]
+then
+  echolor green "[INFO] Creating directory $scratch_dir"
+  mkdir $scratch_dir
+fi
+
+
 if [ $doComputeMRDS -eq 1 ]
 then
-    my_do_cmd $mrds_command \
+    my_do_cmd  $mrds_command \
     $dwi \
     $scheme \
     $mask \
