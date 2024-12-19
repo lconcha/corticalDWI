@@ -1,7 +1,6 @@
 #!/bin/bash
 source `which my_do_cmd`
 
-
 sID=$1;      # subject ID in the form of sub-74277
 doParallel=1
 
@@ -73,16 +72,13 @@ if [ $isOK -eq 0 ]; then exit 2; fi
 
 
 doComputeMRDS=1
-fcheck=${outbase}_MRDS_Diff_BIC_FA.nii.gz
-if [ -f $fcheck ]
+fcheck=$(imglob -extension ${outbase}_MRDS_Diff_BIC_FA)
+if [ ! -z ${fcheck} ]
 then
   echolor orange "[INFO] File found $fcheck"
   echolor orange "       Will not overwrite."
   doComputeMRDS=0
 fi
-
-
-
 
 
 
