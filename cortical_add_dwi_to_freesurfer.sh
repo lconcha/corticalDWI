@@ -23,7 +23,7 @@ bvec=${SUBJECTS_DIR}/${sID}/dwi/dwi.bvec
 bval=${SUBJECTS_DIR}/${sID}/dwi/dwi.bval
 scheme=${SUBJECTS_DIR}/${sID}/dwi/dwi.scheme
 
-mrconvert -strides 1,2,3,4 \
+my_do_cmd mrconvert -strides 1,2,3,4 \
   -export_grad_fsl $bvec $bval \
   -export_grad_mrtrix $scheme \
   $dwimif \
