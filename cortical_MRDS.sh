@@ -72,12 +72,12 @@ if [ $isOK -eq 0 ]; then exit 2; fi
 
 
 doComputeMRDS=1
-fcheck=$(imglob -extension ${outbase}_MRDS_Diff_BIC_FA)
+fcheck=$(ls ${outbase}_MRDS_Diff_BIC_FA.ni*)
 if [ ! -z ${fcheck} ]
 then
   echolor orange "[INFO] File found $fcheck"
   echolor orange "       Will not overwrite."
-  doComputeMRDS=0
+  exit 0
 fi
 
 
