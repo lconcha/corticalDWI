@@ -76,82 +76,70 @@ fcheck=$(ls ${outbase}_MRDS_Diff_BIC_FA.ni*)
 if [ ! -z ${fcheck} ]
 then
   echolor orange "[INFO] File found $fcheck"
-  echolor orange "       Will not overwrite."
-  exit 0
+  doComputeMRDS=0
 fi
 
 
 
 
-## Define if parallel or not
-if [ $doParallel -eq 1 ]
+if [ $doComputeMRDS -eq 1 ]
 then
-  if [ ! -d $scratch_dir ]
+  ## Define if parallel or not
+  if [ $doParallel -eq 1 ]
   then
-    echolor green "[INFO] Creating directory $scratch_dir"
-    mkdir $scratch_dir
+    if [ ! -d $scratch_dir ]
+    then
+      echolor green "[INFO] Creating directory $scratch_dir"
+      mkdir $scratch_dir
+    fi
+    my_do_cmd inb_mrds_sge.sh
+      $dwi \
+      $scheme \
+      $mask \
+      $outbase \
+      $nVoxPerJob \
+      $scratch_dir
+  else
+    my_do_cmd inb_mrds.sh \
+      $dwi \
+      $bvec $bval \
+      $mask \
+      $outbase
   fi
-  my_do_cmd inb_mrds_sge.sh
-    $dwi \
-    $scheme \
-    $mask \
-    $outbase \
-    $nVoxPerJob \
-    $scratch_dir
 else
-  my_do_cmd inb_mrds.sh \
-    $dwi \
-    $bvec $bval \
-    $mask \
-    $outbase
-
+  echolor orange "[INFO] Will not run MRDS"
 fi
 
 
+doFixels=1
+fcheck=${SUBJECTS_DIR}/${sID}/dwi/mrds_fixels/index.mif
+#echolor cyan  "[INFO] Looking for file: $fcheck"
+if [ -f $fcheck ]
+then
+  echolor orange "[INFO] File found $fcheck"
+  echolor orange "       Will not overwrite."
+  doFixels=0
+fi
 
 
-
-# if [ $doComputeMRDS -eq 1 ]
-# then
-#     my_do_cmd $mrds_command \
-#     $dwi \
-#     $scheme \
-#     $mask \
-#     $outbase \
-#     $nVoxPerJob \
-#     $scratch_dir
-# fi
+for f in ${outbase}_MRDS_Diff_BIC_{PDDs_CARTESIAN,COMP_SIZE}.nii.gz
+do
+  if [ ! -f $f ]
+  then
+    echolor red "[ERROR] File not found: $f "
+    doFixels=0
+  fi 
+done
 
 
-# doFixels=1
-# fcheck=${SUBJECTS_DIR}/${sID}/dwi/mrds_fixels/index.mif
-# #echolor cyan  "[INFO] Looking for file: $fcheck"
-# if [ -f $fcheck ]
-# then
-#   echolor orange "[INFO] File found $fcheck"
-#   echolor orange "       Will not overwrite."
-#   doFixels=0
-# fi
+if [ $doFixels -eq 1 ]
+then
+    my_do_cmd inb_mrds_scalePDDs.sh \
+        ${outbase}_MRDS_Diff_BIC_PDDs_CARTESIAN.nii.gz \
+        ${outbase}_MRDS_Diff_BIC_COMP_SIZE.nii.gz \
+        ${outbase}_MRDS_Diff_BIC_PDDs_CARTESIAN_scaled.nii.gz
 
-
-# for f in ${outbase}_MRDS_Diff_BIC_{PDDs_CARTESIAN,COMP_SIZE}.nii.gz
-# do
-#   if [ ! -f $f ]
-#   then
-#     echolor red "[ERROR] File not found: $f "
-#     doFixels=0
-#   fi 
-# done
-
-
-# if [ $doFixels -eq 1 ]
-# then
-#     my_do_cmd inb_mrds_scalePDDs.sh \
-#         ${outbase}_MRDS_Diff_BIC_PDDs_CARTESIAN.nii.gz \
-#         ${outbase}_MRDS_Diff_BIC_COMP_SIZE.nii.gz \
-#         ${outbase}_MRDS_Diff_BIC_PDDs_CARTESIAN_scaled.nii.gz
-
-#     my_do_cmd peaks2fixel \
-#         ${outbase}_MRDS_Diff_BIC_PDDs_CARTESIAN_scaled.nii.gz \
-#         ${SUBJECTS_DIR}/${sID}/dwi/mrds_fixels
-# fi
+    my_do_cmd peaks2fixel \
+        ${outbase}_MRDS_Diff_BIC_PDDs_CARTESIAN_scaled.nii.gz \
+        ${SUBJECTS_DIR}/${sID}/dwi/mrds_fixels
+fi
