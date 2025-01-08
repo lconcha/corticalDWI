@@ -38,7 +38,7 @@ fcheck=${fixel_dir}/${hemi}_${target_type}_afd-par-perp-indices.tsf
 echo "looking for $fcheck"
 if [ -f $fcheck ]
 then
-  echolor red "[ERROR] File exists, will not overwrite: $fcheck"
+  echolor yellow "[WARN] File exists, will not overwrite: $fcheck"
   exit 0
 fi
 

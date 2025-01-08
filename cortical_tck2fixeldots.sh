@@ -27,7 +27,7 @@ fi
 
 if [ -f ${fixel_dir}/${dots} ]
 then
-  echolor orange "[ERROR] File exists. Not overwriting: ${fixel_dir}/${dots}"
+  echolor yellow "[WARN] File exists. Not overwriting: ${fixel_dir}/${dots}"
   echolor green "[INFO] Check result with:"
   echolor green "       mrview ${subjID}/dwi/fa.nii.gz -tractography.load $tck -tractography.colour 0,0,1 -fixel.load ${fixel_dir}/${dots}"
   exit 0
