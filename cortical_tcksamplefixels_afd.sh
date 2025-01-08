@@ -3,7 +3,7 @@ source `which my_do_cmd`
 
 subjID=$1
 hemi=$2
-target_type=$3
+target_type=$3; # fsLR-5k or fsLR-32k
 fixel_dir=$4; # csd_fixels or mrds_fixels (or something else)
 angle=$5
 
@@ -20,7 +20,7 @@ then
 fi
 
 
-tck=${SUBJECTS_DIR}/${subjID}/dwi/${hemi}_fsLR-${target_type}_laplace-wm-streamlines_dwispace.tck
+tck=${SUBJECTS_DIR}/${subjID}/dwi/${hemi}_${target_type}_laplace-wm-streamlines_dwispace.tck
 afd=${fixel_dir}/afd_fixels.mif
 for f in $tck $afd
 do
@@ -34,7 +34,8 @@ do
 done
 
 
-fcheck=${fixel_dir}/${hemi}_fsLR_${target_type}_par-perp-indices.tsf
+fcheck=${fixel_dir}/${hemi}_${target_type}_afd-par-perp-indices.tsf
+echo "looking for $fcheck"
 if [ -f $fcheck ]
 then
   echolor red "[ERROR] File exists, will not overwrite: $fcheck"
@@ -48,10 +49,10 @@ then
   -angle $angle \
   $afd \
   $tck \
-  ${fixel_dir}/${hemi}_fsLR_${target_type}_afd-par-perp-indices.tsf \
-  ${fixel_dir}/${hemi}_fsLR_${target_type}_afd-par.tsf \
-  ${fixel_dir}/${hemi}_fsLR_${target_type}_afd-perp.tsf \
-  ${fixel_dir}/${hemi}_fsLR_${target_type}_afd-perp-av.tsf
+  ${fixel_dir}/${hemi}_${target_type}_afd-par-perp-indices.tsf \
+  ${fixel_dir}/${hemi}_${target_type}_afd-par.tsf \
+  ${fixel_dir}/${hemi}_${target_type}_afd-perp.tsf \
+  ${fixel_dir}/${hemi}_${target_type}_afd-perp-av.tsf
 else
   echolor red "[ERROR] Cannot continue, see above errors"
   exit 2
