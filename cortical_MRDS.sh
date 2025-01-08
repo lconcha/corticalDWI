@@ -122,7 +122,7 @@ then
 fi
 
 
-for f in ${outbase}_MRDS_Diff_BIC_{PDDs_CARTESIAN,COMP_SIZE}.nii.gz
+for f in ${outbase}_MRDS_Diff_BIC_{PDDs_CARTESIAN,COMP_SIZE,FA,MD}.nii.gz
 do
   if [ ! -f $f ]
   then
@@ -134,12 +134,15 @@ done
 
 if [ $doFixels -eq 1 ]
 then
-    my_do_cmd inb_mrds_scalePDDs.sh \
-        ${outbase}_MRDS_Diff_BIC_PDDs_CARTESIAN.nii.gz \
-        ${outbase}_MRDS_Diff_BIC_COMP_SIZE.nii.gz \
-        ${outbase}_MRDS_Diff_BIC_PDDs_CARTESIAN_scaled.nii.gz
-
-    my_do_cmd peaks2fixel \
-        ${outbase}_MRDS_Diff_BIC_PDDs_CARTESIAN_scaled.nii.gz \
-        ${SUBJECTS_DIR}/${sID}/dwi/mrds_fixels
+  my_do_cmd peaks2fixel \
+    ${outbase}_MRDS_Diff_BIC_PDDs_CARTESIAN.nii.gz \
+    ${SUBJECTS_DIR}/${sID}/dwi/mrds_fixels
+  for v in FA MD COMP_SIZE
+  do
+    my_do_cmd voxel2fixel \
+      ${outbase}_MRDS_Diff_BIC_${v}.nii.gz \
+      ${SUBJECTS_DIR}/${sID}/dwi/mrds_fixels \
+      ${SUBJECTS_DIR}/${sID}/dwi/mrds_fixels \
+      MRDS_Diff_BIC_${v}.mif
+  done
 fi
