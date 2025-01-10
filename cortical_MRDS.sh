@@ -75,7 +75,7 @@ doComputeMRDS=1
 fcheck=$(ls ${outbase}_MRDS_Diff_BIC_FA.ni*)
 if [ ! -z ${fcheck} ]
 then
-  echolor orange "[INFO] File found $fcheck"
+  echolor yellow "[INFO] File found $fcheck"
   doComputeMRDS=0
 fi
 
@@ -102,12 +102,12 @@ then
   else
     my_do_cmd inb_mrds.sh \
       $dwi \
-      $bvec $bval \
+      $scheme \
       $mask \
       $outbase
   fi
 else
-  echolor orange "[INFO] Will not run MRDS"
+  echolor yellow "[INFO] Will not run MRDS"
 fi
 
 
@@ -116,8 +116,8 @@ fcheck=${SUBJECTS_DIR}/${sID}/dwi/mrds_fixels/index.mif
 #echolor cyan  "[INFO] Looking for file: $fcheck"
 if [ -f $fcheck ]
 then
-  echolor orange "[INFO] File found $fcheck"
-  echolor orange "       Will not overwrite."
+  echolor yellow "[INFO] File found $fcheck"
+  echolor yellow "       Will not overwrite."
   doFixels=0
 fi
 
@@ -134,15 +134,33 @@ done
 
 if [ $doFixels -eq 1 ]
 then
-  my_do_cmd peaks2fixel \
-    ${outbase}_MRDS_Diff_BIC_PDDs_CARTESIAN.nii.gz \
-    ${SUBJECTS_DIR}/${sID}/dwi/mrds_fixels
-  for v in FA MD COMP_SIZE
-  do
-    my_do_cmd voxel2fixel \
-      ${outbase}_MRDS_Diff_BIC_${v}.nii.gz \
-      ${SUBJECTS_DIR}/${sID}/dwi/mrds_fixels \
-      ${SUBJECTS_DIR}/${sID}/dwi/mrds_fixels \
-      MRDS_Diff_BIC_${v}.mif
-  done
+   mkdir -pv ${SUBJECTS_DIR}/${sID}/dwi/mrds_fixels
+   for v in FA MD COMP_SIZE
+   do
+   tmpDir=$(mktemp -u)
+    my_do_cmd inb_mrds_scalePDDs.sh \
+        -e 0.0000000000000001 \
+        ${SUBJECTS_DIR}/${sID}/dwi/${sID}_MRDS_Diff_BIC_PDDs_CARTESIAN.nii.gz \
+        ${SUBJECTS_DIR}/${sID}/dwi/${sID}_MRDS_Diff_BIC_${v}.nii.gz \
+        ${SUBJECTS_DIR}/${sID}/dwi/${sID}_MRDS_Diff_BIC_PDDs_CARTESIAN_scaled-by-${v}.nii.gz
+
+    my_do_cmd peaks2fixel \
+        ${SUBJECTS_DIR}/${sID}/dwi/${sID}_MRDS_Diff_BIC_PDDs_CARTESIAN_scaled-by-${v}.nii.gz \
+        $tmpDir
+    mv -v ${tmpDir}/amplitudes.mif \
+        ${SUBJECTS_DIR}/${sID}/dwi/mrds_fixels/MRDS_DIFF_BIC_${v}.mif
+    mv -v ${tmpDir}/{directions,index}.mif ${SUBJECTS_DIR}/${sID}/dwi/mrds_fixels/
+    rm -fR $tmpDir
+    done
 fi
+
+
+
+    # my_do_cmd inb_mrds_scalePDDs.sh \
+    #     ${outbase}_MRDS_Diff_BIC_PDDs_CARTESIAN.nii.gz \
+    #     ${outbase}_MRDS_Diff_BIC_COMP_SIZE.nii.gz \
+    #     ${outbase}_MRDS_Diff_BIC_PDDs_CARTESIAN_scaled.nii.gz
+
+    # my_do_cmd peaks2fixel \
+    #     ${outbase}_MRDS_Diff_BIC_PDDs_CARTESIAN_scaled.nii.gz \
+    #     ${SUBJECTS_DIR}/${sID}/dwi/mrds_fixels
