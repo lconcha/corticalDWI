@@ -122,7 +122,7 @@ then
 fi
 
 
-for f in ${outbase}_MRDS_Diff_BIC_{PDDs_CARTESIAN,COMP_SIZE,FA,MD}.nii.gz
+for f in ${outbase}_MRDS_Diff_BIC_{PDDs_CARTESIAN,COMP_SIZE,FA,MD}.ni*
 do
   if [ ! -f $f ]
   then
