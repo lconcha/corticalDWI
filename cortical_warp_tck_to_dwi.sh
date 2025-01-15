@@ -5,6 +5,7 @@ source `which my_do_cmd`
 sID=$1
 hemi=$2;        #lh, rh
 target_type=$3; #fsLR-32k
+tck_step_size=$4
 
 xfm_lin_t1_to_b0=${SUBJECTS_DIR}/${sID}/dwi/t1native_to_b0_0GenericAffine.mat
 xfm_nlin_t1_to_b0=${SUBJECTS_DIR}/${sID}/dwi/t1native_to_b0_1Warp.nii.gz
@@ -44,7 +45,15 @@ for i in {0..2}; do
 done
 my_do_cmd warpcorrect ${tmpDir}/inv_mrtrix_warp[].nii ${tmpDir}/inv_mrtrix_warp_corrected.mif -marker 2147483647
 tck_dwispace=${SUBJECTS_DIR}/${sID}/dwi/${hemi}_${target_type}_laplace-wm-streamlines_dwispace.tck
-my_do_cmd tcktransform $tck_t1space ${tmpDir}/inv_mrtrix_warp_corrected.mif $tck_dwispace
+my_do_cmd tcktransform \
+  $tck_t1space \
+  ${tmpDir}/inv_mrtrix_warp_corrected.mif \
+  ${tmpDir}/warped.tck
+my_do_cmd tckresample -force -quiet \
+  -step_size $tck_step_size \
+  ${tmpDir}/warped.tck \
+  $tck_dwispace
+
 rm -fR $tmpDir
 
 echolor green "[INFO] Done. Check with: "
