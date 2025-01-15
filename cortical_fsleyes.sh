@@ -2,16 +2,17 @@
 source `which my_do_cmd `
 
 sID=$1
+target_type=$2; # 5k or 32k
 
 
 t1_brain=${SUBJECTS_DIR}/${sID}/mri/brain.mgz
 fa=${SUBJECTS_DIR}/${sID}/dwi/fa.nii.gz
-rh_pial_surf=${SUBJECTS_DIR}/${sID}/surf/rh_pial_fsLR-32k.surf.gii
-lh_pial_surf=${SUBJECTS_DIR}/${sID}/surf/lh_pial_fsLR-32k.surf.gii
-rh_white_surf=${SUBJECTS_DIR}/${sID}/surf/rh_white_fsLR-32k.surf.gii
-lh_white_surf=${SUBJECTS_DIR}/${sID}/surf/lh_white_fsLR-32k.surf.gii
-rh_laplace_tck=${SUBJECTS_DIR}/${sID}/mri/rh_fsLR-32k_laplace-wm-streamlines.tck
-lh_laplace_tck=${SUBJECTS_DIR}/${sID}/mri/lh_fsLR-32k_laplace-wm-streamlines.tck
+rh_pial_surf=${SUBJECTS_DIR}/${sID}/surf/rh_pial_fsLR-${target_type}.surf.gii
+lh_pial_surf=${SUBJECTS_DIR}/${sID}/surf/lh_pial_fsLR-${target_type}.surf.gii
+rh_white_surf=${SUBJECTS_DIR}/${sID}/surf/rh_white_fsLR-${target_type}.surf.gii
+lh_white_surf=${SUBJECTS_DIR}/${sID}/surf/lh_white_fsLR-${target_type}.surf.gii
+rh_laplace_tck=${SUBJECTS_DIR}/${sID}/mri/rh_fsLR-${target_type}_laplace-wm-streamlines.tck
+lh_laplace_tck=${SUBJECTS_DIR}/${sID}/mri/lh_fsLR-${target_type}_laplace-wm-streamlines.tck
 
 
 pial_colour="0 0 1"
