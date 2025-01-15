@@ -90,7 +90,7 @@ my_do_cmd wb_command -surface-generate-inflated \
 
 
 echo "
-freeview -v ${SUBJECTS_DIR}/${subjID}/mri/brain.mgz -f $sub_orig_surf $out_surface
+freeview -v ${SUBJECTS_DIR}/${subjID}/mri/brain.mgz -f $sub_orig_surf $out_surface ${out_surface%.surf.gii}_veryInflated.surf.gii
 "
 
 
