@@ -10,7 +10,6 @@ sub_orig_surf=${SUBJECTS_DIR}/${subjID}/surf/${hemi}.${surf_type}
 sub_orig_sphere=${SUBJECTS_DIR}/${subjID}/surf/${hemi}.sphere
 out_surface=${SUBJECTS_DIR}/${subjID}/surf/${hemi}_${surf_type}_${target_type}.surf.gii
 
-
 case $hemi in
   lh)
     h=L;;
@@ -81,6 +80,13 @@ my_do_cmd wb_command -surface-resample \
   ${tmpDir}/target_sphere.surf.gii \
   BARYCENTRIC \
   $out_surface
+
+
+my_do_cmd wb_command -surface-generate-inflated \
+  $out_surface \
+  ${out_surface%.surf.gii}_inflated.surf.gii \
+  ${out_surface%.surf.gii}_veryInflated.surf.gii
+
 
 
 echo "
