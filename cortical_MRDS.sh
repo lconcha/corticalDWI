@@ -73,13 +73,13 @@ if [ $isOK -eq 0 ]; then exit 2; fi
 
 doComputeMRDS=1
 fcheck=$(ls ${outbase}_MRDS_Diff_BIC_FA.ni*)
+echolor green "[INFO] Looking for file: $fcheck"
 if [ ! -z ${fcheck} ]
 then
   echolor yellow "[INFO] File found $fcheck"
+  echolor yellow "[INFO] Will not re-compute MRDS files. Delete previous output if you want to re-run."
   doComputeMRDS=0
 fi
-
-
 
 
 if [ $doComputeMRDS -eq 1 ]
@@ -92,7 +92,7 @@ then
       echolor green "[INFO] Creating directory $scratch_dir"
       mkdir $scratch_dir
     fi
-    my_do_cmd inb_mrds_sge.sh \
+    my_do_cmd inb_mrds_sge.sh
       $dwi \
       $scheme \
       $mask \
@@ -113,7 +113,7 @@ fi
 
 doFixels=1
 fcheck=${SUBJECTS_DIR}/${sID}/dwi/mrds_fixels/index.mif
-#echolor cyan  "[INFO] Looking for file: $fcheck"
+echolor green "[INFO] Looking for file: $fcheck"
 if [ -f $fcheck ]
 then
   echolor yellow "[INFO] File found $fcheck"
