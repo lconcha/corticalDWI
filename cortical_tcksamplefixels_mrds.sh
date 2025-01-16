@@ -6,6 +6,8 @@ hemi=$2
 target_type=$3; # fsLR-5k or fsLR-32k
 fixel_dir=$4; # mrds_fixels (or something else, but it has to be mrds)
 angle=$5
+nDepths=$6; # number of depth points to keep in the txt file. The tsf saves them all.
+
 
 ########### NOT FINISHED, change afd for FA and stuff!!!###########
 
@@ -61,7 +63,6 @@ do
     fi
 done
 
-nDepths=20
 for tsf in ${fixel_dir}/*.tsf
 do
   txt=${tsf%.tsf}.txt

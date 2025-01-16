@@ -4,7 +4,7 @@ source `which my_do_cmd`
 subjID=$1
 fixel_dir=$2; # csd_fixels or mrds_fixels (or something else)
 angle=$3
-
+nDepths=$4; # number of depth points to keep in the txt file. The tsf saves them all.
 
 
 isOK=1
@@ -63,7 +63,7 @@ do
   done
 done
 
-nDepths=20
+
 for tsf in ${fixel_dir}/*.tsf
 do
   txt=${tsf%.tsf}.txt
