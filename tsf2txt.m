@@ -21,7 +21,7 @@ M = zeros(nStreamlines,nDepths);
 for s = 1 : nStreamlines
   d = tsf.data{s}';
   if length(d) < nDepths
-      d(end+1:nDepths) = 0;
+      d(end+1:nDepths) = -1;
   end
   M(s,:) = d(1:nDepths);
 end
