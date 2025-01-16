@@ -30,7 +30,7 @@ then
   echolor yellow "[WARN] File exists. Not overwriting: ${fixel_dir}/${dots}"
   echolor green "[INFO] Check result with:"
   echolor green "       mrview ${subjID}/dwi/fa.nii.gz -tractography.load $tck -tractography.colour 0,0,1 -fixel.load ${fixel_dir}/${dots}"
-  exit 0
+  isOK=0
 fi
 
 
@@ -44,6 +44,6 @@ my_do_cmd  tck2fixeldots \
 fi
 
 echolor green "[INFO] Check result with:"
-echolor green "       mrview ${subjID}/dwi/fa.nii.gz \
+echolor green "       mrview ${SUBJECTS_DIR}/${subjID}/dwi/fa.nii.gz \
                         -tractography.load $tck \
                         -fixel.load ${fixel_dir}/${dots}"
