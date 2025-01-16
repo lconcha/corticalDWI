@@ -67,5 +67,5 @@ nDepths=20
 for tsf in ${fixel_dir}/*.tsf
 do
   txt=${tsf%.tsf}.txt
-  my_do_cmd  cortical_tsf2txt.sh $tsf $txt $nDepths
+  my_do_cmd  cortical_tsf2txt_matlab.sh $tsf $txt $nDepths
 done
