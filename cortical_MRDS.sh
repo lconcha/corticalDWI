@@ -92,7 +92,7 @@ then
       echolor green "[INFO] Creating directory $scratch_dir"
       mkdir $scratch_dir
     fi
-    my_do_cmd inb_mrds_sge.sh
+    my_do_cmd inb_mrds_sge.sh \
       $dwi \
       $scheme \
       $mask \
