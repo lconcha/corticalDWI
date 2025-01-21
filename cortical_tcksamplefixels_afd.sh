@@ -64,8 +64,10 @@ do
 done
 
 
-for tsf in ${fixel_dir}/*.tsf
-do
-  txt=${tsf%.tsf}.txt
-  my_do_cmd  cortical_tsf2txt_matlab.sh $tsf $txt $nDepths
-done
+# for tsf in ${fixel_dir}/*.tsf
+# do
+#   txt=${tsf%.tsf}.txt
+#   my_do_cmd  cortical_tsf2txt_matlab.sh $tsf $txt $nDepths
+# done
+
+cortical_tsf2txt_matlab.sh $fixel_dir $nDepths
