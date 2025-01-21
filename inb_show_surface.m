@@ -1,0 +1,36 @@
+function srf = inb_show_surface(s,DATA)
+
+
+fh = figure;
+
+
+subplot(121);
+data1 = DATA(:,1);
+srf = trisurf(s.faces , ...
+            s.vertices(:,1), ...
+            s.vertices(:,2), ...
+            s.vertices(:,3), ...
+            data1, ...
+            'EdgeColor', 'interp',...
+            'EdgeAlpha', 0,...
+            'FaceColor', 'interp');
+material dull; lighting phong;
+set(gca                                 , ...
+    'Visible'           , 'off'         , ...
+    'DataAspectRatio'   , [1 1 1]       , ...
+    'PlotBoxAspectRatio', [1 1 1]       , ...
+    'CLim'              , clim          );
+% Add a camlight.
+cam = camlight('headlight');
+axis vis3d
+view(-90,0)
+ax_surf = gca;
+ax_surf.Clipping = "off";
+hold on;
+my_dot = plot3(0,0,0,' or', 'Parent',ax_surf); hold on;
+
+
+ax_plot = subplot(122);
+get_vertex_index(srf,DATA,ax_surf,ax_plot)
+
+
