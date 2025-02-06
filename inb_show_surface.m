@@ -1,11 +1,14 @@
-function srf = inb_show_surface(s,DATA)
+function srf = inb_show_surface(s,dataStructure)
+% DATA = dataStructure.DATA;
+% step_size = dataStructure.step_size;
+% metric_name = dataStructure.metric_name;
 
 
 fh = figure;
 
 
 subplot(121);
-data1 = DATA(:,1);
+data1 = ones(length(dataStructure.DATA),1);
 srf = trisurf(s.faces , ...
             s.vertices(:,1), ...
             s.vertices(:,2), ...
@@ -14,7 +17,7 @@ srf = trisurf(s.faces , ...
             'EdgeColor', 'interp',...
             'EdgeAlpha', 0,...
             'FaceColor', 'interp');
-material dull; lighting phong;
+material dull;lighting phong;
 set(gca                                 , ...
     'Visible'           , 'off'         , ...
     'DataAspectRatio'   , [1 1 1]       , ...
@@ -26,11 +29,11 @@ axis vis3d
 view(-90,0)
 ax_surf = gca;
 ax_surf.Clipping = "off";
-hold on;
-my_dot = plot3(0,0,0,' or', 'Parent',ax_surf); hold on;
+hold(ax_surf,'on');
+my_dot = scatter3(0,0,0,'red','filled','Parent',ax_surf); hold on;
 
 
 ax_plot = subplot(122);
-get_vertex_index(srf,DATA,ax_surf,ax_plot)
+get_vertex_index(srf,dataStructure,ax_surf,ax_plot)
 
 

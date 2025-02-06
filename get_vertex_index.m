@@ -1,11 +1,13 @@
-function lastVertexIndex = get_vertex_index(h,DATA,ax_surf,ax_plot)
+function lastVertexIndex = get_vertex_index(h,dataStructure,ax_surf,ax_plot)
+
+DATA = dataStructure.DATA;
+step_size = dataStructure.step_size;
+metric_name = dataStructure.metric_name;
 
 
-% Function to update the shared variable
 
 
 % make interactive
-%h.ButtonDownFcn = @(src, event) getVertexIndex(src, event, h.Vertices(:,1), h.Vertices(:,2), h.Vertices(:,3),DATA,ax);
 h.ButtonDownFcn = @(src, event) getVertexIndex(src, event,DATA,ax_surf,ax_plot);
 
   % function p = getVertexIndex(src,event,X,Y,Z,DATA,ax)
@@ -18,7 +20,6 @@ h.ButtonDownFcn = @(src, event) getVertexIndex(src, event,DATA,ax_surf,ax_plot);
         clickedPoint = event.IntersectionPoint;
         
         % Reshape X, Y, Z into vectors for easier processing
-        %vertices = [X(:), Y(:), Z(:)];
         vertices = src.Vertices;
         
 
@@ -29,11 +30,7 @@ h.ButtonDownFcn = @(src, event) getVertexIndex(src, event,DATA,ax_surf,ax_plot);
         [mindist, p] = min(distances);
         
         % Display the vertex index
-        fprintf('Closest vertex index: %d (distance: %1.2f)\n' , p,mindist);
-        %hb = plot3(vertices(p,1),vertices(p,2),vertices(p,3), ' or','Parent',ax_surf);
-        %hb.XData = vertices(p,1);
-        %hb.YData = vertices(p,2);
-        %hb.ZData = vertices(p,3);
+        %fprintf('Closest vertex index: %d (distance: %1.2f)\n' , p,mindist);
         ax_surf.Children(1).XData = vertices(p,1);
         ax_surf.Children(1).YData = vertices(p,2);
         ax_surf.Children(1).ZData = vertices(p,3);
@@ -41,11 +38,15 @@ h.ButtonDownFcn = @(src, event) getVertexIndex(src, event,DATA,ax_surf,ax_plot);
        
         this_data = DATA(p,:);
         %h_plot = figure;
-        hp = plot(this_data,'Parent',ax_plot);
+        depths = [0:size(this_data,2)-1] .* step_size;
+        hp = plot(depths,this_data,'Parent',ax_plot);
         hold on;
-        the_title = sprintf('Closest vertex index: %d (distance: %1.2f)' , p,mindist);
-        htit = title(the_title,'Parent',ax_plot);
-        htit.String = the_title;
+        the_title = sprintf('Closest vertex: %d (distance: %1.2f mm)' , p,mindist);
+        ax_plot.Title.String = the_title;
+        ax_plot.YLabel.String = metric_name;
+        ax_plot.XLabel.String = 'Depth from pial surface (mm)';
+        ax_plot.YLabel.Interpreter = 'none';
+
         
         
 

@@ -23,10 +23,10 @@ my_do_cmd -fake mrview \
   $fa \
   -tractography.load  $rh_laplace_tck \
     -tractography.geometry points -tractography.thickness -0.2 \
-    -tractography.tsf_load $rh_fa_tsf -tractography.tsf_range 0 0.5 \
+    -tractography.tsf_load $rh_fa_tsf -tractography.tsf_range 0,0.5 \
   -tractography.load  $lh_laplace_tck \
     -tractography.geometry points -tractography.thickness -0.2 \
-    -tractography.tsf_load $lh_fa_tsf -tractography.tsf_range 0 0.5
+    -tractography.tsf_load $lh_fa_tsf -tractography.tsf_range 0,0.5
 
 
 

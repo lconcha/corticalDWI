@@ -185,3 +185,9 @@ for d = 1 : maxdepth
 end
 
 
+
+% plot interactively
+dataStructure.DATA = dataXdepth;
+dataStructure.step_size = 0.5;
+dataStructure.metric_name = 'AFD';
+inb_show_surface(s,dataStructure)
