@@ -3,12 +3,24 @@ source `which my_do_cmd`
 # module load freesurfer/7.3.2
 
 sID=$1;      # subject ID in the form of sub-74277
-flair=$2;   # full path to preprocessed dwi.mif
-             # example /misc/lauterbur/lconcha/TMP/glaucoma/bids/derivatives/sub-74277/dwi/sub-74277_acq-hb_dwi_de.mif
-
+flair=$(find ${bids_dir}/${sID}/anat -name *flair*nii.gz)
 outflair=${SUBJECTS_DIR}/${sID}/mri/flair.nii.gz
 
+if [ ! -z "$flair" -a -f $flair ]
+then
+  echolor green "[INFO] Found FLAIR image: $flair"
+else
+  echolor red "[ERROR] Did not find FLAIR image"
+  exit 2
+fi
 
+
+
+echolor cyan "Forcing freesurfer 7.3.2"
+export subjects_dir=$SUBJECTS_DIR
+module unload freesurfer
+module load freesurfer/7.3.2
+export SUBJECTS_DIR=$subjects_dir
 vers=$(recon-all -version | grep 7.3)
 echo $vers
 if [ -z "$vers" ]
