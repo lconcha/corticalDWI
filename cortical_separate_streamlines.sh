@@ -1,6 +1,25 @@
 #!/bin/bash
 source `which my_do_cmd`
 
+
+
+force=0
+while getopts "f" opt
+do
+  case $opt in
+    f)
+      force=1
+      echolor cyan "FLAG"
+    ;;
+    \?)
+      echolor red "[ERROR] Invalid flag."
+      exit 2
+    ;;
+  esac
+done
+shift $((OPTIND-1))
+
+
 subjID=$1
 hemi=$2
 target_type=$3
@@ -10,6 +29,23 @@ fsLUT=${FREESURFER_HOME}/luts/FreeSurferColorLUT.txt
 aparc=${SUBJECTS_DIR}/${subjID}/mri/aparc.a2009s+aseg.mgz
 streamlines_t1=${SUBJECTS_DIR}/${subjID}/mri/${hemi}_${target_type}_laplace-wm-streamlines.tck
 streamlines_dwi=${SUBJECTS_DIR}/${subjID}/dwi/${hemi}_${target_type}_laplace-wm-streamlines_dwispace.tck
+
+
+if [ -d ${SUBJECTS_DIR}/${subjID}/mri/split ] 
+then
+  echolor orange "[WARN] Output already exists: ${SUBJECTS_DIR}/${subjID}/mri/split "
+  if [ $force -eq 1 ]
+  then
+    echolor orange "[WARN] Results will be overwritten"
+    rm -f ${SUBJECTS_DIR}/${subjID}/{mri,dwi}/split/* 
+  else
+    echolor red "[ERROR] Will not overwrite. Quitting."
+    exit 0
+  fi
+else
+  my_do_cmd mkdir ${SUBJECTS_DIR}/${subjID}/{mri,dwi}/split
+fi
+
 
 tmpDir=$(mktemp -d)
 
@@ -31,16 +67,16 @@ do
   # Create a binary mask of the cortical region
   labelID=$(echo $r | awk '{print $1}')
   name=$(echo $r | awk '{print $2}')
-  echolor cyan " labelID: $labelID , name: $name"
+  echolor cyan "[INFO] labelID: $labelID , name: $name"
   my_do_cmd mrcalc -quiet $aparc $labelID -eq ${tmpDir}/${labelID}.mif
 
   # check that it is not empty
   nVox=$(mrstats -quiet -ignorezero -output count ${tmpDir}/${labelID}.mif)
   echolor green "[INFO] Region $labelID has $nVox voxels"
-  if [ $nVox -eq 0 ]; then echolor yellow "[INFO] Going to next region"; continue;fi
+  if [ $nVox -eq 0 ]; then echolor yellow "[WARN] Zero voxels in this region, going to next region"; continue;fi
 
   # tckedit in T1 streamlines
-  selectedtracto=${SUBJECTS_DIR}/${subjID}/mri/${hemi}_${target_type}_laplace-wm-streamlines_${labelID}.tck
+  selectedtracto=${SUBJECTS_DIR}/${subjID}/mri/split/${hemi}_${target_type}_laplace-wm-streamlines_${labelID}.tck
   indices_to_keep=${selectedtracto%.tck}_indices.txt; #indices of the selected tracks
   my_do_cmd tckedit -quiet \
     -include ${tmpDir}/${labelID}.mif \
@@ -59,13 +95,13 @@ do
     do
     sed -i "${i}s/0/1/" ${tmpDir}/indices.txt
   done
-  selectedtracto=${SUBJECTS_DIR}/${subjID}/dwi/${hemi}_${target_type}_laplace-wm-streamlines_dwispace_${labelID}.tck
+  selectedtracto=${SUBJECTS_DIR}/${subjID}/dwi/split/${hemi}_${target_type}_laplace-wm-streamlines_dwispace_${labelID}.tck
   my_do_cmd tckedit -quiet \
     -tck_weights_in ${tmpDir}/indices.txt \
     -minweight 0.1  \
     $streamlines_dwi \
     $selectedtracto
-
+  echo "$indices_to_keep" > ${selectedtracto%.tck}_indices.txt
 done
 
 
