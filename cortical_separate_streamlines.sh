@@ -30,20 +30,23 @@ aparc=${SUBJECTS_DIR}/${subjID}/mri/aparc.a2009s+aseg.mgz
 streamlines_t1=${SUBJECTS_DIR}/${subjID}/mri/${hemi}_${target_type}_laplace-wm-streamlines.tck
 streamlines_dwi=${SUBJECTS_DIR}/${subjID}/dwi/${hemi}_${target_type}_laplace-wm-streamlines_dwispace.tck
 
-
-if [ -d ${SUBJECTS_DIR}/${subjID}/mri/split ] 
+str=$(ls ${SUBJECTS_DIR}/${subjID}/mri/split/${hemi}_${target_type}_*.tck)
+if [ ! -z "$str" ] 
 then
-  echolor orange "[WARN] Output already exists: ${SUBJECTS_DIR}/${subjID}/mri/split "
+  echolor orange "[WARN] Output already exists for ${hemi}_${target_type}"
   if [ $force -eq 1 ]
   then
     echolor orange "[WARN] Results will be overwritten"
-    rm -f ${SUBJECTS_DIR}/${subjID}/{mri,dwi}/split/* 
+    rm -f ${SUBJECTS_DIR}/${subjID}/{mri,dwi}/split/${hemi}_${target_type}_* 
   else
     echolor red "[ERROR] Will not overwrite. Quitting."
     exit 0
   fi
 else
-  my_do_cmd mkdir ${SUBJECTS_DIR}/${subjID}/{mri,dwi}/split
+  if [ ! -d ${SUBJECTS_DIR}/${subjID}/dwi/split ]
+  then
+    my_do_cmd mkdir ${SUBJECTS_DIR}/${subjID}/{mri,dwi}/split
+  fi
 fi
 
 
