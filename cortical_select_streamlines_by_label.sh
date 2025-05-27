@@ -3,7 +3,7 @@ source `which my_do_cmd`
 
 
 writeMask=0
-writeTck=0
+writeTck_t1=0
 writeTck_dwi=0
 while getopts "m:t:d:" opt
 do
