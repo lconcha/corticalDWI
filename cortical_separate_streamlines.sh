@@ -101,7 +101,7 @@ do
     -minweight 0.1  \
     $streamlines_dwi \
     $selectedtracto
-  echo "$indices_to_keep" > ${selectedtracto%.tck}_indices.txt
+  cat "$indices_to_keep" > ${selectedtracto%.tck}_indices.txt
 done
 
 
