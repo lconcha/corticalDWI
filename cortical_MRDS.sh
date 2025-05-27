@@ -1,12 +1,12 @@
 #!/bin/bash
 source `which my_do_cmd`
 
-sID=$1;      # subject ID in the form of sub-74277
+
 doParallel=1
 
 print_help () {
   echo "
-  `basename $0` <sID> [-no_parallel]
+  `basename $0`  <sID> [options]
 
   Options:
 
@@ -33,11 +33,21 @@ do
     ;;
     -no_parallel)
       doParallel=0
+      shift
+    ;;
+    -label)
+      labelID=$2
+      target_type=$3
+      echolor green "[INFO] label is $labelID"
+      echolor green "[INFO] target_type is $target_type"
+      shift;shift;shift
     ;;
   esac
 done
 
 
+sID=$1;      # subject ID in the form of sub-74277
+echolor green "[INFO] sID is $sID"
 
 if [ ! -d ${SUBJECTS_DIR}/${sID} ]
 then
@@ -69,6 +79,22 @@ do
   fi
 done
 if [ $isOK -eq 0 ]; then exit 2; fi
+
+
+if [ ! -z $labelID ]
+then
+  roi=${SUBJECTS_DIR}/${sID}/dwi/tmp/mask_${labelID}.mif
+  if [ -f $roi ]; then rm $roi; fi
+  my_do_cmd cortical_select_streamlines_by_label.sh -m $roi $sID $labelID $target_type
+  mask=$roi
+  echolor green "[INFO] Mask has changed to $mask"
+fi
+
+nVoxels=$(mrstats -ignorezero $mask -output count)
+echolor green "[INFO] Will fit MRDS in $nVoxels voxels"
+echolor cyan "breakpoint"!
+exit 0
+
 
 
 doComputeMRDS=1
@@ -154,6 +180,8 @@ then
     done
 fi
 
+
+if [ -f $roi ]; then rm $roi;fi
 
 
     # my_do_cmd inb_mrds_scalePDDs.sh \
