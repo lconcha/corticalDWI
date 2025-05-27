@@ -3,16 +3,19 @@
 f=$1
 
 
-TITLE="$f"
+TITLE=$(basename $f)
 XLABEL="Depth (steps)"
 YLABEL="Value"
 
 gnuplot <<EOF
   set title "$TITLE"
   set xlabel "$XLABEL"
-  set ylabel "$YLABEL"
   set terminal dumb
-  plot "$f" using 1 with points pointtype 24
+  unset grid
+  #unset xtics
+  #unset ytics
+  #unset border
+  plot "$f" using 1 with points pointtype "X"
 EOF
 
 
