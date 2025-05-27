@@ -1,0 +1,10 @@
+# file_name                                             metric_name
+dwi/mrds_fixels/HEMI_TARGET_FA-par.txt                  FA-par
+dwi/mrds_fixels/HEMI_TARGET_FA-perp.txt                 FA-perp
+dwi/mrds_fixels/HEMI_TARGET_FA-par.txt                  MD-par
+dwi/mrds_fixels/HEMI_TARGET_FA-par.txt                  MD-par
+dwi/mrds_fixels/HEMI_TARGET_COMP-SIZE-par.txt           COMP-SIZE-par
+dwi/mrds_fixels/HEMI_TARGET_COMP-SIZE-perp.txt          COMP-SIZE-perp
+#
+dwi/csd_fixels_singletissue/HEMI_TARGET_afd-par.txt     afd-par
+dwi/csd_fixels_singletissue/HEMI_TARGET_afd-perp.txt    afd-perp
