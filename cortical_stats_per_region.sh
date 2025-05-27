@@ -46,6 +46,8 @@ do
     f_values=${SUBJECTS_DIR}/${subjID}/dwi/split/${hemi}_${target_type}_laplace-wm-streamlines_dwispace_${region}_mean_std_${metric}.txt
     mean_std ${tmpDir}/${region}_values.txt > $f_values
 
+    cortical_1dplot.sh $f_values
+
 done
 
 
