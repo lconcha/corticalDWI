@@ -79,7 +79,7 @@ do
   if [ $nVox -eq 0 ]; then echolor yellow "[WARN] Zero voxels in this region, going to next region"; continue;fi
 
   # tckedit in T1 streamlines
-  selectedtracto=${SUBJECTS_DIR}/${subjID}/mri/split/${hemi}_${target_type}_laplace-wm-streamlines_${labelID}.tck
+  selectedtracto=${SUBJECTS_DIR}/${subjID}/mri/split/${hemi}_${target_type}_streamlines_${labelID}.tck
   indices_to_keep=${selectedtracto%.tck}_indices.txt; #indices of the selected tracks
   my_do_cmd tckedit -quiet \
     -include ${tmpDir}/${labelID}.mif \
@@ -98,7 +98,7 @@ do
     do
     sed -i "${i}s/0/1/" ${tmpDir}/indices.txt
   done
-  selectedtracto=${SUBJECTS_DIR}/${subjID}/dwi/split/${hemi}_${target_type}_laplace-wm-streamlines_dwispace_${labelID}.tck
+  selectedtracto=${SUBJECTS_DIR}/${subjID}/dwi/split/${hemi}_${target_type}_streamlines_${labelID}.tck
   my_do_cmd tckedit -quiet \
     -tck_weights_in ${tmpDir}/indices.txt \
     -minweight 0.1  \
