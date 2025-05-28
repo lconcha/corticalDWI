@@ -3,6 +3,30 @@ source `which my_do_cmd`
 # module load freesurfer/7.3.2
 
 sID=$1;      # subject ID in the form of sub-74277
+bids_dir=$2
+
+help() {
+  echo "
+  Usage: $(basename $0) <subjID> <bids_dir>
+
+  <subjID>         subject ID in the form of sub-74277
+  <bids_dir>       path to the BIDS derivatives folder
+                   The FLAIR image should be in
+                   <bids_dir>/<subjID>/anat/<subjID>_*flair*.nii.gz
+
+  This script will add the FLAIR image to the FreeSurfer subject directory.
+  "
+}
+
+
+if [ $# -lt 2 ]
+then
+  echolor red "[ERROR] Not enough arguments"
+  help
+  exit 0
+fi
+
+
 flair=$(find ${bids_dir}/${sID}/anat -name *flair*nii.gz)
 outflair=${SUBJECTS_DIR}/${sID}/mri/flair.nii.gz
 

@@ -120,31 +120,33 @@ fi
 
 if [ $doComputeMRDS -eq 1 ]
 then
+  if [ ! -d $scratch_dir ]
+  then
+    echolor green "[INFO] Creating directory $scratch_dir"
+    mkdir $scratch_dir
+  fi
   ## Define if parallel or not
   if [ $doParallel -eq 1 ]
   then
-    if [ ! -d $scratch_dir ]
-    then
-      echolor green "[INFO] Creating directory $scratch_dir"
-      mkdir $scratch_dir
-    fi
     my_do_cmd inb_mrds_sge.sh
-      $dwi \
-      $scheme \
-      $mask \
-      $outbase \
-      $nVoxPerJob \
-      $scratch_dir
+    $dwi \
+    $scheme \
+    $mask \
+    $outbase \
+    $nVoxPerJob \
+    $scratch_dir
   else
     my_do_cmd inb_mrds.sh \
-      $dwi \
-      $scheme \
-      $mask \
-      $outbase
+    $dwi \
+    $scheme \
+    $mask \
+    $outbase
   fi
 else
   echolor yellow "[INFO] Will not run MRDS"
 fi
+
+gzip -v ${outbase}_DTInolin*.nii ${outbase}_MRDS_*.nii
 
 
 doFixels=1

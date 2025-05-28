@@ -7,6 +7,26 @@ target_type=$3
 f_metric=$4; # in the style of dwi/mrds_fixels/rh_fsLR-32k_FA-par.txt (it can also be in mri in case of T1 or FLAIR stuff)
 metric=$5; # short name for the metric
 
+help() {
+  echo "
+  Usage: $(basename $0) <subjID> <hemi> <target_type> <f_metric> <metric>
+
+  <subjID>         subject ID in the form of sub-74277
+  <hemi>           hemisphere (lh or rh)
+  <target_type>    type of target (e.g., 'fsLR-32k')
+  <f_metric>       file containing the metric values (e.g., dwi/mrds_fixels/rh_fsLR-32k_FA-par.txt)
+  <metric>         short name for the metric (e.g., FA, MD, etc.)
+
+  This script will compute mean and standard deviation of the specified metric per region. 
+  The regions are defined in the split streamline files in the SUBJECTS_DIR/${subjID}/dwi/split/ directory.
+  The output will be saved in the same directory with the suffix '_mean_std_<metric>.txt'.
+  The output file will contain two columns: mean and standard deviation of the metric values for each region.
+
+
+  
+  "
+}
+
 
 function mean_std() {
     f=$1

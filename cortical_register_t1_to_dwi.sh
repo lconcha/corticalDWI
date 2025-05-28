@@ -2,6 +2,29 @@
 
 sID=$1
 
+
+help() {
+  echo "
+  Usage: $(basename $0) <subjID>
+
+  <subjID>         subject ID in the form of sub-74277
+
+  This script will register the T1 image to the b0 image in the DWI folder.
+  It will create a set of files in the DWI folder:
+  - t1native_to_b0_1Warp.nii.gz
+  - t1native_to_b0_0GenericAffine.mat
+  - t1native_to_b0.nii.gz
+  "
+}
+
+
+if [ $# -lt 1 ]
+then
+  echolor red "[ERROR] Not enough arguments"
+  help
+  exit 0
+fi
+
 if [ ! -d ${SUBJECTS_DIR}/${sID} ]
 then
   echolor red "[ERROR] Cannot find directory ${SUBJECTS_DIR}/${sID}"

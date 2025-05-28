@@ -3,6 +3,35 @@ source `which my_do_cmd`
 # module load freesurfer/7.3.2
 
 sID=$1;      # subject ID in the form of sub-74277
+
+
+help() {
+  echo "
+  Usage: $(basename $0) <subjID>
+
+  <subjID>         subject ID in the form of sub-74277
+
+  This script will process the T1w image: <SUBJECTS_DIR>/<sID>/mri/orig.mgz
+  It will denoise, bias correct, and create the gradient image.
+  The processed T1w image will be saved as:
+  <SUBJECTS_DIR>/<sID>/mri/T1w_proc.nii.gz
+  The gradient image will be saved as:
+  <SUBJECTS_DIR>/<sID>/mri/T1w_proc_grad.nii.gz
+
+  Oddly, this script needs freesurfer 7.3.2.
+  "
+}
+
+if [ $# -lt 1 ]
+then
+  echolor red "[ERROR] Not enough arguments"
+  help
+  exit 0
+fi
+
+
+
+
 T1w=$SUBJECTS_DIR/${sID}/mri/orig.mgz
 outT1w=${SUBJECTS_DIR}/${sID}/mri/T1w_proc.nii.gz
 

@@ -4,6 +4,24 @@ source `which my_do_cmd `
 sID=$1
 target_type=$2; # 5k or 32k
 
+help() {
+  echo "
+  Usage: $(basename $0) <subjID> <target_type>
+
+  <subjID>         subject ID in the form of sub-74277
+  <target_type>    type of target (e.g., 'fsLR-32k')
+
+  This script will visualize the Laplacian field streamlines on top of the T1 brain and FA maps.
+  "
+}
+
+if [ $# -lt 2 ]
+then
+  echolor red "[ERROR] Not enough arguments"
+  help
+  exit 0
+fi
+
 
 t1_brain=${SUBJECTS_DIR}/${sID}/mri/brain.mgz
 fa=${SUBJECTS_DIR}/${sID}/dwi/fa.nii.gz

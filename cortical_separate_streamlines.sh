@@ -1,6 +1,31 @@
 #!/bin/bash
 source `which my_do_cmd`
 
+subjID=$1
+hemi=$2
+target_type=$3
+
+
+help() {
+  echo "
+  Usage: $(basename $0) [options] <subjID> <hemi> <target_type>
+
+  <subjID>         subject ID in the form of sub-74277
+  <hemi>           hemisphere (lh or rh)
+  <target_type>    type of target (e.g., 'fsLR-32k')
+
+  Options:
+    -f              Force overwrite existing files
+  "
+}
+
+if [ $# -lt 3 ]
+then
+  echolor red "[ERROR] Not enough arguments"
+  help
+  exit 0
+fi
+
 
 
 force=0
@@ -19,10 +44,6 @@ do
 done
 shift $((OPTIND-1))
 
-
-subjID=$1
-hemi=$2
-target_type=$3
 
 
 fsLUT=${FREESURFER_HOME}/luts/FreeSurferColorLUT.txt

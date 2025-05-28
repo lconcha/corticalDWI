@@ -10,6 +10,26 @@ bids_dir=$2
 #dwimif=$2;   # full path to preprocessed dwi.mif
              # example /misc/lauterbur/lconcha/TMP/glaucoma/bids/derivatives/sub-74277/dwi/sub-74277_acq-hb_dwi_de.mif
 
+help() {
+  echo "
+  Usage: $(basename $0) <subjID> <bids_dir>
+
+  <subjID>         subject ID in the form of sub-74277
+  <bids_dir>       path to the BIDS derivatives folder
+                   The preprocessed dwi.mif file should be in
+                   <bids_dir>/derivatives/<subjID>/dwi/<subjID>_acq-hb_dwi_de.mif
+
+  This script will convert the dwi.mif file to nii.gz and create a set of derived metrics.
+  "
+}
+
+
+if [ $# -lt 2 ]
+then
+  echolor red "[ERROR] Not enough arguments"
+  help
+  exit 0
+fi
 
 
 

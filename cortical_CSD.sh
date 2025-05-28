@@ -4,6 +4,29 @@ source `which my_do_cmd`
 
 sID=$1;      # subject ID in the form of sub-74277
 
+help() {
+  echo "
+  Usage: $(basename $0) <subjID>
+
+  <subjID>         subject ID in the form of sub-74277
+
+  This script will compute multi-tissue CSD and single-tissue CSD
+  using the response functions calculated from the dwi data.
+
+  It will create two directories:
+  - ${SUBJECTS_DIR}/${sID}/dwi/csd_fixels
+  - ${SUBJECTS_DIR}/${sID}/dwi/csd_fixels_singletissue
+  "
+}
+
+
+if [ $# -lt 1 ]
+then
+  echolor red "[ERROR] Not enough arguments"
+  help
+  exit 0
+fi
+
 
 if [ ! -d ${SUBJECTS_DIR}/${sID} ]
 then

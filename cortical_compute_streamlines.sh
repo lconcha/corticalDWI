@@ -10,6 +10,22 @@ tck_step_size=0.5
 
 CODEDIR=$(dirname $0)
 
+help() {
+  echo "
+  Usage: $(basename $0) <subjID> <hemi> <target_type> <nsteps> <step_size>
+
+  <subjID>         subject ID in the form of sub-74277
+  <hemi>           hemisphere (lh or rh)
+  <target_type>    type of target (e.g., 'fsLR-32k')
+  <nsteps>         number of steps to take along the streamline (suggested: 200)
+  <step_size>      step size in mm (suggested: '0.1')
+
+  Please note that the tck is resampled to a step size of ${tck_step_size} mm at the end of the process.
+
+  This script will compute streamlines from the white matter surface to the pial surface
+  using the Laplacian field.
+  "
+}
 
 
 

@@ -6,6 +6,28 @@ hemi=$2
 surf_type=$3
 target_type=$4
 
+
+help( ) {
+  echo "
+  Usage: $(basename $0) <subjID> <hemi> <surf_type> <target_type>
+
+  <subjID>         subject ID in the form of sub-74277
+  <hemi>           hemisphere (lh or rh)
+  <surf_type>      type of surface (e.g., 'pial', 'white', 'inflated')
+  <target_type>    type of target (e.g., 'fsLR-5k', 'fsLR-32k', 'fsaverage5')
+
+  This script will resample the original surface to the target surface.
+  "
+}
+
+if [ $# -lt 4 ]
+then
+  echolor red "[ERROR] Not enough arguments"
+  help
+  exit 0
+fi
+
+
 sub_orig_surf=${SUBJECTS_DIR}/${subjID}/surf/${hemi}.${surf_type}
 sub_orig_sphere=${SUBJECTS_DIR}/${subjID}/surf/${hemi}.sphere
 out_surface=${SUBJECTS_DIR}/${subjID}/surf/${hemi}_${surf_type}_${target_type}.surf.gii
