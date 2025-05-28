@@ -17,15 +17,38 @@ import numpy as np
 import sys
 from streamtracer import StreamTracer, VectorGrid
 
-in_surf      = sys.argv[1]           # Should be a .gii file in scanner coordinates
-in_surf_pial = sys.argv[2]           # Should be a .gii file in scanner coordinates
-in_vec       = sys.argv[3]            # .nii 4D
-nsteps       = sys.argv[4]            # 200
-step_size    = sys.argv[5]         # 0.1
+# Function to print help message
+def print_help():
+    print(f"""
+Usage: {sys.argv[0]} <in_surf> <in_surf_pial> <in_vec> <nsteps> <step_size> <out_tck>
+
+Arguments:
+  in_surf        Input white surface (.gii) in scanner coordinates
+  in_surf_pial   Input pial surface (.gii) in scanner coordinates, or 'no' to skip
+  in_vec         4D NIfTI file with vector field
+  nsteps         Number of steps for streamline tracing (e.g., 200)
+  step_size      Step size (in mm) for streamline tracing (e.g., 0.1)
+  out_tck        Output .tck file
+
+Example:
+  python {sys.argv[0]} lh.white.surf.gii no laplace_vectors.nii.gz 200 0.1 output.tck
+""")
+
+if len(sys.argv) < 7 or sys.argv[1] in ("-h", "--help"):
+    print_help()
+    sys.exit(0)
+
+
+
+in_surf      = sys.argv[1]   # Should be a .gii file in scanner coordinates
+in_surf_pial = sys.argv[2]   # Should be a .gii file in scanner coordinates
+in_vec       = sys.argv[3]   # .nii 4D
+nsteps       = sys.argv[4]   # 200
+step_size    = sys.argv[5]   # 0.1
 out_tck      = sys.argv[6]
 
-nsteps    = int(nsteps)
-step_size = float(step_size)
+nsteps       = int(nsteps)
+step_size    = float(step_size)
 
 print(f'Starting the creation of streamlines with the following arguments:')
 print(f'  - in_surf      : {in_surf}')

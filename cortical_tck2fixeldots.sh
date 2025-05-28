@@ -1,6 +1,23 @@
 #!/bin/bash
 source `which my_do_cmd`
 
+
+help() {
+  echo "
+  Usage: $(basename $0) <subjID> <hemi> <target_type> <fixel_dir>
+
+  <subjID>         subject ID in the form of sub-74277
+  <hemi>           hemisphere (lh or rh)
+  <target_type>    type of target (e.g., 'fsLR-32k')
+  <fixel_dir>      directory containing fixels (e.g., csd_fixels or mrds_fixels)
+
+  Will compute the dot product between each streamline segment and the underlying fixels,
+
+  
+  "
+}
+
+
 subjID=$1
 hemi=$2
 target_type=$3

@@ -1,8 +1,35 @@
 #!/bin/bash
 source `which my_do_cmd`
 
+help() {
+  echo "
+  Usage: $(basename $0) <subjID> <fixel_dir> <angle> <nDepths>
+  
+  <subjID>     subject ID in the form of sub-74277
+  <fixel_dir>  directory containing fixel files, e.g., csd_fixel
+  <angle>      Maximum angle (in degrees) between the streamline and the fixel direction.
+               This is in degrees, e.g., 45.
+  <nDepths>    number of depth points to keep in the txt file.
+               This is in steps, not mm,
+               and has to be less than or equal to the number of depth points in the tsf file.
+
+  Only AFD values are sampled, and separated into parallel and perpendicular components.
+  Perpendicular can be defined in two ways:
+  - The fixel with the lowest dot product to the streamline segment (afd-perp)
+  - The average of all fixels except for the most parallel to the streamline segment (afd-perp-av)
+  "
+}
+
+if [ $# -ne 4 ]
+then
+  echolor red "Wrong number of arguments"
+  help
+  exit 0
+fi
+
+
 subjID=$1
-fixel_dir=$2; # csd_fixels or mrds_fixels (or something else)
+fixel_dir=$2; # csd_fixels
 angle=$3
 nDepths=$4; # number of depth points to keep in the txt file. The tsf saves them all.
 

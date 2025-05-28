@@ -2,6 +2,35 @@
 source `which my_do_cmd`
 
 
+help() {
+  echo "
+  Usage: $(basename $0) <subjID> <hemi> <target_type> <tck_step_size>
+  
+  <subjID>        subject ID in the form of sub-74277
+  <hemi>          hemisphere, lh or rh
+  <target_type>   target type, e.g., fsLR-32k
+  <tck_step_size> step size for tck resampling, e.g., 0.5 (mm)
+  
+  This script warps the Laplacian streamlines tck from T1 space to DWI space.
+  
+  For this to work, you should have run:
+   - cortical_laplacian_wm_streamlines.sh
+   - cortical_register_t1_to_dwi.sh
+
+  The output is saved as $<hemi>_<target_type>_laplace-wm-streamlines_dwispace.tck.
+  "
+}
+
+
+if [ $# -ne 4 ]
+then
+  echolor red "Wrong number of arguments"
+  help
+  exit 0
+fi
+
+
+
 sID=$1
 hemi=$2;        #lh, rh
 target_type=$3; #fsLR-32k

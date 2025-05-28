@@ -23,11 +23,18 @@ help() {
 }
 
 
+if [ $# -lt 3 ]
+then
+  echolor red "Not enough arguments"
+  help
+  exit 0
+fi
+
 
 writeMask=0
 writeTck_t1=0
 writeTck_dwi=0
-while getopts "m:t:d:" opt
+while getopts "m:t:d:h" opt
 do
   case $opt in
     m)
@@ -42,11 +49,11 @@ do
       writeTck_dwi=1
       tck_out_dwi=${OPTARG}
  ;;
-    h|\?)
+    h)
       help
       exit 0
     ;;
-    \?)
+    *)
       echolor red "[ERROR] Invalid flag."
       exit 2
     ;;

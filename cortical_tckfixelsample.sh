@@ -2,6 +2,27 @@
 
 # this is just a wrapper for the matlab function
 
+help() {
+  echo "
+  Usage: $(basename $0) [options] -t <tck> -d <PDD> -n <nComp> -i <input1> [-i <input2> ...] -p <prefix>
+
+  Options:
+  -t <tck>       : Path to the input tck file.
+  -d <PDD>       : Path to the PDD file.
+  -n <nComp>     : Number of components to use.
+  -i <input>     : Input files (can be specified multiple times).
+  -p <prefix>    : Prefix for output files.
+
+  This script will run a MATLAB function to sample fixel values from a tck file.
+  "
+}
+
+if [ $# -lt 1 ]
+then
+  echolor red "Not enough arguments"
+  help
+  exit 0
+fi
 
 
 Inputs=""

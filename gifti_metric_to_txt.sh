@@ -1,5 +1,27 @@
 #!/bin/bash
 
+help() {
+  echo "
+  Usage: $(basename $0) <gifti_file> <output_txt_file>
+  
+  <gifti_file>      input GIFTI file (with .gii extension)
+  <output_txt_file> output text file to save the data
+  
+  Converts a GIFTI file to a text file containing the data.
+  
+  This script uses wb_command to convert the GIFTI file to XML,
+  then extracts the data using an awk hack. Ugly, but quick.
+  "
+}
+
+if [ $# -ne 2 ]
+then
+  echolor red "Wrong number of arguments"
+  help
+  exit 0
+fi
+
+
 gifti=$1
 txt=$2
 
