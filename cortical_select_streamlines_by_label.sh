@@ -12,7 +12,9 @@ help() {
 
   Options: 
 
-  -m <mask_out>     output mask in dwispace (nii[.gz] or mif format)
+  -m <mask_out>     output mask in dwispace (nii[.gz] or mif format).
+                    Please note that there is a dilation step applied to the mask, 
+                    therefore the number of voxels in the mask may not match a tckmap output.
   -t <out.tck>      output tck in T1 space
   -d <out_dwi.tck>  output tck in DWI space
   
