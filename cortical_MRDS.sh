@@ -6,13 +6,19 @@ doParallel=1
 
 print_help () {
   echo "
-  `basename $0`  <sID> [options]
+  `basename $0`  [options]  <sID>
 
   Options:
 
-  -no_parallel  : Do not multiplex this command as jobs sent to the cluster.
-                  Compute locally (a lot longer).
-
+  -no_parallel   : Do not multiplex this command as jobs sent to the cluster.
+                   Compute locally (a lot longer but useful if SGE is not working).
+  -roi <roi>     : Binary mask (nii[.gz], but NOT mif format) to use for MRDS fitting.
+                   If not provided, will use the mask in the dwi directory.
+                   Remember that you can use cortical_select_streamlines_by_label.sh
+                   to create a mask from a parcellation.
+                   Caution: If the mask is too small and does not contain enough white matter voxels,
+                   then the response function should be provided explicitly (not implemented yet).
+  -help          : Print this help message and exit.
   "
 }
 
@@ -35,12 +41,18 @@ do
       doParallel=0
       shift
     ;;
-    -label)
-      labelID=$2
-      target_type=$3
-      echolor green "[INFO] label is $labelID"
-      echolor green "[INFO] target_type is $target_type"
-      shift;shift;shift
+    -roi)
+      roi=$2
+      if [ ! -f $roi ]
+      then
+        echolor red "[ERROR] Cannot find roi file: $roi"
+        exit 2
+      fi
+      shift;shift
+    ;;
+    -h|help)
+      print_help
+      exit 0
     ;;
   esac
 done
@@ -61,10 +73,18 @@ dwi=${SUBJECTS_DIR}/${sID}/dwi/dwi.nii.gz
 bvec=${SUBJECTS_DIR}/${sID}/dwi/dwi.bvec
 bval=${SUBJECTS_DIR}/${sID}/dwi/dwi.bval
 scheme=${SUBJECTS_DIR}/${sID}/dwi/dwi.scheme
-mask=${SUBJECTS_DIR}/${sID}/dwi/mask.nii.gz
 outbase=${SUBJECTS_DIR}/${sID}/dwi/${sID}
 nVoxPerJob=10000
 scratch_dir=${SUBJECTS_DIR}/${sID}/dwi/tmp
+
+if [ ! -z "$roi" ]
+then
+  echolor green "[INFO] Using roi: $roi"
+  mask=$roi
+else
+  mask=${SUBJECTS_DIR}/${sID}/dwi/mask.nii.gz
+  echolor green "[INFO] No roi provided, using mask: $mask"
+fi
 
 
 isOK=1
@@ -81,19 +101,9 @@ done
 if [ $isOK -eq 0 ]; then exit 2; fi
 
 
-if [ ! -z $labelID ]
-then
-  roi=${SUBJECTS_DIR}/${sID}/dwi/tmp/mask_${labelID}.mif
-  if [ -f $roi ]; then rm $roi; fi
-  my_do_cmd cortical_select_streamlines_by_label.sh -m $roi $sID $labelID $target_type
-  mask=$roi
-  echolor green "[INFO] Mask has changed to $mask"
-fi
 
 nVoxels=$(mrstats -ignorezero $mask -output count)
 echolor green "[INFO] Will fit MRDS in $nVoxels voxels"
-echolor cyan "breakpoint"!
-exit 0
 
 
 
