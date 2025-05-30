@@ -66,8 +66,15 @@ freeview -v ${SUBJECTS_DIR}/$subjid/mri/brain.mgz -f ${SUBJECTS_DIR}/$subjid/sur
 First we must prepare our environment, this will call for things in our `micapipe` environment.
 
 ```bash
-module load ANTs/ workbench_con
+module load freesurfer/7.3.2 ANTs/ workbench_con/
+export SUBJECTS_DIR=/misc/sherrington/lconcha/TMP/glaucoma/fs_glaucoma; # do not forget to set this after any time you load the freesurfer module. We had already loaded it, it is here just as a reminder that the pipeline works well on v7.3.2
 conda activate micapipe  # crucial to do after module load to get the correct python in path
+```
+
+And, of course, add the corticalDWI repository (and `inb_tools`, if needed) to your PATH. In my case:
+```bash
+corticalDWI_repo=/datos/lauterbur2/lconcha/nobackup/MOVED_lauterbur/code/corticalDWI
+export PATH=${corticalDWI_repo}:$PATH
 ```
 
 ## Add the DWIs to the freesurfer file structure
@@ -92,20 +99,42 @@ sub-79864/dwi
 └── v1.nii.gz
 ```
 
-## Define parameters
+Check your newly-created DTI maps:
+```bash
+ mrview $SUBJECTS_DIR/$subjid/dwi/{v1,fa,b0,md}.nii.gz
+```
+
+![DTI-maps](images/dti_maps.png)
+
+
+
+
+## Computing Laplacian field
+
+Define parameters
+
 ```bash
 nsteps=100
 step_size="0.1"
 tck_step_size=0.5
 target_type=fsLR-32k
 ```
+And get your Laplacians.
 
-## Computing Laplacian field
 ```bash
 cortical_compute_laplacian.sh $subjid
 ```
 
+Results are saved in the `mri` folder, since the Laplacian field is calculated in the T1 native space. Later on we will be able to move the laplacian streamlines to the dwi space. Check your result:
+
+```bash
+mrview ${SUBJECTS_DIR}/$subjid/mri/aparc+aseg.nii.gz -fixel.load $subjid/mri/laplace-wm_vec.nii.gz
+```
+
+![laplacian vectors](images/laplacian_vectors.png)
+
 ## Resample surfaces
+This resamples the freesurfer's white and pial surfaces to whatever `$target_type` you want, typically `fsLR-32k`. It will also create surfaces with scanner coordinates, which we will use to compute the streamlines in the next step. Results are saved in the `surf` folder.
 ```bash
 for hemi in lh rh; do
   for surf_type in white pial; do
@@ -125,7 +154,76 @@ When each of these finishes, you can see in cyan the suggested command to check 
 
 
 ## Register T1/dwi
-This step uses `mri_synthseg` to segment both T1 and the DWIs, followed by registration of these two segmentations via ANTs. Oddly, `mri_synthseg` does not work well in freesurfer 7.4.
+This step uses `mri_synthseg` to segment both T1 and the DWIs, followed by registration of these two segmentations via ANTs. Ideally, use a PC with at least 32 GB of RAM and plenty of CPU threads.
 ```bash
 cortical_register_t1_to_dwi.sh $subjid
 ```
+
+The command itself will tell you how to check your results. Use the <kbd>PgUp</kbd> and <kbd>PgDn</kbd> keys to switch between volumes, and make sure that the registration is as good as can be. Check the cortex in the frontal and temporal poles.
+
+
+## Warp streamlines to DWI space
+Streamlines were created in t1 native space, because that is where the surfaces were generated. However, what we want to sample is in dwi space. Now, _we could_ transform all DWI-derived maps to t1 space and sample there, but that would be a hassle, since we would need to transform all vector-related stuff (fixels, principal diffusion directions, etc). So, instead we bring the t1-derived streamlines over to the dwi world.
+```bash
+for hemi in lh rh; do
+  cortical_warp_tck_to_dwi.sh $subjid $hemi $target_type $tck_step_size
+done
+```
+When the script finishes, it will tell you how to visualize the results, go ahead and check that the streamlines are truly in dwi space. This is crucial, or else we will sample some other trash!
+
+![laplacian_streamlines_dwi](images/laplacian_streamlines_dwi.png)
+
+
+
+## CSD
+Now we compute constrained spherical deconvolution across the entire brain, including the fixels directory that we will then use to extract apparent fiber density per fixel.
+
+```bash
+cortical_CSD.sh $subji
+```
+
+Two versions of CSD will be computed, each with its own advantages and disadvantages.
+
+* **Multi-shell multi-tissue.** This creates beautiful FODs all throughout the brain. It is very favoured by folks doing tractography, as the WM fods are sharper and cleaner from partial volume effects of gray matter and CSF. However, since the response function for gray matter is spherical on purpose, it is impossible to obtain per-bundle AFD metrics in the cortex. So, this may be a good option for analysis of superficial white matter, but not so much for intra-cortical analysis.
+* **Multi-shell single tissue.** A single response functio is estimated for white matter, and applied throughout the brain, even in the cortex. This effectively allows us to obtain per-bundle metrics (AFD) in the cortex. There is a possibility of finding spurious fixels in the cortex that arise from diffusion of mostly isotropic components therein, but we assume here that any large fixels correspond to "neurites", which should have a response function similar to that found in deep white matter. This is an important assumption, and something to always consider when intepreting results.
+![alt text](images/fod_fixels.png)
+
+
+## MRDS
+Here we fit one, two, or three tensors to each voxel throughout the brain using multi-resolution discrete search [(Coronado-Leija, Ramírez-Manzanares & Marroquín, 2017)](https://doi.org/10.1016/j.media.2017.06.008). The optimal number of tensors that best explain the underlying signal (per voxel) is estimated with Bayes' information criterion (BIC). This is a _very_ time-consuming step, expect around 24 per subject on a multi-core workstation! You have been warned! 
+
+```bash
+cortical_MRDS.sh $subjid
+```
+:information_source: Let's focus on CSD for this tutorial and skip MRDS.
+
+
+## Sample fixels
+Ah, the final frontier! Let's get the AFD values along the laplacian streamlines, separating those derived from the FODs mostly aligned parallel to the streamline, to those that are perpendicular to it; the first is related to radial fibers entering and exiting the cortex to and from the deep white matter, while the second represents fibers running tangential to the pial surface, likely inter-columnar fibers (within the cortex) and U-fibers (in the superficial white matter). To make nomenclature clear:
+
+
+| Geometric relation to Laplacian streamline | Fiber population | Biological interpretation        |
+|--------------------------------------------|------------------|----------------------------------|
+| parallel                                   | radial fibers    | cortical afferents and efferents |
+| perpendicular                              | tangential       | inter-columnar and U-fibers      |
+
+In this tutorial we will sample the single-tissue fixels, so that we get (meaningful) results from the voxels within the cortical ribbon.
+
+We must have the custom-made mrtrix modules in our `$PATH`. They can be obtained [here](https://github.com/lconcha/inb_mrtrix_modules). These modules are modifications (hacks, really) of the commands `tckfixel` and `tcksample` in the original mrtrix implementation. The modification allows for:
+* the calculation of the dot product between each streamline segment and the underlying fixel(s)
+* sampling the per-fixel AFD, and assignment to either radial or tangential fibers. 
+  * The fixel showing the largest dot product to the streamline segment is assigned as **parallel**.
+  * **Perpendicular** can be defined in two ways: either the most perpendicular (i.e., lowest dot product), or the average of all fixels except the one defined as parallel. Both are supplied as results.
+
+
+:information source: The next step requires Matlab, make sure you have loaded the module and/or set up your PATH.
+
+
+```bash
+fixel_dir=csd_fixels_singletissue
+angle=45
+nDepths=30
+cortical_tcksamplefixels_afd.sh $subjid $fixel_dir $angle $nDepths $target_type
+```
+
+:warning: The variable `nDepths` represents how deep we will sample, **starting from the pial surface**. This is given in number of steps in the tck file. But, since we already know that `tck_step_size=0.5`, we can obtain how deep we will go, in this case `0.5 mm * 30 = 6 mm`.
