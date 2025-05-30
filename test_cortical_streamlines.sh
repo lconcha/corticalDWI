@@ -8,12 +8,12 @@ source `which my_do_cmd`
 # conda activate micapipe  # crucial to do after module load to get the correct python in path
 
 
-export SUBJECTS_DIR=/misc/lauterbur/lconcha/TMP/glaucoma/fs_glaucoma
-sID=sub-74277
+export SUBJECTS_DIR=export SUBJECTS_DIR=/datos/lauterbur2/lconcha/Edmonton/fs_edmonton
+sID=sub-Mcd014
 nsteps=100
 step_size="0.1"
 tck_step_size=0.5
-target_type=fsLR-5k
+target_type=fsLR-32k
 
 
 
