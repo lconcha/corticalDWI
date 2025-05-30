@@ -62,7 +62,8 @@ done
 if [ $isOK -eq 0 ]; then exit 2; fi
 
 
-
+# Please note that the following script is in a different repository:
+# https://github.com/lconcha/inb_tools
 inb_synthreg.sh \
   -fixed $b0 \
   -moving $t1 \
