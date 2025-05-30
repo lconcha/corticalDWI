@@ -24,14 +24,14 @@ then
   echolor red "Wrong number of arguments"
   help
   exit 0
-
+fi
 
 fixel_dir=$1
 nDepths=$2
 
 
 
-matlabjobfile=/tmp/matlabjobfile.m
+matlabjobfile=/tmp/matlabjobfile_$$.m
 ####################### matlab job
 echo "
 addpath('${thispath}');

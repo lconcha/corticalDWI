@@ -6,7 +6,7 @@ source `which my_do_cmd`
 # anaconda_on
 # module load freesurfer/7.4.0 ANTs/ workbench_con
 # conda activate micapipe  # crucial to do after module load to get the correct python in path
-
+###
 
 export SUBJECTS_DIR=export SUBJECTS_DIR=/datos/lauterbur2/lconcha/Edmonton/fs_edmonton
 sID=sub-Mcd014
