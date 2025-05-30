@@ -27,6 +27,12 @@ help() {
   "
 }
 
+if [ $# -ne 5 ]
+then
+  echolor red "Incorrect number of arguments"
+  help
+  exit 0
+fi
 
 
 surf_white=${SUBJECTS_DIR}/${sID}/surf/${hemi}_white_${target_type}.surf.gii
@@ -34,15 +40,16 @@ surf_pial=${SUBJECTS_DIR}/${sID}/surf/${hemi}_pial_${target_type}.surf.gii
 in_vec=${SUBJECTS_DIR}/${sID}/mri/laplace-wm_vec.nii.gz
 
 
+## NOTE THis is now done inside cortical_resample_surface.sh
 # convert surfaces to scanner coordinates
-my_do_cmd mris_convert --to-scanner \
-  $surf_white \
-  ${SUBJECTS_DIR}/${sID}/surf/${hemi}_white_${target_type}_scanner.surf.gii
-surf_white=${SUBJECTS_DIR}/${sID}/surf/${hemi}_white_${target_type}_scanner.surf.gii
-my_do_cmd mris_convert --to-scanner \
-  $surf_pial \
-  ${SUBJECTS_DIR}/${sID}/surf/${hemi}_pial_${target_type}_scanner.surf.gii
-surf_pial=${SUBJECTS_DIR}/${sID}/surf/${hemi}_pial_${target_type}_scanner.surf.gii
+# my_do_cmd mris_convert --to-scanner \
+#   $surf_white \
+#   ${SUBJECTS_DIR}/${sID}/surf/${hemi}_white_${target_type}_scanner.surf.gii
+# surf_white=${SUBJECTS_DIR}/${sID}/surf/${hemi}_white_${target_type}_scanner.surf.gii
+# my_do_cmd mris_convert --to-scanner \
+#   $surf_pial \
+#   ${SUBJECTS_DIR}/${sID}/surf/${hemi}_pial_${target_type}_scanner.surf.gii
+# surf_pial=${SUBJECTS_DIR}/${sID}/surf/${hemi}_pial_${target_type}_scanner.surf.gii
 
 
 #in_surf=${SUBJECTS_DIR}/${sID}/surf/${hemi}_white_scanner.surf.gii
