@@ -110,16 +110,15 @@ my_do_cmd wb_command -surface-generate-inflated \
   ${out_surface%.surf.gii}_veryInflated.surf.gii
 
 
-my_do_cmd cortical_transform_to_scanner_coords.sh \
-  $out_surface \
-  $sub_orig_surf \
-  ${out_surface%.surf.gii}_scanner.surf.gii
+# my_do_cmd cortical_transform_to_scanner_coords.sh \
+#   $out_surface \
+#   $sub_orig_surf \
+#   ${out_surface%.surf.gii}_scanner.surf.gii
 
 
 
 echo "
-freeview -v ${SUBJECTS_DIR}/${subjID}/mri/brain.mgz -f $sub_orig_surf $out_surface ${out_surface%.surf.gii}_veryInflated.surf.gii
-"
-
+freeview -v ${SUBJECTS_DIR}/${subjID}/mri/brain.mgz \
+  -f $sub_orig_surf $out_surface"
 
 rm -fR $tmpDir
