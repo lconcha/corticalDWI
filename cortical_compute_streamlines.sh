@@ -65,7 +65,8 @@ my_do_cmd python $CODEDIR/cortical_streamlines.py \
   $nsteps \
   $step_size \
   $tmp_tck
-my_do_cmd tckresample -force -quiet -step_size $tck_step_size $tmp_tck $out_tck
+#my_do_cmd tckresample -force -quiet -step_size $tck_step_size $tmp_tck $out_tck
+my_do_cmd cortical_tckresample_and_truncate.py $tmp_tck $out_tck --step_size $tck_step_size
 rm $tmp_tck
 
 
