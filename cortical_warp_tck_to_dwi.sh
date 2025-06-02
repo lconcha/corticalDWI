@@ -78,10 +78,11 @@ my_do_cmd tcktransform \
   $tck_t1space \
   ${tmpDir}/inv_mrtrix_warp_corrected.mif \
   ${tmpDir}/warped.tck
-my_do_cmd tckresample -force -quiet \
-  -step_size $tck_step_size \
+
+my_do_cmd cortical_tckresample_and_truncate.py \
   ${tmpDir}/warped.tck \
-  $tck_dwispace
+  $tck_dwispace \
+  --step_size $tck_step_size
 
 rm -fR $tmpDir
 
