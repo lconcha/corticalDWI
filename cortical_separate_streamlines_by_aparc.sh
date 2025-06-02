@@ -70,6 +70,7 @@ else
   fi
 fi
 
+echolor green "[INFO] Will separate streamlines using aparc labels from $aparc"
 
 tmpDir=$(mktemp -d)
 
