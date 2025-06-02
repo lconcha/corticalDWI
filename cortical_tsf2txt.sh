@@ -39,14 +39,12 @@ my_do_cmd tsfinfo -ascii ${tmpDir}/prefix $tsf
 
 
 n=$(ls ${tmpDir}/prefix*  | wc -l)
-echolor cyan "[INFO] Transposing each txt ($n in total)"
 for f in ${tmpDir}/prefix*
 do
-  ft=${f}_transposed
-  transpose_table.sh $f | sed 's/\t/ /g' > $ft
+  echo "X" >> $f
 done
-cat ${tmpDir}/*transposed >> ${tmpDir}/full.txt
-
+cat ${tmpDir}/prefix* > ${tmpDir}/full_X.txt
+cat ${tmpDir}/full_X.txt | tr '\n' ' ' | sed 's/X/\n/g' | sed 's/^ //g' > ${tmpDir}/full.txt
 
 
 echolor cyan "[INFO] Retaining only the first $nCols columns"
