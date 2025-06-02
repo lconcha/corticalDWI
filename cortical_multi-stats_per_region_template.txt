@@ -12,7 +12,7 @@ dwi/csd_fixels_singletissue/HEMI_TARGET_afd-par.txt     afd-par
 dwi/csd_fixels_singletissue/HEMI_TARGET_afd-perp.txt    afd-perp/
 #
 # DTI
-dwi/HEMO_TARGET_fa.txt                                  fa
-dwi/HEMO_TARGET_md.txt                                  md
-dwi/HEMO_TARGET_ad.txt                                  ad
-dwi/HEMO_TARGET_rd.txt                                  rd
+dwi/HEMI_TARGET_fa.txt                                  fa
+dwi/HEMI_TARGET_md.txt                                  md
+dwi/HEMI_TARGET_ad.txt                                  ad
+dwi/HEMI_TARGET_rd.txt                                  rd
