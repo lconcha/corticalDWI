@@ -69,4 +69,4 @@ done
 
 
 
-my_do_cmd cortical_tsf2txt_matlab.sh ${SUBJECTS_DIR}/${subjID}/dwi/ $nDepths
+my_do_cmd cortical_tsf2txt_in_fixeldir.sh ${SUBJECTS_DIR}/${subjID}/dwi/ $nDepths

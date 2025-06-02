@@ -99,7 +99,7 @@ do
 done
 
 
-cortical_tsf2txt_matlab.sh $fixel_dir $nDepths
+cortical_tsf2txt_in_fixeldir.sh $fixel_dir $nDepths
 
 
 

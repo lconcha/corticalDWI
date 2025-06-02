@@ -97,4 +97,4 @@ done
 #   my_do_cmd  cortical_tsf2txt_matlab.sh $tsf $txt $nDepths
 # done
 
-my_do_cmd cortical_tsf2txt_matlab.sh $fixel_dir $nDepths
+my_do_cmd cortical_tsf2txt_in_fixeldir.sh $fixel_dir $nDepths
