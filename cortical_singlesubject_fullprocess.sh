@@ -26,7 +26,16 @@ template=/misc/sherrington/lconcha/code/corticalDWI/test_cortical_mult-stats_per
 
 
 
+## Check that we have enough power (mostly for syntseg)
+minRAM=16 # in GB
+RAM=$(free -t --giga | awk '{print $2}' |  head -n 2 | tail -n 1)
+if [ $RAM -lt $minRAM ]; then
+  echolor red "[ERROR] Not enough RAM available. At least $minRAM GB is required."
+  sleep 100
+fi
 
+
+#exit 2
 
 # Prepare the environment
 module load freesurfer/7.3.2 mrtrix/3.0.4 ANTs/2.4.4 workbench_con/2.0.1
