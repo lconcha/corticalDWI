@@ -12,10 +12,7 @@ help() {
   
   Converts a .tsf file to a .txt file.
 
-  This script does not use MATLAB, but it is kinda slow, as it transposes
-  intermediary text files one by one using awk (transpose_table.sh).
-
-  This script should be rewritten in Python for speed.
+ 
   "
 }
 

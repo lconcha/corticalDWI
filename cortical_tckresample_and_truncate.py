@@ -68,6 +68,8 @@ def resample_tck_file(f_tck_in, f_tck_out, step_size,max_length=None):
         return
 
     original_streamlines = tck.streamlines
+    nStreamlines = len(original_streamlines)
+    print(f"Loaded {nStreamlines} streamlines from {f_tck_in}.")
     resampled_streamlines_data = []
 
     print(f"Resampling streamlines to step size {step_size}...")
@@ -76,6 +78,7 @@ def resample_tck_file(f_tck_in, f_tck_out, step_size,max_length=None):
 
     for streamline in original_streamlines:
         if streamline.ndim == 1:
+            print("Warning: Detected a 1D streamline, reshaping to 2D.")
             streamline = streamline.reshape(1, -1)
         
         # First resample at high resolution in case we need to truncate later
@@ -110,7 +113,12 @@ def resample_tck_file(f_tck_in, f_tck_out, step_size,max_length=None):
    
     print(f"Saving resampled TCK to {f_tck_out}...")
     try:
-        nib.streamlines.save(tractogram, f_tck_out)
+        # Use the original header for consistency      
+        #header = dict(tck.header) # Make a mutable copy
+        #header['comments'] = [f"Resampled with step size {step_size} mm"]
+        if max_length is not None:
+            header['comments'].append(f"Truncated streamlines longer than {max_length} mm")
+        nib.streamlines.save(tractogram, f_tck_out, header=tck.header)
         print("Done.")
     except Exception as e:
         print(f"Error saving output file '{f_tck_out}': {e}")

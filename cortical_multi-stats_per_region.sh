@@ -42,7 +42,7 @@ do
 done
 shift "$((OPTIND-1))"
 
-sID=$1
+subjID=$1
 target_type=$2
 
 
@@ -53,18 +53,39 @@ if [ ! -f $f_template ]; then
 fi
 
 
-echolor green "[INFO] Processing subject: $sID with target type: $target_type"
+echolor green "[INFO] Processing subject: $subjID with target type: $target_type"
 echolor green "[INFO] Using template file: $f_template"
+
+
+tmpDir=$(mktemp -d)
 
 cat $f_template | while read line
 do
     if [[ $line == \#* ]]; then continue;fi
     for hemi in lh rh
     do
-        f=$(echo $line | awk '{print $1}' | sed "s/HEMI/${hemi}/" | sed "s/TARGET/${target_type}/")
+        f_metric=$(echo $line | awk '{print $1}' | sed "s/HEMI/${hemi}/" | sed "s/TARGET/${target_type}/")
         metric_name=$(echo $line | awk '{print $2}')
-        my_do_cmd  cortical_stats_per_region.sh $sID $hemi $target_type $f $metric_name
+        echolor bold "Metric is $metric_name"
+        #my_do_cmd  cortical_stats_per_region.sh $subjID $hemi $target_type $f $metric_name
+ 
+        for f in ${SUBJECTS_DIR}/${subjID}/dwi/split/${hemi}_${target_type}_streamlines_*_indices.txt
+        do
+            echolor cyan "$f"
+            region=$(echo $(basename $f) | sed -E 's/.*_([0-9]*)_indices.txt/\1/')
+            echolor green "[INFO] Obtaining $metric_name from region $region in $hemi $target_type"
+
+            sedcmd=$(cat $f | sed 's/\s/p;/g' | sed 's/;\n//' | sed 's/.$//g')
+            sed -n "$sedcmd" ${SUBJECTS_DIR}/${subjID}/$f_metric > ${tmpDir}/${region}_values.txt
+
+            
+
+            f_values_in=${tmpDir}/${region}_values.txt
+            f_values_out=${SUBJECTS_DIR}/${subjID}/dwi/split/${hemi}_${target_type}_${region}_mean_std_${metric_name}.txt
+            my_do_cmd  cortical_stats_per_region.py $f_values_in $f_values_out
+            my_do_cmd  cortical_1dplot.sh $f_values_out
+        done
     done
 done
 
-
+rm -fR $tmpDir

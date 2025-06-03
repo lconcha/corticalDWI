@@ -1,5 +1,8 @@
 #!/bin/bash
 
+echolor red "[ERROR] This script is deprecated. Use cortical_stats_per_region.sh instead."
+exit 2
+
 
 subjID=$1
 hemi=$2

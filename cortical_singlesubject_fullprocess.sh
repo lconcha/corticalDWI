@@ -7,7 +7,7 @@
 # Subject data
 subjid=sub-79864
 bids_dir=/misc/nyquist/danielacoutino/glaucoma/bids
-export SUBJECTS_DIR=/misc/sherrington/lconcha/TMP/glaucoma/fs_glaucoma
+subjects_dir=/misc/sherrington/lconcha/TMP/glaucoma/fs_glaucoma
 # Paths to tools needed
 mrtrix_modules_dir=/misc/sherrington/lconcha/code/inb_mrtrix_modules/bin
 corticalDWI_dir=/misc/sherrington/lconcha/code/corticalDWI
@@ -39,6 +39,7 @@ fi
 
 # Prepare the environment
 module load freesurfer/7.3.2 mrtrix/3.0.4 ANTs/2.4.4 workbench_con/2.0.1
+export SUBJECTS_DIR=${subjects_dir}; # always do this _after_ loading freesurfer
 anaconda_on; # Remove this if you always have anaconda activated (I don't)
 conda activate micapipe
 export PATH=${mrtrix_modules_dir}:${corticalDWI_dir}:${inb_tools_dir}:$PATH
