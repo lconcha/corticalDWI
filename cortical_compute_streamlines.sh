@@ -57,6 +57,7 @@ in_vec=${SUBJECTS_DIR}/${sID}/mri/laplace-wm_vec.nii.gz
 
 
 tmp_tck=/tmp/temp_$$.tck
+tmp_tck_withheader=/tmp/temp2_$$.tck
 out_tck=${SUBJECTS_DIR}/${sID}/mri/${hemi}_${target_type}_laplace-wm-streamlines.tck
 my_do_cmd python $CODEDIR/cortical_streamlines.py \
   $surf_white \
@@ -65,8 +66,8 @@ my_do_cmd python $CODEDIR/cortical_streamlines.py \
   $nsteps \
   $step_size \
   $tmp_tck
-#my_do_cmd tckresample -force -quiet -step_size $tck_step_size $tmp_tck $out_tck
-my_do_cmd cortical_tckresample_and_truncate.py $tmp_tck $out_tck --step_size $tck_step_size
+my_do_cmd tckedit -force -quiet $tmp_tck $tmp_tck_withheader; # this will put a header that cortical_treamlines.py cannot write
+my_do_cmd cortical_tckresample_and_truncate.py $tmp_tck_withheader $out_tck --step_size $tck_step_size
 rm $tmp_tck
 
 
