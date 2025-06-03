@@ -71,7 +71,6 @@ my_do_cmd cortical_tckresample_and_truncate.py $tmp_tck_withheader $out_tck --st
 rm $tmp_tck
 
 
-my_do_cmd tckresample -force -quiet -endpoints $out_tck ${out_tck%.tck}_orig.tck
 my_do_cmd tckresample -force -quiet -endpoints $out_tck ${out_tck%.tck}_endsOnly.tck
 
 echolor cyan "mrview ${SUBJECTS_DIR}/${sID}/mri/aparc+aseg.nii.gz ${SUBJECTS_DIR}/${sID}/mri/laplace-wm_vec.nii.gz \
