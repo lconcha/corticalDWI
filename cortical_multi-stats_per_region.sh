@@ -54,7 +54,7 @@ fi
 
 
 echolor green "[INFO] Processing subject: $sID with target type: $target_type"
-
+echolor green "[INFO] Using template file: $f_template"
 
 cat $f_template | while read line
 do

@@ -34,7 +34,7 @@ do
   case $opt in
     f)
       force=1
-      echolor cyan "FLAG"
+      echolor cyan "[WARN] Force rewrite"
     ;;
     \?)
       echolor red "[ERROR] Invalid flag."
