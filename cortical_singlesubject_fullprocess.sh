@@ -5,7 +5,7 @@
 
 #### Modify this ###############################3
 # Subject data
-subjid=sub-79864
+subjid=sub-73676
 bids_dir=/misc/nyquist/danielacoutino/glaucoma/bids
 subjects_dir=/misc/sherrington/lconcha/TMP/glaucoma/fs_glaucoma
 # Paths to tools needed
