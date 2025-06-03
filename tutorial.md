@@ -174,6 +174,14 @@ When the script finishes, it will tell you how to visualize the results, go ahea
 ![laplacian_streamlines_dwi](images/laplacian_streamlines_dwi.png)
 
 
+## Resample and truncate the streamlines
+To ensure correct sampling as a function of depth from the pial surface, we should ensure equidistant points between the vertices of each streamline according to our desired spatial sampling rate (step size). While we're at it, we truncate the streamlines after a certain depth. This will allow us to visualize only what we are truly sampling.
+
+```bash
+cortical_tckresample_and_truncate_tck.py rh_fsLR-32k_laplace-wm-streamlines_dwispace.tck now.tck --step_size 0.5 --max_length 8
+```
+
+
 
 ## CSD
 Now we compute constrained spherical deconvolution across the entire brain, including the fixels directory that we will then use to extract apparent fiber density per fixel.
@@ -215,15 +223,48 @@ We must have the custom-made mrtrix modules in our `$PATH`. They can be obtained
   * The fixel showing the largest dot product to the streamline segment is assigned as **parallel**.
   * **Perpendicular** can be defined in two ways: either the most perpendicular (i.e., lowest dot product), or the average of all fixels except the one defined as parallel. Both are supplied as results.
 
-
-:information source: The next step requires Matlab, make sure you have loaded the module and/or set up your PATH.
-
+:information_source: Some DWI metrics are not fixel-based (e.g., DTI metrics), and therefore do not specify par or perp.
 
 ```bash
 fixel_dir=csd_fixels_singletissue
 angle=45
 nDepths=30
+cortical_tcksample_dti.sh $subjid $nDepths
 cortical_tcksamplefixels_afd.sh $subjid $fixel_dir $angle $nDepths $target_type
 ```
 
 :warning: The variable `nDepths` represents how deep we will sample, **starting from the pial surface**. This is given in number of steps in the tck file. But, since we already know that `tck_step_size=0.5`, we can obtain how deep we will go, in this case `0.5 mm * 30 = 6 mm`.
+
+
+
+## Computing summary metrics per cortical region
+
+### Separate the streamlines
+
+```bash
+for hemi in rh lh; do 
+  cortical_separate_streamlines_by_aparc.sh $subjid $hemi $target_type
+done
+```
+
+### Derive summary metrics
+We will use a wrapper script that will obtain several diffusion metrics per region. In this tutorial we are dealing only with DTI and CSD_single_tissue. Thus, I created a template file from which we will know what to sample.
+```bash
+template=/misc/sherrington/lconcha/code/corticalDWI/test_cortical_mult-stats_per_region_template.txt
+cortical_multi-stats_per_region.sh $subjid $target_type -t $template
+```
+
+The `$template` contains: 
+```init
+# file_name                                             metric_name
+# CSD_singletissue
+dwi/csd_fixels_singletissue/HEMI_TARGET_afd-par.txt     afd-par
+dwi/csd_fixels_singletissue/HEMI_TARGET_afd-perp.txt    afd-perp
+#
+# DTI
+dwi/HEMI_TARGET_fa.txt                                  fa
+dwi/HEMI_TARGET_md.txt                                  md
+dwi/HEMI_TARGET_ad.txt                                  ad
+dwi/HEMI_TARGET_rd.txt                                  rd
+```
+
