@@ -251,7 +251,7 @@ done
 We will use a wrapper script that will obtain several diffusion metrics per region. In this tutorial we are dealing only with DTI and CSD_single_tissue. Thus, I created a template file from which we will know what to sample.
 ```bash
 template=/misc/sherrington/lconcha/code/corticalDWI/test_cortical_mult-stats_per_region_template.txt
-cortical_multi-stats_per_region.sh $subjid $target_type -t $template
+cortical_multi-stats_per_region.sh -t $template $subjid $target_type 
 ```
 
 The `$template` contains: 
