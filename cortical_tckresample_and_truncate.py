@@ -76,7 +76,9 @@ def resample_tck_file(f_tck_in, f_tck_out, step_size,max_length=None):
     if max_length is not None:
         print(f"Truncating streamlines longer than {max_length} mm.")
 
-    for streamline in original_streamlines:
+    for idx,streamline in enumerate(original_streamlines):
+        if idx % 1000 == 0 or idx == nStreamlines - 1:
+            print(f"  Progress: {idx+1}/{nStreamlines} streamlines", end='\r', flush=True)
         if streamline.ndim == 1:
             print("Warning: Detected a 1D streamline, reshaping to 2D.")
             streamline = streamline.reshape(1, -1)
@@ -93,7 +95,7 @@ def resample_tck_file(f_tck_in, f_tck_out, step_size,max_length=None):
         resampled_sl = _resample_single_streamline(resampled_sl, step_size)
 
         resampled_streamlines_data.append(resampled_sl)
-
+    print()
     # In older nibabel versions, 'nibabel.streamlines.Streamlines' might not exist
     # Try using 'nibabel.streamlines.ArraySequence', which is a common internal
     # representation that should have the necessary methods.
