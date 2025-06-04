@@ -114,11 +114,13 @@ def resample_tck_file(f_tck_in, f_tck_out, step_size,max_length=None):
     print(f"Saving resampled TCK to {f_tck_out}...")
     try:
         # Use the original header for consistency      
-        #header = dict(tck.header) # Make a mutable copy
-        #header['comments'] = [f"Resampled with step size {step_size} mm"]
+        header=tck.header
+        header['comments'] = [f"Resampled with step size {step_size} mm"]
+        header['fixed_step_size'] = step_size
         if max_length is not None:
             header['comments'].append(f"Truncated streamlines longer than {max_length} mm")
-        nib.streamlines.save(tractogram, f_tck_out, header=tck.header)
+            header['max_length'] = max_length
+        nib.streamlines.save(tractogram, f_tck_out, header=header)
         print("Done.")
     except Exception as e:
         print(f"Error saving output file '{f_tck_out}': {e}")
