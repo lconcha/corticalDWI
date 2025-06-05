@@ -67,7 +67,7 @@ my_do_cmd python $CODEDIR/cortical_streamlines.py \
   $step_size \
   $tmp_tck
 my_do_cmd tckedit -force -quiet $tmp_tck $tmp_tck_withheader; # this will put a header that cortical_treamlines.py cannot write
-my_do_cmd cortical_tckresample_and_truncate.py $tmp_tck_withheader $out_tck --step_size $tck_step_size
+my_do_cmd tckresample_and_truncate $tmp_tck_withheader $out_tck --step_size $tck_step_size
 rm $tmp_tck $tmp_tck_withheader
 
 

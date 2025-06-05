@@ -178,7 +178,7 @@ When the script finishes, it will tell you how to visualize the results, go ahea
 To ensure correct sampling as a function of depth from the pial surface, we should ensure equidistant points between the vertices of each streamline according to our desired spatial sampling rate (step size). While we're at it, we truncate the streamlines after a certain depth. This will allow us to visualize only what we are truly sampling.
 
 ```bash
-cortical_tckresample_and_truncate_tck.py rh_fsLR-32k_laplace-wm-streamlines_dwispace.tck now.tck --step_size 0.5 --max_length 8
+tckresample_and_truncate_tck rh_fsLR-32k_laplace-wm-streamlines_dwispace.tck now.tck --step_size 0.5 --max_length 8
 ```
 
 

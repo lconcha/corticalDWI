@@ -79,7 +79,7 @@ my_do_cmd tcktransform \
   ${tmpDir}/inv_mrtrix_warp_corrected.mif \
   ${tmpDir}/warped.tck
 
-my_do_cmd cortical_tckresample_and_truncate.py \
+my_do_cmd tckresample_and_truncate \
   ${tmpDir}/warped.tck \
   $tck_dwispace \
   --step_size $tck_step_size
