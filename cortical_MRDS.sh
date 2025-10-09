@@ -128,7 +128,7 @@ then
   ## Define if parallel or not
   if [ $doParallel -eq 1 ]
   then
-    my_do_cmd inb_mrds_sge.sh
+    my_do_cmd inb_mrds_sge.sh \
     $dwi \
     $scheme \
     $mask \
