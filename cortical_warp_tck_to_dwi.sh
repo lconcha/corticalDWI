@@ -4,13 +4,13 @@ source `which my_do_cmd`
 
 help() {
   echo "
-  Usage: $(basename $0) <subjID> <hemi> <target_type> <tck_step_size>
+  Usage: $(basename $0) <subjID> <hemi> <target_type> <tck_step_size> <max_nlength>
   
   <subjID>        subject ID in the form of sub-74277
   <hemi>          hemisphere, lh or rh
   <target_type>   target type, e.g., fsLR-32k
   <tck_step_size> step size for tck resampling, e.g., 0.5 (mm)
-  
+  <max_length>    maximum length for tck truncation, e.g., 10 (mm)
   This script warps the Laplacian streamlines tck from T1 space to DWI space.
   
   For this to work, you should have run:
@@ -35,6 +35,7 @@ sID=$1
 hemi=$2;        #lh, rh
 target_type=$3; #fsLR-32k
 tck_step_size=$4
+max_length=$5; #max length in mm
 
 xfm_lin_t1_to_b0=${SUBJECTS_DIR}/${sID}/dwi/t1native_to_b0_0GenericAffine.mat
 xfm_nlin_t1_to_b0=${SUBJECTS_DIR}/${sID}/dwi/t1native_to_b0_1Warp.nii.gz
@@ -82,7 +83,8 @@ my_do_cmd tcktransform \
 my_do_cmd tckresample_and_truncate \
   ${tmpDir}/warped.tck \
   $tck_dwispace \
-  --step_size $tck_step_size
+  --step_size $tck_step_size \
+  --max_length $max_length
 
 rm -fR $tmpDir
 
