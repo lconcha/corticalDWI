@@ -16,6 +16,11 @@ import nibabel as nib
 import numpy as np
 import sys
 from streamtracer import StreamTracer, VectorGrid
+import subprocess
+import os
+import tempfile
+import shutil
+import subprocess
 
 # Function to print help message
 def print_help():
@@ -66,6 +71,28 @@ else :
     connect_to_pial = True
     print('    Streamlines will begin at pial surface')
 
+
+def prepend_surface_to_streamlines(tracer, surface, vec):
+    print(f'      Prepending {surface}')
+    surf_to_append = nib.load(surface)
+    vertices = surf_to_append.get_arrays_from_intent('NIFTI_INTENT_POINTSET')[0].data
+    
+    # transform vertex coordinates
+    V2pial = vertices.copy()
+    nvertices = vertices.shape[0]
+    for vindex in range(nvertices):
+        thisv = vertices[vindex,:];
+        thisv = thisv - vec.affine[:3,3].T
+        thisvpad = np.append(thisv,1)
+        thisvpadtransformed = thisvpad.dot(vec.affine)
+        V2pial[vindex,:] = thisvpadtransformed[0:3]
+        xyz_pial = V2pial[vindex]
+        xyz_streamline = tracer.xs[vindex]
+        xyz_both = np.insert(xyz_streamline,0,xyz_pial,axis=0)
+        tracer.xs[vindex] = xyz_both
+    return tracer
+
+
 # load data
 surf = nib.load(in_surf)
 V = surf.get_arrays_from_intent('NIFTI_INTENT_POINTSET')[0].data
@@ -106,34 +133,28 @@ print(f'   ... finished tracing.')
 
 # prepend the coordinate for pial surface before streamline
 if connect_to_pial :
-    print(f'   Connecting WM streamlines to pial-white lines.')
-    # Deal with the pial surface
-    print(f'  Load {in_surf_pial}')
-    surf_pial = nib.load(in_surf_pial)
-    Vpial = surf_pial.get_arrays_from_intent('NIFTI_INTENT_POINTSET')[0].data
-    Fpial = surf_pial.get_arrays_from_intent('NIFTI_INTENT_TRIANGLE')[0].data
-
-    # transform vertex coordinates
-    V2pial = Vpial.copy()
-    nvertices = Vpial.shape[0]
-    for vindex in range(nvertices):
-        thisv = Vpial[vindex,:];
-        thisv = thisv - vec.affine[:3,3].T
-        thisvpad = np.append(thisv,1)
-        thisvpadtransformed = thisvpad.dot(vec.affine)
-        V2pial[vindex,:] = thisvpadtransformed[0:3]
-        xyz_pial = V2pial[vindex]
-        xyz_streamline = tracer.xs[vindex]
-        xyz_both = np.insert(xyz_streamline,0,xyz_pial,axis=0)
-        #print(f'xyz_pial : {xyz_pial}, nvertices was {len(xyz_streamline)}, and now is {len(xyz_both)}')
-        #print(f' v0 : {xyz_both[0,]}')
-        tracer.xs[vindex] = xyz_both
     
+    tmpdir = tempfile.mkdtemp(prefix='cortical_streamlines_')
+    print(f'   Connecting WM streamlines to mid surfaces...')
+    for dist in [0.1, 0.3, 0.5, 0.7, 0.9]:
+        tmpfile = os.path.join(tmpdir, f'tmp_layersurf_dist_{dist}.surf.gii')
+        print(f'     -- Create layer surface at distance {dist} from WM: {tmpfile}')
+        subprocess.run([
+            "wb_command",
+            "-surface-cortex-layer",
+            in_surf_pial,
+            in_surf,
+            str(dist),
+            tmpfile
+        ], check=True)
+        tracer = prepend_surface_to_streamlines(tracer, tmpfile, vec) # add the layer surfaces
+    
+    print(f'  Connecting to pial surface:  {in_surf_pial}')
+    tracer = prepend_surface_to_streamlines(tracer,in_surf_pial, vec) # add the pial surface
+    shutil.rmtree(tmpdir)
 
 print(f'  saving tck : {out_tck}')
 laplacian_streamlines = nib.streamlines.tractogram.Tractogram(streamlines=tracer.xs)
 laplacian_streamlines.affine_to_rasmm = vec.affine
 nib.streamlines.save(laplacian_streamlines, out_tck )
-
-#print(f'  You can check the output with:\n    mrview {in_vec} -tractography.load {out_tck}')
 print('done.')
