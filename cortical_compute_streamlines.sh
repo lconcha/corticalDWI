@@ -40,6 +40,20 @@ surf_pial=${SUBJECTS_DIR}/${sID}/surf/${hemi}_pial_${target_type}.surf.gii
 in_vec=${SUBJECTS_DIR}/${sID}/mri/laplace-wm_vec.nii.gz
 
 
+isOK=1
+for f in $surf_white $surf_pial $in_vec
+do
+  if [ -f "$f" ]
+  then
+    echolor green "[INFO] Found $f"
+  else
+    echolor red "[ERROR] File not found: $f"
+    isOK=0
+  fi
+done
+if [ $isOK -eq 0 ]; then exit 2; fi
+
+
 tmp_tck=/tmp/temp_$$.tck
 tmp_tck_withheader=/tmp/temp2_$$.tck
 out_tck=${SUBJECTS_DIR}/${sID}/mri/${hemi}_${target_type}_laplace-wm-streamlines.tck
