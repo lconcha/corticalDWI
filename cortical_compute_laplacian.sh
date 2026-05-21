@@ -34,8 +34,23 @@ fi
 echolor cyan "[INFO] Calculating Laplace Field"
 
 # Convert segmentation to NIFTI
-mri_convert ${SUBJECTS_DIR}/${sID}/mri/aparc+aseg.mgz \
-            ${SUBJECTS_DIR}/${sID}/mri/aparc+aseg.nii.gz
+if [ -f ${SUBJECTS_DIR}/${sID}/mri/aparc+aseg.mgz ]
+then
+  echolor bold "[INFO] Found aparc+aseg.mgz for subject ${sID}"
+  mri_convert ${SUBJECTS_DIR}/${sID}/mri/aparc+aseg.mgz \
+              ${SUBJECTS_DIR}/${sID}/mri/aparc+aseg.nii.gz
+else
+   echolor bold "[WARN] Did not find aparc+aseg.mgz for subject ${sID}"
+   echolor bold "[WARN] Will look for a .nii.gz version instead"
+fi
+
+if [ ! -f ${SUBJECTS_DIR}/${sID}/mri/aparc+aseg.nii.gz ]
+then
+  echolor red "[ERROR] Cannot find aparc+aseg.nii.gz for subject ${sID}"
+  echolor red "        Check if aparc+aseg.mgz exists and can be converted"
+  exit 2
+fi
+
 
 # Calculate the Laplace field
 fcheck=${SUBJECTS_DIR}/${sID}/mri/laplace-wm_vec.nii.gz
@@ -47,6 +62,7 @@ else
   python ${CODEDIR}/sWM/laplace_solver.py \
     ${SUBJECTS_DIR}/${sID}/mri/aparc+aseg.nii.gz \
     ${SUBJECTS_DIR}/${sID}/mri/laplace-wm
+  echolor cyan "[INFO] Combining the three components into a single 4D NIFTI file"
   my_do_cmd mrcat -axis 3 \
     ${SUBJECTS_DIR}/${sID}/mri/laplace-wm_d{x,y,z}.nii.gz \
     ${SUBJECTS_DIR}/${sID}/mri/laplace-wm_vec.nii.gz
