@@ -43,10 +43,7 @@ in_vec=${SUBJECTS_DIR}/${sID}/mri/laplace-wm_vec.nii.gz
 isOK=1
 for f in $surf_white $surf_pial $in_vec
 do
-  if [ -f "$f" ]
-  then
-    echolor green "[INFO] Found $f"
-  else
+  if [ ! -f "$f" ]; then
     echolor red "[ERROR] File not found: $f"
     isOK=0
   fi
