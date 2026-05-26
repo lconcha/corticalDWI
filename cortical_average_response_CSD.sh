@@ -11,13 +11,13 @@ help() {
   "
 }
 
-groupdir=${SUBJECTS_DIR}/grupalresponse
+groupdir=${SUBJECTS_DIR}/average_response
 
 mkdir -p $groupdir
 
-group_wm=${groupdir}/grupalresponse_wm.txt
-group_gm=${groupdir}/grupalresponse_gm.txt
-group_csf=${groupdir}/grupalresponse_csf.txt
+group_wm=${groupdir}/average_response_wm.txt
+group_gm=${groupdir}/average_response_gm.txt
+group_csf=${groupdir}/average_response_csf.txt
 
 echolor green "[INFO] Computing average WM response"
 my_do_cmd responsemean \
