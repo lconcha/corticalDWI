@@ -20,7 +20,7 @@ then
 fi
 
 # dir where group responses are located
-group_response_dir=${SUBJECTS_DIR}/grupalresponse
+group_response_dir=${SUBJECTS_DIR}/average_response
 
 # dwi variables
 dwi=${SUBJECTS_DIR}/${sID}/dwi/dwi.nii.gz
@@ -28,9 +28,9 @@ scheme=${SUBJECTS_DIR}/${sID}/dwi/dwi.scheme
 mask=${SUBJECTS_DIR}/${sID}/dwi/mask.nii.gz
 
 # group responses 
-group_resp_wm=${group_response_dir}/grupalresponse_wm.txt
-group_resp_gm=${group_response_dir}/grupalresponse_gm.txt
-group_resp_csf=${group_response_dir}/grupalresponse_csf.txt
+group_resp_wm=${group_response_dir}/average_response_wm.txt
+group_resp_gm=${group_response_dir}/average_response_gm.txt
+group_resp_csf=${group_response_dir}/average_response_csf.txt
 
 
 # Compute multitissue fod's and fixels
