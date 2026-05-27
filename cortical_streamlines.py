@@ -66,7 +66,7 @@ print(f'  - out_tck      : {out_tck}')
 
 if in_surf_pial == 'no' :
     connect_to_pial = False
-    print('    Will NOT connect pial and white surfaces. Streamlines will begin at white suerface.')
+    print('    Will NOT connect pial and white surfaces. Streamlines will begin at white surface.')
 else :
     connect_to_pial = True
     print('    Streamlines will begin at pial surface')
@@ -77,15 +77,11 @@ def prepend_surface_to_streamlines(tracer, surface, vec):
     surf_to_append = nib.load(surface)
     vertices = surf_to_append.get_arrays_from_intent('NIFTI_INTENT_POINTSET')[0].data
     
-    # transform vertex coordinates
-    V2pial = vertices.copy()
+    # transform vertex coordinates from scanner/RAS space to voxel index space
+    inv_affine = np.linalg.inv(vec.affine)
+    V2pial = nib.affines.apply_affine(inv_affine, vertices)
     nvertices = vertices.shape[0]
     for vindex in range(nvertices):
-        thisv = vertices[vindex,:];
-        thisv = thisv - vec.affine[:3,3].T
-        thisvpad = np.append(thisv,1)
-        thisvpadtransformed = thisvpad.dot(vec.affine)
-        V2pial[vindex,:] = thisvpadtransformed[0:3]
         xyz_pial = V2pial[vindex]
         xyz_streamline = tracer.xs[vindex]
         xyz_both = np.insert(xyz_streamline,0,xyz_pial,axis=0)
@@ -109,17 +105,11 @@ L2[L2==0] = 1
 volvecnorm = volvec / np.expand_dims(L2, 3)
 
 
-# transform vertex coordinates
-V2 = V.copy()
+# transform vertex coordinates from scanner/RAS space to voxel index space
+inv_affine = np.linalg.inv(vec.affine)
+V2 = nib.affines.apply_affine(inv_affine, V)
 nvertices = V.shape[0]
-for vindex in range(nvertices):
-    thisv = V[vindex,:];
-    thisv = thisv - vec.affine[:3,3].T
-    thisvpad = np.append(thisv,1)
-    thisvpadtransformed = thisvpad.dot(vec.affine)
-    V2[vindex,:] = thisvpadtransformed[0:3]
 
-   
 
 ## Use streamtracer https://streamtracer.readthedocs.io/en/latest/#
 print(f'  seeding {nvertices} streamlines...')
