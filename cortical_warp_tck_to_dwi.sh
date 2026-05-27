@@ -22,7 +22,7 @@ help() {
 }
 
 
-if [ $# -ne 4 ]
+if [ $# -ne 5 ]
 then
   echolor red "Wrong number of arguments"
   help
