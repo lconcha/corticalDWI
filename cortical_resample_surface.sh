@@ -14,7 +14,7 @@ help( ) {
   <subjID>         subject ID in the form of sub-74277
   <hemi>           hemisphere (lh or rh)
   <surf_type>      type of surface (e.g., 'pial', 'white', 'inflated')
-  <target_type>    type of target (e.g., 'fsLR-5k', 'fsLR-32k', 'fsaverage5')
+  <target_type>    type of target (e.g., 'fsLR-5k', 'fsLR-32k', 'fsaverage5', 'ico6_sym')
 
   This script will resample the original surface to the target surface.
   "
@@ -24,6 +24,13 @@ if [ $# -lt 4 ]
 then
   echolor red "[ERROR] Not enough arguments"
   help
+  exit 0
+fi
+
+if [[ "$target_type" == "ico6_sym" ]]
+then
+  echolor yellow "[WARN] This step will be executed by cortical_resample_surface_ico6_sym.sh"
+  cortical_resample_surface_ico6_sym.sh $subjID
   exit 0
 fi
 
