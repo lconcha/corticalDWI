@@ -10,6 +10,7 @@
 # Requirements: FreeSurfer, Connectome Workbench
 # Output: lh/rh.{pial,white,sulc,curv,thickness}.ico6_sym.{surf,func}.gii
 #         in $SUBJECTS_DIR/<subject>/surf/
+source `which my_do_cmd`
 
 set -e
 
@@ -132,7 +133,7 @@ for SURF_NAME in white pial; do
         $SURF/lh.fsaverage_sym.sphere.reg.surf.gii \
         $TEMPLATE \
         BARYCENTRIC \
-        $SURF/lh_${SURF_NAME}.ico6_sym.surf.gii
+        $SURF/lh_${SURF_NAME}_ico6_sym.surf.gii
 
     # Right hemisphere (from xhemi)
     mris_convert $XHEMI/lh.${SURF_NAME} \
@@ -143,7 +144,7 @@ for SURF_NAME in white pial; do
         $XHEMI/lh.fsaverage_sym.sphere.reg.surf.gii \
         $TEMPLATE \
         BARYCENTRIC \
-        $SURF/rh_${SURF_NAME}.ico6_sym.surf.gii
+        $SURF/rh_${SURF_NAME}_ico6_sym.surf.gii
 
 done
 
@@ -154,8 +155,8 @@ echo ">>> Step 5: Flip rh surfaces back to native (non-mirrored) space"
 
 for SURF_NAME in white pial; do
     $WB -surface-flip-lr \
-        $SURF/rh_${SURF_NAME}.ico6_sym.surf.gii \
-        $SURF/rh_${SURF_NAME}.ico6_sym.surf.gii
+        $SURF/rh_${SURF_NAME}_ico6_sym.surf.gii \
+        $SURF/rh_${SURF_NAME}_ico6_sym.surf.gii
 done
 
 # ── Step 6: Set structure metadata ───────────────────────────────────────────
@@ -164,12 +165,12 @@ echo ">>> Step 6: Set structure metadata"
 
 for SURF_NAME in white pial; do
     $WB -set-structure \
-        $SURF/lh_${SURF_NAME}.ico6_sym.surf.gii \
+        $SURF/lh_${SURF_NAME}_ico6_sym.surf.gii \
         CORTEX_LEFT \
         -surface-type ANATOMICAL
 
     $WB -set-structure \
-        $SURF/rh_${SURF_NAME}.ico6_sym.surf.gii \
+        $SURF/rh_${SURF_NAME}_ico6_sym.surf.gii \
         CORTEX_RIGHT \
         -surface-type ANATOMICAL
 done
@@ -194,7 +195,7 @@ for METRIC in sulc curv thickness; do
         $SURF/lh.${METRIC}.ico6_sym.func.gii \
         -area-surfs \
         $SURF/lh.white.surf.gii \
-        $SURF/lh_white.ico6_sym.surf.gii
+        $SURF/lh_white_ico6_sym.surf.gii
 
     $WB -set-structure \
         $SURF/lh.${METRIC}.ico6_sym.func.gii \
@@ -214,7 +215,7 @@ for METRIC in sulc curv thickness; do
         $SURF/rh.${METRIC}.ico6_sym.func.gii \
         -area-surfs \
         $XHEMI/lh.white.surf.gii \
-        $SURF/rh_white.ico6_sym.surf.gii
+        $SURF/rh_white_ico6_sym.surf.gii
 
     $WB -set-structure \
         $SURF/rh.${METRIC}.ico6_sym.func.gii \
@@ -224,13 +225,13 @@ done
 
 specfile=$SUBJECTS_DIR/$SUBJECT/surf/ico6_sym.spec
 
-$WB -add-to-spec-file $specfile CORTEX_LEFT $SURF/lh_white.ico6_sym.surf.gii
-$WB -add-to-spec-file $specfile CORTEX_LEFT $SURF/lh_pial.ico6_sym.surf.gii
-$WB -add-to-spec-file $specfile CORTEX_RIGHT $SURF/rh_white.ico6_sym.surf.gii
-$WB -add-to-spec-file $specfile CORTEX_RIGHT $SURF/rh_pial.ico6_sym.surf.gii
+my_do_cmd $WB -add-to-spec-file $specfile CORTEX_LEFT $SURF/lh_white_ico6_sym.surf.gii
+my_do_cmd $WB -add-to-spec-file $specfile CORTEX_LEFT $SURF/lh_pial_ico6_sym.surf.gii
+my_do_cmd $WB -add-to-spec-file $specfile CORTEX_RIGHT $SURF/rh_white_ico6_sym.surf.gii
+my_do_cmd $WB -add-to-spec-file $specfile CORTEX_RIGHT $SURF/rh_pial_ico6_sym.surf.gii
 for METRIC in sulc curv thickness; do
-  $WB -add-to-spec-file $specfile CORTEX_LEFT  $SURF/lh.${METRIC}.ico6_sym.func.gii
-  $WB -add-to-spec-file $specfile CORTEX_RIGHT $SURF/rh.${METRIC}.ico6_sym.func.gii
+  my_do_cmd $WB -add-to-spec-file $specfile CORTEX_LEFT  $SURF/lh.${METRIC}.ico6_sym.func.gii
+  my_do_cmd $WB -add-to-spec-file $specfile CORTEX_RIGHT $SURF/rh.${METRIC}.ico6_sym.func.gii
 done
 
 # ── Done ──────────────────────────────────────────────────────────────────────
