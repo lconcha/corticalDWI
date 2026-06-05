@@ -48,7 +48,9 @@ echo "========================================"
 # Sanity checks
 [[ -d $SURF ]]     || { echo "ERROR: surf dir not found: $SURF";     exit 1; }
 
-
+# Voxel size in x — used to correct the xhemi half-voxel flip-axis offset (Step 5)
+VOX_SIZE_X=$(mri_info --cres $SUBJECTS_DIR/$SUBJECT/mri/orig.mgz)
+echolor orange "XXXXXXXXX VOX_SIZE_X: $VOX_SIZE_X"
 
 # ── Step 0: Create ico6 symmetric template if it does not exist ───────────────
 if [[ -f $TEMPLATE ]]; then
@@ -124,7 +126,7 @@ echo ">>> Step 4: Resample pial and white to ico6"
 for SURF_NAME in white pial; do
 
     # Left hemisphere
-    mris_convert --to-scanner \
+    mris_convert \
                  $SURF/lh.${SURF_NAME} \
                  $SURF/lh.${SURF_NAME}.surf.gii
 
@@ -137,8 +139,7 @@ for SURF_NAME in white pial; do
         $SURF/lh_${SURF_NAME}_ico6_sym.surf.gii
 
     # Right hemisphere (from xhemi)
-    mris_convert --to-scanner \
-                 $XHEMI/lh.${SURF_NAME} \
+    mris_convert $XHEMI/lh.${SURF_NAME} \
                  $XHEMI/lh.${SURF_NAME}.surf.gii
 
     $WB -surface-resample \
@@ -154,12 +155,29 @@ done
 echo ""
 echo ">>> Step 5: Flip rh surfaces back to native (non-mirrored) space"
 
+# xhemireg reflects voxels as i -> (N-1)-i, which in TkReg maps x -> -x - vox_size_x
+# (flip axis is at x = -0.5*vox_size_x, not x=0). surface-flip-lr flips around x=0,
+# so the round-trip leaves a residual translation of -vox_size_x when the voxel x
+# direction is antiparallel to RAS x (x increases right-to-left). Correct with +vox_size_x.
+CORRECTION=$(echo "$VOX_SIZE_X" | awk '{printf "%.6f", $1}')
+echolor yellow "VOX_SIZE_X: $VOX_SIZE_X"
+echolor yellow "CORRECTION: $CORRECTION"
+XFMFILE=$(mktemp /tmp/xhemi_correction_XXXXXX.mat)
+printf "1 0 0 %s\n0 1 0 0\n0 0 1 0\n0 0 0 1\n" "$CORRECTION" > "$XFMFILE"
 
 for SURF_NAME in white pial; do
     $WB -surface-flip-lr \
         $SURF/rh_${SURF_NAME}_ico6_sym.surf.gii \
         $SURF/rh_${SURF_NAME}_ico6_sym.surf.gii
+
+    echolor cyan "Applying transformation matrix to $SURF/rh_${SURF_NAME}_ico6_sym.surf.gii"
+    cat $XFMFILE
+    $WB -surface-apply-affine \
+        $SURF/rh_${SURF_NAME}_ico6_sym.surf.gii \
+        "$XFMFILE" \
+        $SURF/rh_${SURF_NAME}_ico6_sym.surf.gii
 done
+rm -f "$XFMFILE"
 
 # ── Step 6: Set structure metadata ───────────────────────────────────────────
 echo ""
