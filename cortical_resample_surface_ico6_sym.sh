@@ -124,7 +124,8 @@ echo ">>> Step 4: Resample pial and white to ico6"
 for SURF_NAME in white pial; do
 
     # Left hemisphere
-    mris_convert $SURF/lh.${SURF_NAME} \
+    mris_convert --to-scanner \
+                 $SURF/lh.${SURF_NAME} \
                  $SURF/lh.${SURF_NAME}.surf.gii
 
 
@@ -136,7 +137,8 @@ for SURF_NAME in white pial; do
         $SURF/lh_${SURF_NAME}_ico6_sym.surf.gii
 
     # Right hemisphere (from xhemi)
-    mris_convert $XHEMI/lh.${SURF_NAME} \
+    mris_convert --to-scanner \
+                 $XHEMI/lh.${SURF_NAME} \
                  $XHEMI/lh.${SURF_NAME}.surf.gii
 
     $WB -surface-resample \
