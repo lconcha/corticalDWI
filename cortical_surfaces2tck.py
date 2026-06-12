@@ -34,7 +34,6 @@ def main():
 
     streamlines = [np.array([white_coords[i], pial_coords[i]]) for i in range(n)]
     
-    # GIFTI coordinates are in RAS mm — matches MRtrix convention
     tractogram = Tractogram(streamlines=streamlines, affine_to_rasmm=np.eye(4))
     TckFile(tractogram).save(args.output)
     print(f'[INFO] Saved: {args.output}')

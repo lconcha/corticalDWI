@@ -50,7 +50,10 @@ echo "========================================"
 
 # Voxel size in x — used to correct the xhemi half-voxel flip-axis offset (Step 5)
 VOX_SIZE_X=$(mri_info --cres $SUBJECTS_DIR/$SUBJECT/mri/orig.mgz)
-echolor orange "XXXXXXXXX VOX_SIZE_X: $VOX_SIZE_X"
+
+# c_ras — used in final step to shift surfaces from TkReg RAS to scanner RAS
+read C_RAS_X C_RAS_Y C_RAS_Z \
+    <<< $(mri_info --cras $SUBJECTS_DIR/$SUBJECT/mri/orig.mgz)
 
 # ── Step 0: Create ico6 symmetric template if it does not exist ───────────────
 if [[ -f $TEMPLATE ]]; then
@@ -139,7 +142,8 @@ for SURF_NAME in white pial; do
         $SURF/lh_${SURF_NAME}_ico6_sym.surf.gii
 
     # Right hemisphere (from xhemi)
-    mris_convert $XHEMI/lh.${SURF_NAME} \
+    mris_convert \
+                 $XHEMI/lh.${SURF_NAME} \
                  $XHEMI/lh.${SURF_NAME}.surf.gii
 
     $WB -surface-resample \
@@ -160,8 +164,6 @@ echo ">>> Step 5: Flip rh surfaces back to native (non-mirrored) space"
 # so the round-trip leaves a residual translation of -vox_size_x when the voxel x
 # direction is antiparallel to RAS x (x increases right-to-left). Correct with +vox_size_x.
 CORRECTION=$(echo "$VOX_SIZE_X" | awk '{printf "%.6f", $1}')
-echolor yellow "VOX_SIZE_X: $VOX_SIZE_X"
-echolor yellow "CORRECTION: $CORRECTION"
 XFMFILE=$(mktemp /tmp/xhemi_correction_XXXXXX.mat)
 printf "1 0 0 %s\n0 1 0 0\n0 0 1 0\n0 0 0 1\n" "$CORRECTION" > "$XFMFILE"
 
@@ -170,8 +172,6 @@ for SURF_NAME in white pial; do
         $SURF/rh_${SURF_NAME}_ico6_sym.surf.gii \
         $SURF/rh_${SURF_NAME}_ico6_sym.surf.gii
 
-    echolor cyan "Applying transformation matrix to $SURF/rh_${SURF_NAME}_ico6_sym.surf.gii"
-    cat $XFMFILE
     $WB -surface-apply-affine \
         $SURF/rh_${SURF_NAME}_ico6_sym.surf.gii \
         "$XFMFILE" \
@@ -243,8 +243,27 @@ for METRIC in sulc curv thickness; do
 
 done
 
-specfile=$SUBJECTS_DIR/$SUBJECT/surf/ico6_sym.spec
 
+# ── Step 8: Shift surfaces from TkReg RAS to scanner RAS ─────────────────────
+echo ""
+echo ">>> Step 8: Apply TkReg -> scanner RAS translation (c_ras = $C_RAS_X $C_RAS_Y $C_RAS_Z)"
+
+TKRFILE=$(mktemp /tmp/tkr2scanner_XXXXXX.mat)
+printf "1 0 0 %s\n0 1 0 %s\n0 0 1 %s\n0 0 0 1\n" \
+    "$C_RAS_X" "$C_RAS_Y" "$C_RAS_Z" > "$TKRFILE"
+
+for hemi in lh rh; do
+    for SURF_NAME in white pial; do
+        $WB -surface-apply-affine \
+            $SURF/${hemi}_${SURF_NAME}_ico6_sym.surf.gii \
+            "$TKRFILE" \
+            $SURF/${hemi}_${SURF_NAME}_ico6_sym.surf.gii
+    done
+done
+rm -f "$TKRFILE"
+
+
+specfile=$SUBJECTS_DIR/$SUBJECT/surf/ico6_sym.spec
 my_do_cmd $WB -add-to-spec-file $specfile CORTEX_LEFT $SURF/lh_white_ico6_sym.surf.gii
 my_do_cmd $WB -add-to-spec-file $specfile CORTEX_LEFT $SURF/lh_pial_ico6_sym.surf.gii
 my_do_cmd $WB -add-to-spec-file $specfile CORTEX_RIGHT $SURF/rh_white_ico6_sym.surf.gii
@@ -253,6 +272,7 @@ for METRIC in sulc curv thickness; do
   my_do_cmd $WB -add-to-spec-file $specfile CORTEX_LEFT  $SURF/lh.${METRIC}.ico6_sym.func.gii
   my_do_cmd $WB -add-to-spec-file $specfile CORTEX_RIGHT $SURF/rh.${METRIC}.ico6_sym.func.gii
 done
+
 
 # ── Done ──────────────────────────────────────────────────────────────────────
 echo ""

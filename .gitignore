@@ -1,3 +1,5 @@
 *.asv
 test*
 launch.json
+*.bak
+*oldstyle
