@@ -73,7 +73,6 @@ else :
 
 
 def prepend_surface_to_streamlines(tracer, surface, vec):
-    print(f'      Prepending {surface}')
     surf_to_append = nib.load(surface)
     vertices = surf_to_append.get_arrays_from_intent('NIFTI_INTENT_POINTSET')[0].data
     

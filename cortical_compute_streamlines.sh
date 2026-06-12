@@ -9,6 +9,8 @@ step_size=$5; #"0.1"
 tck_step_size=0.5
 
 CODEDIR=$(dirname $0)
+PYTHON=$(which python3)
+echolor cyan "Using Python: $PYTHON ($(${PYTHON} --version 2>&1))"
 
 help() {
   echo "
@@ -54,17 +56,37 @@ if [ $isOK -eq 0 ]; then exit 2; fi
 tmp_tck=/tmp/temp_$$.tck
 tmp_tck_withheader=/tmp/temp2_$$.tck
 out_tck=${SUBJECTS_DIR}/${sID}/mri/${hemi}_${target_type}_laplace-wm-streamlines.tck
-my_do_cmd python $CODEDIR/cortical_streamlines.py \
+echolor cyan "Running cortical_streamlines.py"
+$PYTHON $CODEDIR/cortical_streamlines.py \
   $surf_white \
   $surf_pial \
   $in_vec \
   $nsteps \
   $step_size \
   $tmp_tck
-my_do_cmd tckedit -force -quiet $tmp_tck $tmp_tck_withheader; # this will put a header that cortical_treamlines.py cannot write
-my_do_cmd tckresample_and_truncate $tmp_tck_withheader $out_tck --step_size $tck_step_size
+
+if [ ! -f $tmp_tck ]; then
+  echolor red "Failed to create tck: $tmp_tck"
+  exit 3
+fi
+
+my_do_cmd tckedit $tmp_tck $tmp_tck_withheader; # this will put a header that cortical_treamlines.py cannot write
+
+echolor cyan "Resampling and truncating streamlines to step size ${tck_step_size} mm"
+$PYTHON $(which tckresample_and_truncate) $tmp_tck_withheader $out_tck --step_size $tck_step_size
+if [ -f $out_tck ]; then
+  echolor bold "Successfully created output tck: $out_tck"
+else
+  echolor red "Failed to create output tck: $out_tck"
+  exit 3
+fi
+
+#echolor green "Retaining $tmp_tck and $tmp_tck_withheader"
 rm $tmp_tck $tmp_tck_withheader
 
+# ls $tmp_tck
+# ls $tmp_tck_withheader
+# ls $out_tck
 
 my_do_cmd tckresample -force -quiet -endpoints $out_tck ${out_tck%.tck}_endsOnly.tck
 
