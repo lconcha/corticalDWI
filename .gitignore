@@ -3,3 +3,4 @@ test*
 launch.json
 *.bak
 *oldstyle
+__pycache__/
