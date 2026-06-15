@@ -1,7 +1,7 @@
 function cortical_DWI_browser()
 %CORTICAL_DWI_BROWSER  Interactive browser for cortical DWI depth-profile data.
 %
-%  Three surface panels: LH overlay, RH overlay, LH asymmetry (L-R)/L [%].
+%  Three surface panels: LH overlay, RH overlay, LH asymmetry.
 %  Panels 1 & 2 share colormap / CLim.  Panel 3 uses a diverging colormap.
 %  A depth slider selects the data column shown on all surfaces.
 %  Click any surface to select the nearest vertex and plot its depth profile.
@@ -41,12 +41,16 @@ S.cmap         = 'parula';
 S.cmap_asym    = 'RdBu_r';
 S.invert_cmap      = false;
 S.invert_cmap_asym = false;
+S.n_rings          = 0;
 S.srf1         = [];   % trisurf handles
 S.srf2         = [];
 S.srf3         = [];
-S.dot1         = [];   % selected-vertex markers
+S.dot1         = [];   % selected-vertex markers (red)
 S.dot2         = [];
 S.dot3         = [];
+S.nbr1         = [];   % neighbor-vertex markers (orange)
+S.nbr2         = [];
+S.nbr3         = [];
 S.sel_vertex   = NaN;
 S.hDepthLine   = [];   % xline handle for depth marker in ax4
 S.hDepthLine2  = [];   % xline handle for depth marker in ax5
@@ -95,7 +99,7 @@ for ax = [ax1 ax2 ax3]
 end
 title(ax1,'Left Hemisphere',        'Color','w','FontSize',11,'FontWeight','bold');
 title(ax2,'Right Hemisphere',       'Color','w','FontSize',11,'FontWeight','bold');
-title(ax3,'Asymmetry (L-R)/L [%]', 'Color','w','FontSize',11,'FontWeight','bold');
+title(ax3,'Asymmetry index', 'Color','w','FontSize',11,'FontWeight','bold');
 title(ax4,'Vertex depth profile',   'Color','w','FontSize',11,'FontWeight','bold');
 title(ax5,'Asymmetry index',        'Color','w','FontSize',11,'FontWeight','bold');
 
@@ -117,7 +121,7 @@ ctrlGL = uigridlayout(mainGL, [4, 8]);
 ctrlGL.Layout.Row    = 2;
 ctrlGL.Layout.Column = 1;
 ctrlGL.ColumnWidth   = {100, '1.5x', 80, '2x', 130, 130, 100, 90};
-ctrlGL.RowHeight     = {'1x','1x','1x', 18};
+ctrlGL.RowHeight     = {30, 30, 30, 18};
 ctrlGL.Padding       = [8 5 8 5];
 ctrlGL.ColumnSpacing = 8;
 ctrlGL.RowSpacing    = 3;
@@ -188,6 +192,7 @@ edtClimA = uieditfield(ctrlGL,'text','Value','-1  1',...
 edtClimA.Layout.Row=2; edtClimA.Layout.Column=6;
 
 edtVertex = uieditfield(ctrlGL,'numeric','Value',0,...
+    'ValueDisplayFormat', '%d', ...
     'ValueChangedFcn',@onVertexEdited,'FontColor',FC,'BackgroundColor',CB);
 edtVertex.Layout.Row=2; edtVertex.Layout.Column=7;
 
@@ -228,11 +233,11 @@ ddCmapAsym = uidropdown(ctrlGL,...
     'BackgroundColor',CB,'FontColor',FC);
 ddCmapAsym.Layout.Row=3; ddCmapAsym.Layout.Column=6;
 
-lbl_vtxhint = uilabel(ctrlGL,'Text','Click surface to select',...
-    'FontSize',9,'FontColor',[0.55 0.55 0.55],'HorizontalAlignment','center');
-lbl_vtxhint.Layout.Row=3; lbl_vtxhint.Layout.Column=7;
+lbl_rings = uilabel(ctrlGL,'Text','Rings:','FontColor',LC,'FontWeight',LW,...
+    'HorizontalAlignment','center');
+lbl_rings.Layout.Row=3; lbl_rings.Layout.Column=7;
 
-% ── Row 4 (status strip + invert checkboxes) ──────────────────────────────
+% ── Row 4 (status strip + invert checkboxes + rings field) ────────────────
 chkInvert = uicheckbox(ctrlGL,'Text','Invert','Value',false,...
     'FontColor',LC,'ValueChangedFcn',@onInvertCmap);
 chkInvert.Layout.Row=4; chkInvert.Layout.Column=5;
@@ -241,8 +246,15 @@ chkInvertAsym = uicheckbox(ctrlGL,'Text','Invert','Value',false,...
     'FontColor',LC,'ValueChangedFcn',@onInvertCmapAsym);
 chkInvertAsym.Layout.Row=4; chkInvertAsym.Layout.Column=6;
 
+edtRings = uispinner(ctrlGL, 'Value', 0, ...
+    'Limits', [0 10], 'Step', 1, ...
+    'RoundFractionalValues', 'on', ...
+    'ValueChangedFcn', @onRingsChanged, ...
+    'FontColor', FC, 'BackgroundColor', CB);
+edtRings.Layout.Row=4; edtRings.Layout.Column=7;
+
 lblStatus = uilabel(ctrlGL,'Text','Press Scan to discover TSF files.',...
-    'FontSize',9,'FontColor',[0.55 0.80 0.55],'FontStyle','italic',...
+    'FontSize',9,'FontColor',[0.55 0.80 0.55], ...
     'WordWrap','on','HorizontalAlignment','left');
 lblStatus.Layout.Row=4; lblStatus.Layout.Column=[1 3];
 
@@ -403,6 +415,14 @@ onScan();
         end
     end
 
+    function onRingsChanged(src,~)
+        S.n_rings = round(src.Value);
+        if ~isnan(S.sel_vertex) && ~isempty(S.lh_M)
+            updateMarkers(S.sel_vertex);
+            updatePlot();
+        end
+    end
+
 % ══════════════════════════════════════════════════════════════════════════
 %  DATA LOADING
 % ══════════════════════════════════════════════════════════════════════════
@@ -459,7 +479,10 @@ onScan();
 
     function renderSurfaces()
         cla(ax1); cla(ax2); cla(ax3);
-
+        
+        smallMarkerColor = [1 1 1] .* .8;
+        smallMarkerSize  = 30;
+        
         lh  = S.lh_surf;
         rh  = S.rh_surf;
         CL  = getDepthData(S.lh_M, S.depth);
@@ -474,7 +497,8 @@ onScan();
         view(ax1, -90, 0);          % set camera BEFORE headlight
         setupLight(ax1);
         hold(ax1,'on');
-        S.dot1 = scatter3(ax1, 0,0,0, 120, 'r', 'filled', 'Visible','off');
+        S.nbr1 = scatter3(ax1, NaN,NaN,NaN, smallMarkerSize, smallMarkerColor, 'filled', 'Visible','off');
+        S.dot1 = scatter3(ax1, NaN,NaN,NaN, 120, 'r', 'filled', 'Visible','off');
 
         % Panel 2 – RH data
         S.srf2 = trisurf(rh.faces, ...
@@ -484,7 +508,8 @@ onScan();
         view(ax2, 90, 0);           % set camera BEFORE headlight
         setupLight(ax2);
         hold(ax2,'on');
-        S.dot2 = scatter3(ax2, 0,0,0, 120, 'r', 'filled', 'Visible','off');
+        S.nbr2 = scatter3(ax2, NaN,NaN,NaN, smallMarkerSize, smallMarkerColor, 'filled', 'Visible','off');
+        S.dot2 = scatter3(ax2, NaN,NaN,NaN, 120, 'r', 'filled', 'Visible','off');
 
         % Panel 3 – Asymmetry on LH geometry
         S.srf3 = trisurf(lh.faces, ...
@@ -494,7 +519,8 @@ onScan();
         view(ax3, -90, 0);          % set camera BEFORE headlight
         setupLight(ax3);
         hold(ax3,'on');
-        S.dot3 = scatter3(ax3, 0,0,0, 120, 'r', 'filled', 'Visible','off');
+        S.nbr3 = scatter3(ax3, NaN,NaN,NaN, smallMarkerSize, smallMarkerColor, 'filled', 'Visible','off');
+        S.dot3 = scatter3(ax3, NaN,NaN,NaN, 120, 'r', 'filled', 'Visible','off');
 
         % Colormaps
         applyDataCmap();
@@ -549,9 +575,24 @@ onScan();
         vl = S.srf1.Vertices;
         vr = S.srf2.Vertices;
         if v < 1 || v > size(vl,1), return; end
+
+        % Selected vertex (red)
         set(S.dot1,'XData',vl(v,1),'YData',vl(v,2),'ZData',vl(v,3),'Visible','on');
         set(S.dot2,'XData',vr(v,1),'YData',vr(v,2),'ZData',vr(v,3),'Visible','on');
         set(S.dot3,'XData',vl(v,1),'YData',vl(v,2),'ZData',vl(v,3),'Visible','on');
+
+        % Neighbors (orange) — same topology for LH and RH
+        all_v = getNeighborRings(S.lh_surf.faces, v, S.n_rings);
+        nbrs = all_v(all_v ~= v);
+        if ~isempty(nbrs)
+            set(S.nbr1,'XData',vl(nbrs,1),'YData',vl(nbrs,2),'ZData',vl(nbrs,3),'Visible','on');
+            set(S.nbr2,'XData',vr(nbrs,1),'YData',vr(nbrs,2),'ZData',vr(nbrs,3),'Visible','on');
+            set(S.nbr3,'XData',vl(nbrs,1),'YData',vl(nbrs,2),'ZData',vl(nbrs,3),'Visible','on');
+        else
+            set(S.nbr1,'XData',NaN,'YData',NaN,'ZData',NaN,'Visible','off');
+            set(S.nbr2,'XData',NaN,'YData',NaN,'ZData',NaN,'Visible','off');
+            set(S.nbr3,'XData',NaN,'YData',NaN,'ZData',NaN,'Visible','off');
+        end
     end
 
 % ══════════════════════════════════════════════════════════════════════════
@@ -562,25 +603,49 @@ onScan();
         if isnan(S.sel_vertex) || isempty(S.lh_M), return; end
         v      = S.sel_vertex;
         depths = (0 : S.nDepths-1) .* S.step_size;
-        d_lh   = double(S.lh_M(v,:));
-        d_rh   = double(S.rh_M(v,:));
+
+        % Selected vertex + n_rings of mesh neighbors
+        all_v    = getNeighborRings(S.lh_surf.faces, v, S.n_rings);
+        nbrs     = all_v(all_v ~= v);
+        d_lh_all = double(S.lh_M(all_v, :));
+        d_rh_all = double(S.rh_M(all_v, :));
+        d_lh_mean = mean(d_lh_all, 1, 'omitnan');
+        d_rh_mean = mean(d_rh_all, 1, 'omitnan');
+
+        lh_col = [0.40 0.70 1.00];
+        rh_col = [1.00 0.52 0.30];
 
         if ~isempty(S.hDepthLine) && isvalid(S.hDepthLine)
             delete(S.hDepthLine);
         end
         S.hDepthLine = [];
+        delete(findall(ax4, 'Type', 'line'));   % findall ignores HandleVisibility
         cla(ax4);
         hold(ax4, 'on');
-        plot(ax4, depths, d_lh, '-o', 'Color',[0.40 0.70 1.00], ...
-            'LineWidth',2, 'MarkerSize',3, 'DisplayName','LH');
-        plot(ax4, depths, d_rh, '-o', 'Color',[1.00 0.52 0.30], ...
-            'LineWidth',2, 'MarkerSize',3, 'DisplayName','RH');
+
+        % Thin semi-transparent lines (only when there are neighbors)
+        if S.n_rings > 0
+            for k = 1:size(d_lh_all, 1)
+                plot(ax4, depths, d_lh_all(k,:), '-', ...
+                    'Color', [lh_col 0.18], 'LineWidth', 0.7, ...
+                    'HandleVisibility','off');
+                plot(ax4, depths, d_rh_all(k,:), '-', ...
+                    'Color', [rh_col 0.18], 'LineWidth', 0.7, ...
+                    'HandleVisibility','off');
+            end
+        end
+
+        % Thick mean lines
+        plot(ax4, depths, d_lh_mean, '-', 'Color', lh_col, ...
+            'LineWidth', 2.5, 'DisplayName', sprintf('LH mean (n=%d)', numel(all_v)));
+        plot(ax4, depths, d_rh_mean, '-', 'Color', rh_col, ...
+            'LineWidth', 2.5, 'DisplayName', sprintf('RH mean (n=%d)', numel(all_v)));
+
         hold(ax4, 'off');
-        legend(ax4, {'LH','RH'}, 'TextColor','w', ...
-            'Color','none', 'EdgeColor','none', 'Location','best');
+        legend(ax4, 'TextColor','w','Color','none','EdgeColor','none','Location','best');
         xlabel(ax4, 'Depth from pial surface (mm)', 'Color',[0.80 0.80 0.80]);
         ylabel(ax4, S.metric_name, 'Color',[0.80 0.80 0.80], 'Interpreter','none');
-        title(ax4, sprintf('Vertex %d', v), 'Color','w');
+        title(ax4, sprintf('Vertex %d  (+%d nbrs, %d rings)', v, numel(nbrs), S.n_rings), 'Color','w');
         ax4.XColor = [0.70 0.70 0.70]; ax4.YColor = [0.70 0.70 0.70];
         ax4.Color  = [0.14 0.14 0.14];
         ax4.XGrid  = 'on'; ax4.YGrid = 'on';
@@ -593,33 +658,52 @@ onScan();
         if isnan(S.sel_vertex) || isempty(S.lh_M), return; end
         v      = S.sel_vertex;
         depths = (0 : S.nDepths-1) .* S.step_size;
-        d_lh   = double(S.lh_M(v,:));
-        d_rh   = double(S.rh_M(v,:));
-        d_asym = (d_lh - d_rh) ./ ((d_lh + d_rh) ./ 2);
-        d_asym(~isfinite(d_asym)) = NaN;
+
+        all_v    = getNeighborRings(S.lh_surf.faces, v, S.n_rings);
+        nbrs     = all_v(all_v ~= v);
+        d_lh_all = double(S.lh_M(all_v, :));
+        d_rh_all = double(S.rh_M(all_v, :));
+
+        % Asymmetry for every vertex in the group
+        d_asym_all = (d_lh_all - d_rh_all) ./ ((d_lh_all + d_rh_all) ./ 2);
+        d_asym_all(~isfinite(d_asym_all)) = NaN;
+        d_asym_mean = mean(d_asym_all, 1, 'omitnan');
+
+        asym_col = [0.88 0.88 0.30];
 
         if ~isempty(S.hDepthLine2) && isvalid(S.hDepthLine2)
             delete(S.hDepthLine2);
         end
         S.hDepthLine2 = [];
+        delete(findall(ax5, 'Type', 'line'));   % findall ignores HandleVisibility
         cla(ax5);
         hold(ax5, 'on');
-        asymcolor = [0.8 0.8 0.8];
-        plot(ax5, depths, d_asym, '-s', 'Color',asymcolor, ...
-            'LineWidth',2, 'MarkerSize',3, 'DisplayName','Asym index');
+
+        % Thin semi-transparent lines (only when there are neighbors)
+        if S.n_rings > 0
+            for k = 1:size(d_asym_all, 1)
+                plot(ax5, depths, d_asym_all(k,:), '-', ...
+                    'Color', [asym_col 0.18], 'LineWidth', 0.7, ...
+                    'HandleVisibility','off');
+            end
+        end
+
+        % Thick mean line
+        plot(ax5, depths, d_asym_mean, '-', 'Color', asym_col, ...
+            'LineWidth', 2.5, 'DisplayName', sprintf('Asym mean (n=%d)', numel(all_v)));
+
         yline(ax5, 0, '--', 'Color',[0.6 0.6 0.6], 'LineWidth',1, ...
             'HandleVisibility','off');
+
         hold(ax5, 'off');
-        xlabel(ax5, 'Depth from pial surface (mm)', 'Color',asymcolor);
-        ylabel(ax5, 'Asymmetry index',              'Color',asymcolor);
-        title(ax5, sprintf('Vertex %d', v), 'Color','w');
+        legend(ax5, 'TextColor','w','Color','none','EdgeColor','none','Location','best');
+        xlabel(ax5, 'Depth from pial surface (mm)', 'Color',[0.80 0.80 0.80]);
+        ylabel(ax5, 'Asymmetry index',              'Color',[0.80 0.80 0.80]);
+        title(ax5, sprintf('Vertex %d  (+%d nbrs, %d rings)', v, numel(nbrs), S.n_rings), 'Color','w');
         ax5.XColor = [0.70 0.70 0.70]; ax5.YColor = [0.70 0.70 0.70];
         ax5.Color  = [0.14 0.14 0.14];
         ax5.XGrid  = 'on'; ax5.YGrid = 'on';
-        %ax5.YLim   = [-1*max(abs(d_asym)) max(abs(d_asym))];
-        ax5.YLim  = [-1 1];
 
-        % depth marker for ax5
         updateDepthLine2();
     end
 
@@ -751,6 +835,30 @@ onScan();
             n    = 128;
             cmap = [linspace(0,1,n)', linspace(0,1,n)', ones(n,1);
                     ones(n,1), linspace(1,0,n)', linspace(1,0,n)'];
+        end
+    end
+
+    function nbrs = getMeshNeighbors(faces, v)
+        % 1-ring neighbors of vertex v via shared triangle faces
+        mask = any(faces == v, 2);
+        nbrs = unique(faces(mask, :));
+        nbrs = nbrs(nbrs ~= v);
+    end
+
+    function all_v = getNeighborRings(faces, v, n_rings)
+        % BFS expansion: all_v includes v plus vertices within n_rings rings
+        all_v = v;
+        if n_rings == 0, return; end
+        frontier = v;
+        for r = 1:n_rings
+            new_nbrs = [];
+            for vi = frontier(:)'
+                new_nbrs = [new_nbrs; getMeshNeighbors(faces, vi)]; %#ok<AGROW>
+            end
+            new_nbrs = setdiff(unique(new_nbrs), all_v);
+            all_v = [all_v; new_nbrs]; %#ok<AGROW>
+            frontier = new_nbrs;
+            if isempty(frontier), break; end
         end
     end
 
