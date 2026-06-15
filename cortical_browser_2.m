@@ -39,6 +39,8 @@ S.clim         = [0 1];
 S.clim_asym    = [-1 1];
 S.cmap         = 'parula';
 S.cmap_asym    = 'RdBu_r';
+S.invert_cmap      = false;
+S.invert_cmap_asym = false;
 S.srf1         = [];   % trisurf handles
 S.srf2         = [];
 S.srf3         = [];
@@ -47,6 +49,7 @@ S.dot2         = [];
 S.dot3         = [];
 S.sel_vertex   = NaN;
 S.hDepthLine   = [];   % xline handle for depth marker in ax4
+S.hDepthLine2  = [];   % xline handle for depth marker in ax5
 
 % ── Figure ────────────────────────────────────────────────────────────────
 BG = [0.12 0.12 0.12];
@@ -61,43 +64,47 @@ mainGL.Padding     = [5 5 5 5];
 mainGL.RowSpacing  = 5;
 mainGL.BackgroundColor = BG;
 
-% ── Top row: four axes panels ─────────────────────────────────────────────
-topGL = uigridlayout(mainGL, [1,4]);
+% ── Top row: five axes panels ─────────────────────────────────────────────
+topGL = uigridlayout(mainGL, [1,5]);
 topGL.Layout.Row    = 1;
 topGL.Layout.Column = 1;
-topGL.ColumnWidth   = {'1x','1x','1x','1x'};
+topGL.ColumnWidth   = {'1x','1x','1x','1x','1x'};
 topGL.RowHeight     = {'1x'};
 topGL.Padding       = [0 0 0 0];
 topGL.ColumnSpacing = 5;
 topGL.BackgroundColor = BG;
 
 surfBG = [0.06 0.06 0.06];
+plotBG = [0.14 0.14 0.14];
 ax1 = uiaxes(topGL, 'BackgroundColor', surfBG, 'Color', surfBG);
 ax1.Layout.Row=1; ax1.Layout.Column=1;
 ax2 = uiaxes(topGL, 'BackgroundColor', surfBG, 'Color', surfBG);
 ax2.Layout.Row=1; ax2.Layout.Column=2;
 ax3 = uiaxes(topGL, 'BackgroundColor', surfBG, 'Color', surfBG);
 ax3.Layout.Row=1; ax3.Layout.Column=3;
-ax4 = uiaxes(topGL, 'BackgroundColor', [0.14 0.14 0.14], 'Color', [0.14 0.14 0.14]);
+ax4 = uiaxes(topGL, 'BackgroundColor', plotBG, 'Color', plotBG);
 ax4.Layout.Row=1; ax4.Layout.Column=4;
+ax5 = uiaxes(topGL, 'BackgroundColor', plotBG, 'Color', plotBG);
+ax5.Layout.Row=1; ax5.Layout.Column=5;
 
 for ax = [ax1 ax2 ax3]
-    ax.Visible = 'off';
     axis(ax, 'equal');
     axis(ax, 'vis3d');
     ax.DataAspectRatio = [1 1 1];
     ax.XColor = 'none'; ax.YColor = 'none'; ax.ZColor = 'none';
 end
-title(ax1,'Left Hemisphere',           'Color','w','FontSize',11,'FontWeight','bold');
-title(ax2,'Right Hemisphere',          'Color','w','FontSize',11,'FontWeight','bold');
-title(ax3,'Asymmetry (L-R)/L [%]','Color','w','FontSize',11,'FontWeight','bold');
-title(ax4,'Vertex depth profile',      'Color','w','FontSize',11,'FontWeight','bold');
+title(ax1,'Left Hemisphere',        'Color','w','FontSize',11,'FontWeight','bold');
+title(ax2,'Right Hemisphere',       'Color','w','FontSize',11,'FontWeight','bold');
+title(ax3,'Asymmetry (L-R)/L [%]', 'Color','w','FontSize',11,'FontWeight','bold');
+title(ax4,'Vertex depth profile',   'Color','w','FontSize',11,'FontWeight','bold');
+title(ax5,'Asymmetry index',        'Color','w','FontSize',11,'FontWeight','bold');
 
-ax4.XColor  = [0.75 0.75 0.75]; ax4.YColor = [0.75 0.75 0.75];
-ax4.GridColor = [0.35 0.35 0.35]; ax4.GridAlpha = 0.5;
-ax4.XGrid   = 'on'; ax4.YGrid = 'on';
-xlabel(ax4, 'Depth from pial surface (mm)', 'Color',[0.8 0.8 0.8]);
-ylabel(ax4, 'Value', 'Color',[0.8 0.8 0.8]);
+for ax = [ax4 ax5]
+    ax.XColor    = [0.75 0.75 0.75];
+    ax.YColor    = [0.75 0.75 0.75];
+    ax.GridColor = [0.35 0.35 0.35]; ax.GridAlpha = 0.5;
+    ax.XGrid     = 'on'; ax.YGrid = 'on';
+end
 
 % ── Bottom row: control panel (4 rows × 8 cols) ───────────────────────────
 %   Cols 1-3: scan controls  [label | field | button]
@@ -176,7 +183,7 @@ edtClim = uieditfield(ctrlGL,'text','Value','0  1',...
     'ValueChangedFcn',@onClimChanged,'FontColor',FC,'BackgroundColor',CB);
 edtClim.Layout.Row=2; edtClim.Layout.Column=5;
 
-edtClimA = uieditfield(ctrlGL,'text','Value','-100  100',...
+edtClimA = uieditfield(ctrlGL,'text','Value','-1  1',...
     'ValueChangedFcn',@onClimAsymChanged,'FontColor',FC,'BackgroundColor',CB);
 edtClimA.Layout.Row=2; edtClimA.Layout.Column=6;
 
@@ -207,7 +214,10 @@ lblDepthVal = uilabel(ctrlGL,'Text','Depth: 1 / 1  (0.0 mm)',...
 lblDepthVal.Layout.Row=3; lblDepthVal.Layout.Column=4;
 
 ddCmap = uidropdown(ctrlGL,...
-    'Items',{'parula','hot','gray','copper','jet','cool','autumn'},...
+    'Items',{'parula','hot','gray','copper','jet','cool','autumn',...
+             'Blues','Greens','Reds','Oranges','Purples','Greys',...
+             'YlOrRd','YlOrBr','YlGnBu','YlGn','RdPu','PuRd',...
+             'OrRd','PuBuGn','PuBu','BuPu','BuGn','GnBu'},...
     'Value','parula','ValueChangedFcn',@onCmapChanged,...
     'BackgroundColor',CB,'FontColor',FC);
 ddCmap.Layout.Row=3; ddCmap.Layout.Column=5;
@@ -222,15 +232,22 @@ lbl_vtxhint = uilabel(ctrlGL,'Text','Click surface to select',...
     'FontSize',9,'FontColor',[0.55 0.55 0.55],'HorizontalAlignment','center');
 lbl_vtxhint.Layout.Row=3; lbl_vtxhint.Layout.Column=7;
 
-% ── Row 4 (status strip) ──────────────────────────────────────────────────
+% ── Row 4 (status strip + invert checkboxes) ──────────────────────────────
+chkInvert = uicheckbox(ctrlGL,'Text','Invert','Value',false,...
+    'FontColor',LC,'ValueChangedFcn',@onInvertCmap);
+chkInvert.Layout.Row=4; chkInvert.Layout.Column=5;
+
+chkInvertAsym = uicheckbox(ctrlGL,'Text','Invert','Value',false,...
+    'FontColor',LC,'ValueChangedFcn',@onInvertCmapAsym);
+chkInvertAsym.Layout.Row=4; chkInvertAsym.Layout.Column=6;
+
 lblStatus = uilabel(ctrlGL,'Text','Press Scan to discover TSF files.',...
     'FontSize',9,'FontColor',[0.55 0.80 0.55],'FontStyle','italic',...
     'WordWrap','on','HorizontalAlignment','left');
 lblStatus.Layout.Row=4; lblStatus.Layout.Column=[1 3];
 
 % Colorbars
-colorbar(ax1,'Color','w','FontSize',8);
-colorbar(ax3,'Color','w','FontSize',8);
+% Colorbars are created inside renderSurfaces() after trisurf is drawn.
 
 % ── Auto-scan on startup ───────────────────────────────────────────────────
 onScan();
@@ -340,13 +357,35 @@ onScan();
 
     function onCmapChanged(src,~)
         S.cmap = src.Value;
-        colormap(ax1, getMATLABColormap(S.cmap));
-        colormap(ax2, getMATLABColormap(S.cmap));
+        applyDataCmap();
     end
 
     function onCmapAsymChanged(src,~)
         S.cmap_asym = src.Value;
-        colormap(ax3, getDivColormap(S.cmap_asym));
+        applyAsymCmap();
+    end
+
+    function onInvertCmap(src,~)
+        S.invert_cmap = src.Value;
+        applyDataCmap();
+    end
+
+    function onInvertCmapAsym(src,~)
+        S.invert_cmap_asym = src.Value;
+        applyAsymCmap();
+    end
+
+    function applyDataCmap()
+        cm = getMATLABColormap(S.cmap);
+        if S.invert_cmap, cm = flipud(cm); end
+        colormap(ax1, cm);
+        colormap(ax2, cm);
+    end
+
+    function applyAsymCmap()
+        cm = getDivColormap(S.cmap_asym);
+        if S.invert_cmap_asym, cm = flipud(cm); end
+        colormap(ax3, cm);
     end
 
     function onStepChanged(src,~)
@@ -458,9 +497,8 @@ onScan();
         S.dot3 = scatter3(ax3, 0,0,0, 120, 'r', 'filled', 'Visible','off');
 
         % Colormaps
-        colormap(ax1, getMATLABColormap(S.cmap));
-        colormap(ax2, getMATLABColormap(S.cmap));
-        colormap(ax3, getDivColormap(S.cmap_asym));
+        applyDataCmap();
+        applyAsymCmap();
 
         % CLim
         applyClim();
@@ -470,6 +508,13 @@ onScan();
         S.srf1.ButtonDownFcn = @(src,ev) onSurfaceClick(src,ev,ax1,S.dot1,'lh');
         S.srf2.ButtonDownFcn = @(src,ev) onSurfaceClick(src,ev,ax2,S.dot2,'rh');
         S.srf3.ButtonDownFcn = @(src,ev) onSurfaceClick(src,ev,ax3,S.dot3,'lh');
+
+        % Colorbars — recreated here so cla() can't destroy them first
+        for cbax = [ax1 ax2 ax3]
+            cb = colorbar(cbax, 'Location','southoutside', ...
+                'Color','w', 'FontSize',8, 'TickDirection','out');
+            cb.Label.Color = 'w';
+        end
     end
 
     function updateOverlays()
@@ -525,38 +570,85 @@ onScan();
         end
         S.hDepthLine = [];
         cla(ax4);
-        hold(ax4,'on');
+        hold(ax4, 'on');
         plot(ax4, depths, d_lh, '-o', 'Color',[0.40 0.70 1.00], ...
-            'LineWidth',2,'MarkerSize',3,'DisplayName','LH');
+            'LineWidth',2, 'MarkerSize',3, 'DisplayName','LH');
         plot(ax4, depths, d_rh, '-o', 'Color',[1.00 0.52 0.30], ...
-            'LineWidth',2,'MarkerSize',3,'DisplayName','RH');
-        hold(ax4,'off');
-
-        legend(ax4, {'LH','RH'}, 'TextColor','w','Color','none','EdgeColor','none',...
-            'Location','best');
+            'LineWidth',2, 'MarkerSize',3, 'DisplayName','RH');
+        hold(ax4, 'off');
+        legend(ax4, {'LH','RH'}, 'TextColor','w', ...
+            'Color','none', 'EdgeColor','none', 'Location','best');
         xlabel(ax4, 'Depth from pial surface (mm)', 'Color',[0.80 0.80 0.80]);
-        ylabel(ax4, S.metric_name,                  'Color',[0.80 0.80 0.80],...
-            'Interpreter','none');
+        ylabel(ax4, S.metric_name, 'Color',[0.80 0.80 0.80], 'Interpreter','none');
         title(ax4, sprintf('Vertex %d', v), 'Color','w');
-        ax4.XColor = [0.70 0.70 0.70];
-        ax4.YColor = [0.70 0.70 0.70];
+        ax4.XColor = [0.70 0.70 0.70]; ax4.YColor = [0.70 0.70 0.70];
         ax4.Color  = [0.14 0.14 0.14];
         ax4.XGrid  = 'on'; ax4.YGrid = 'on';
 
-        updateDepthLine();   % place the marker after the data lines are drawn
+        updateAsymPlot();
+        updateDepthLine();
+    end
+
+    function updateAsymPlot()
+        if isnan(S.sel_vertex) || isempty(S.lh_M), return; end
+        v      = S.sel_vertex;
+        depths = (0 : S.nDepths-1) .* S.step_size;
+        d_lh   = double(S.lh_M(v,:));
+        d_rh   = double(S.rh_M(v,:));
+        d_asym = (d_lh - d_rh) ./ ((d_lh + d_rh) ./ 2);
+        d_asym(~isfinite(d_asym)) = NaN;
+
+        if ~isempty(S.hDepthLine2) && isvalid(S.hDepthLine2)
+            delete(S.hDepthLine2);
+        end
+        S.hDepthLine2 = [];
+        cla(ax5);
+        hold(ax5, 'on');
+        asymcolor = [0.8 0.8 0.8];
+        plot(ax5, depths, d_asym, '-s', 'Color',asymcolor, ...
+            'LineWidth',2, 'MarkerSize',3, 'DisplayName','Asym index');
+        yline(ax5, 0, '--', 'Color',[0.6 0.6 0.6], 'LineWidth',1, ...
+            'HandleVisibility','off');
+        hold(ax5, 'off');
+        xlabel(ax5, 'Depth from pial surface (mm)', 'Color',asymcolor);
+        ylabel(ax5, 'Asymmetry index',              'Color',asymcolor);
+        title(ax5, sprintf('Vertex %d', v), 'Color','w');
+        ax5.XColor = [0.70 0.70 0.70]; ax5.YColor = [0.70 0.70 0.70];
+        ax5.Color  = [0.14 0.14 0.14];
+        ax5.XGrid  = 'on'; ax5.YGrid = 'on';
+        %ax5.YLim   = [-1*max(abs(d_asym)) max(abs(d_asym))];
+        ax5.YLim  = [-1 1];
+
+        % depth marker for ax5
+        updateDepthLine2();
     end
 
     function updateDepthLine()
         if isnan(S.sel_vertex) || isempty(S.lh_M), return; end
         cur_mm = (S.depth - 1) .* S.step_size;
         if isempty(S.hDepthLine) || ~isvalid(S.hDepthLine)
-            hold(ax4,'on');
+            hold(ax4, 'on');
             S.hDepthLine = xline(ax4, cur_mm, '--', ...
                 'Color',[0.88 0.88 0.30], 'LineWidth',1.4, ...
                 'HandleVisibility','off');
-            hold(ax4,'off');
+            hold(ax4, 'off');
         else
-            S.hDepthLine.Value = cur_mm;   % just move the existing line
+            S.hDepthLine.Value = cur_mm;
+        end
+        updateDepthLine2();
+    end
+
+    function updateDepthLine2()
+        if isnan(S.sel_vertex) || isempty(S.lh_M), return; end
+        cur_mm = (S.depth - 1) .* S.step_size;
+        if isempty(S.hDepthLine2) || ~isvalid(S.hDepthLine2)
+            hold(ax5, 'on');
+            S.hDepthLine2 = xline(ax5, cur_mm, '--', ...
+                'Color',[0.88 0.88 0.30], 'LineWidth',1.4, ...
+                'HandleVisibility','off');
+            hold(ax5, 'off');
+        else
+            S.hDepthLine2.Value = cur_mm;
         end
     end
 
@@ -615,9 +707,21 @@ onScan();
     end
 
     function cmap = getMATLABColormap(name)
+        cbrewer_seq = {'Blues','Greens','Reds','Oranges','Purples','Greys',...
+                       'YlOrRd','YlOrBr','YlGnBu','YlGn','RdPu','PuRd',...
+                       'OrRd','PuBuGn','PuBu','BuPu','BuGn','GnBu'};
         builtins = {'parula','hot','gray','copper','jet','cool','autumn',...
                     'summer','winter','spring','bone','pink','hsv'};
-        if any(strcmpi(name, builtins))
+        if any(strcmp(name, cbrewer_seq))
+            try
+                raw  = cbrewer('seq', name, 9);
+                raw  = max(0, min(1, raw));
+                cmap = interp1(linspace(0,1,9), raw, linspace(0,1,256), 'pchip');
+                cmap = max(0, min(1, cmap));
+            catch
+                cmap = parula(256);
+            end
+        elseif any(strcmpi(name, builtins))
             cmap = feval(lower(name), 256);
         else
             try
