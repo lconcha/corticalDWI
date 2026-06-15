@@ -36,7 +36,7 @@ S.nDepths      = 1;
 S.step_size    = 0.5;  % mm per depth step
 S.metric_name  = 'Value';
 S.clim         = [0 1];
-S.clim_asym    = [-100 100];
+S.clim_asym    = [-1 1];
 S.cmap         = 'parula';
 S.cmap_asym    = 'RdBu_r';
 S.srf1         = [];   % trisurf handles
@@ -99,17 +99,17 @@ ax4.XGrid   = 'on'; ax4.YGrid = 'on';
 xlabel(ax4, 'Depth from pial surface (mm)', 'Color',[0.8 0.8 0.8]);
 ylabel(ax4, 'Value', 'Color',[0.8 0.8 0.8]);
 
-% ── Bottom row: control panel (3 rows × 9 cols) ───────────────────────────
+% ── Bottom row: control panel (4 rows × 8 cols) ───────────────────────────
 %   Cols 1-3: scan controls  [label | field | button]
-%   Cols 4-9: viz controls   [depth | CLim | Cmap | AsymCmap | Vtx | Step]
-%   R1: [Sdir lbl] [SDIR fld]  [Browse] | [Depth:]    [CLim(d):]  [Colormap:]  [Asym cmap:]  [Vertex#:]  [Step:]
-%   R2: [Subj lbl] [Subj fld]  [Scan  ] | [sldDepth]  [edtClim]   [ddCmap]     [ddCmapAsym]  [edtVertex] [edtStep]
-%   R3: [Metr lbl] [Metric dd] [Reload] | [DepthVal]  [AClim lbl] [edtClimA]   [—]           [vtxhint]   [—]
-%   R4 (thin): [Status lbl (1-3)]        | empty
-ctrlGL = uigridlayout(mainGL, [4, 9]);
+%   Cols 4-8: viz controls   [Depth | Data | Asym | Vertex# | Step]
+%              R1 (labels):   Depth:   Data      Asym      Vertex#:  Step(mm):
+%              R2 (boxes):    slider   clim(d)   clim(a)   vtx fld   step fld
+%              R3 (dropdowns):depthval cmap(d)   cmap(a)   vtxhint   —
+%              R4 (thin):     status (cols 1-3)
+ctrlGL = uigridlayout(mainGL, [4, 8]);
 ctrlGL.Layout.Row    = 2;
 ctrlGL.Layout.Column = 1;
-ctrlGL.ColumnWidth   = {100, '1.5x', 80, '2x', 110, 130, 130, 110, 90};
+ctrlGL.ColumnWidth   = {100, '1.5x', 80, '2x', 130, 130, 100, 90};
 ctrlGL.RowHeight     = {'1x','1x','1x', 18};
 ctrlGL.Padding       = [8 5 8 5];
 ctrlGL.ColumnSpacing = 8;
@@ -121,7 +121,7 @@ FC = [0.10 0.10 0.10];
 LC = [0.82 0.82 0.82];
 LW = 'bold';
 
-% ── Row 1 ─────────────────────────────────────────────────────────────────
+% ── Row 1: labels ─────────────────────────────────────────────────────────
 lbl_sd = uilabel(ctrlGL,'Text','Subjects dir:','FontColor',LC,'FontWeight',LW,...
     'HorizontalAlignment','right');
 lbl_sd.Layout.Row=1; lbl_sd.Layout.Column=1;
@@ -135,30 +135,26 @@ btnBrowse.Layout.Row=1; btnBrowse.Layout.Column=3;
 btnBrowse.FontColor=[0.9 0.9 0.9]; btnBrowse.BackgroundColor=[0.28 0.30 0.35];
 
 lbl_d = uilabel(ctrlGL,'Text','Depth:','FontColor',LC,'FontWeight',LW,...
-    'HorizontalAlignment','right');
+    'HorizontalAlignment','center');
 lbl_d.Layout.Row=1; lbl_d.Layout.Column=4;
 
-lbl_cl = uilabel(ctrlGL,'Text','CLim (data):','FontColor',LC,'FontWeight',LW,...
-    'HorizontalAlignment','right');
-lbl_cl.Layout.Row=1; lbl_cl.Layout.Column=5;
+lbl_data = uilabel(ctrlGL,'Text','Data','FontColor',LC,'FontWeight',LW,...
+    'HorizontalAlignment','center');
+lbl_data.Layout.Row=1; lbl_data.Layout.Column=5;
 
-lbl_cm = uilabel(ctrlGL,'Text','Colormap:','FontColor',LC,'FontWeight',LW,...
-    'HorizontalAlignment','right');
-lbl_cm.Layout.Row=1; lbl_cm.Layout.Column=6;
-
-lbl_acm = uilabel(ctrlGL,'Text','Asym cmap:','FontColor',LC,'FontWeight',LW,...
-    'HorizontalAlignment','right');
-lbl_acm.Layout.Row=1; lbl_acm.Layout.Column=7;
+lbl_asym = uilabel(ctrlGL,'Text','Asym','FontColor',LC,'FontWeight',LW,...
+    'HorizontalAlignment','center');
+lbl_asym.Layout.Row=1; lbl_asym.Layout.Column=6;
 
 lbl_vx = uilabel(ctrlGL,'Text','Vertex #:','FontColor',LC,'FontWeight',LW,...
-    'HorizontalAlignment','right');
-lbl_vx.Layout.Row=1; lbl_vx.Layout.Column=8;
+    'HorizontalAlignment','center');
+lbl_vx.Layout.Row=1; lbl_vx.Layout.Column=7;
 
 lbl_st = uilabel(ctrlGL,'Text','Step (mm):','FontColor',LC,'FontWeight',LW,...
-    'HorizontalAlignment','right');
-lbl_st.Layout.Row=1; lbl_st.Layout.Column=9;
+    'HorizontalAlignment','center');
+lbl_st.Layout.Row=1; lbl_st.Layout.Column=8;
 
-% ── Row 2 ─────────────────────────────────────────────────────────────────
+% ── Row 2: boxes / slider ─────────────────────────────────────────────────
 lbl_sj = uilabel(ctrlGL,'Text','Subject ID:','FontColor',LC,'FontWeight',LW,...
     'HorizontalAlignment','right');
 lbl_sj.Layout.Row=2; lbl_sj.Layout.Column=1;
@@ -180,27 +176,19 @@ edtClim = uieditfield(ctrlGL,'text','Value','0  1',...
     'ValueChangedFcn',@onClimChanged,'FontColor',FC,'BackgroundColor',CB);
 edtClim.Layout.Row=2; edtClim.Layout.Column=5;
 
-ddCmap = uidropdown(ctrlGL,...
-    'Items',{'parula','hot','gray','copper','jet','cool','autumn'},...
-    'Value','parula','ValueChangedFcn',@onCmapChanged,...
-    'BackgroundColor',CB,'FontColor',FC);
-ddCmap.Layout.Row=2; ddCmap.Layout.Column=6;
-
-ddCmapAsym = uidropdown(ctrlGL,...
-    'Items',{'RdBu_r','PuOr','PRGn','BrBG','Spectral'},...
-    'Value','RdBu_r','ValueChangedFcn',@onCmapAsymChanged,...
-    'BackgroundColor',CB,'FontColor',FC);
-ddCmapAsym.Layout.Row=2; ddCmapAsym.Layout.Column=7;
+edtClimA = uieditfield(ctrlGL,'text','Value','-100  100',...
+    'ValueChangedFcn',@onClimAsymChanged,'FontColor',FC,'BackgroundColor',CB);
+edtClimA.Layout.Row=2; edtClimA.Layout.Column=6;
 
 edtVertex = uieditfield(ctrlGL,'numeric','Value',0,...
     'ValueChangedFcn',@onVertexEdited,'FontColor',FC,'BackgroundColor',CB);
-edtVertex.Layout.Row=2; edtVertex.Layout.Column=8;
+edtVertex.Layout.Row=2; edtVertex.Layout.Column=7;
 
 edtStep = uieditfield(ctrlGL,'numeric','Value',0.5,'Limits',[0.01 100],...
     'ValueChangedFcn',@onStepChanged,'FontColor',FC,'BackgroundColor',CB);
-edtStep.Layout.Row=2; edtStep.Layout.Column=9;
+edtStep.Layout.Row=2; edtStep.Layout.Column=8;
 
-% ── Row 3 ─────────────────────────────────────────────────────────────────
+% ── Row 3: dropdowns / depth value ────────────────────────────────────────
 lbl_mt = uilabel(ctrlGL,'Text','Metric:','FontColor',LC,'FontWeight',LW,...
     'HorizontalAlignment','right');
 lbl_mt.Layout.Row=3; lbl_mt.Layout.Column=1;
@@ -218,17 +206,21 @@ lblDepthVal = uilabel(ctrlGL,'Text','Depth: 1 / 1  (0.0 mm)',...
     'HorizontalAlignment','center');
 lblDepthVal.Layout.Row=3; lblDepthVal.Layout.Column=4;
 
-lbl_acl = uilabel(ctrlGL,'Text','CLim (asym):','FontColor',LC,'FontWeight',LW,...
-    'HorizontalAlignment','right');
-lbl_acl.Layout.Row=3; lbl_acl.Layout.Column=5;
+ddCmap = uidropdown(ctrlGL,...
+    'Items',{'parula','hot','gray','copper','jet','cool','autumn'},...
+    'Value','parula','ValueChangedFcn',@onCmapChanged,...
+    'BackgroundColor',CB,'FontColor',FC);
+ddCmap.Layout.Row=3; ddCmap.Layout.Column=5;
 
-edtClimA = uieditfield(ctrlGL,'text','Value','-100  100',...
-    'ValueChangedFcn',@onClimAsymChanged,'FontColor',FC,'BackgroundColor',CB);
-edtClimA.Layout.Row=3; edtClimA.Layout.Column=6;
+ddCmapAsym = uidropdown(ctrlGL,...
+    'Items',{'RdBu_r','PuOr','PRGn','BrBG','Spectral'},...
+    'Value','RdBu_r','ValueChangedFcn',@onCmapAsymChanged,...
+    'BackgroundColor',CB,'FontColor',FC);
+ddCmapAsym.Layout.Row=3; ddCmapAsym.Layout.Column=6;
 
 lbl_vtxhint = uilabel(ctrlGL,'Text','Click surface to select',...
     'FontSize',9,'FontColor',[0.55 0.55 0.55],'HorizontalAlignment','center');
-lbl_vtxhint.Layout.Row=3; lbl_vtxhint.Layout.Column=8;
+lbl_vtxhint.Layout.Row=3; lbl_vtxhint.Layout.Column=7;
 
 % ── Row 4 (status strip) ──────────────────────────────────────────────────
 lblStatus = uilabel(ctrlGL,'Text','Press Scan to discover TSF files.',...
@@ -617,8 +609,9 @@ onScan();
     end
 
     function CA = computeAsymmetry(CL, CR)
-        CA = 100 .* (CL - CR) ./ CL;
+        CA = (CL - CR) ./ ((CL + CR) / 2);
         CA(~isfinite(CA)) = 0;
+
     end
 
     function cmap = getMATLABColormap(name)
