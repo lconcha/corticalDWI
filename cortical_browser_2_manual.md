@@ -1,6 +1,9 @@
-# Cortical DWI Browser — User Manual
+# Cortical Browser — User Manual
 
-`cortical_DWI_browser()` is an interactive MATLAB GUI for exploring cortical diffusion MRI depth-profile data. It displays bilateral hemisphere surfaces with overlay metrics, orthogonal MRI slices, depth-profile plots, and (optionally) associated streamlines.
+`cortical_browser_2.m` is an interactive MATLAB GUI for exploring cortical diffusion MRI depth-profile data. It displays bilateral hemisphere surfaces with overlay metrics, orthogonal MRI slices, depth-profile plots, and (optionally) associated streamlines.
+
+
+![cortical browser main panel](figures/cortical_browser.png)
 
 ---
 
@@ -78,6 +81,8 @@ Orthoslices are displayed in **radiological orientation** (patient right on view
 | **Load LH TCK…** | Load a MRtrix `.tck` file for the left hemisphere (one streamline per surface vertex, same index order) |
 | **Load RH TCK…** | Load a MRtrix `.tck` file for the right hemisphere |
 | **Clear streamlines** | Unload TCK data and close the streamline viewer window |
+
+![streamlines 3D window](figures/cortical_browser_streamlines.png)
 
 ### View
 | Item | Description |
