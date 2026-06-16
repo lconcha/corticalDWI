@@ -60,6 +60,9 @@ S.vol_data     = [];   % 3D volume (double)
 S.vol_info     = [];   % niftiinfo struct
 S.vol_geom     = [];   % per-panel geometry (built from affine in buildVolGeom)
 S.slice_idx    = [1 1 1];   % slice indices for [sagittal, coronal, axial] panels
+S.lh_tck      = [];   % cell array of streamlines (one per vertex, LH)
+S.rh_tck      = [];   % cell array of streamlines (one per vertex, RH)
+S.tck_fig     = [];   % handle to separate streamline viewer figure
 
 % ── Figure ────────────────────────────────────────────────────────────────
 BG = [0.12 0.12 0.12];
@@ -77,6 +80,11 @@ mList  = uimenu(hMenuMode, 'Text', 'Load vertex list', ...
 hMenuVol = uimenu(hFig, 'Text', 'Volume');
 uimenu(hMenuVol, 'Text', 'Load volume…', 'MenuSelectedFcn', @onLoadVolume);
 uimenu(hMenuVol, 'Text', 'Show coordinate diagnostics', 'MenuSelectedFcn', @onVolDiagnostics);
+
+hMenuTck = uimenu(hFig, 'Text', 'Streamlines');
+uimenu(hMenuTck, 'Text', 'Load LH TCK…', 'MenuSelectedFcn', @(~,~) onLoadTck('lh'));
+uimenu(hMenuTck, 'Text', 'Load RH TCK…', 'MenuSelectedFcn', @(~,~) onLoadTck('rh'));
+uimenu(hMenuTck, 'Text', 'Clear streamlines', 'MenuSelectedFcn', @onClearTck);
 
 % ── View menu (independent panel toggles) ─────────────────────────────────
 S.show_surf = [true true true];   % [LH, RH, Asym]
@@ -335,7 +343,7 @@ chkInvertAsym = uicheckbox(ctrlGL,'Text','Invert','Value',false,...
 chkInvertAsym.Layout.Row=4; chkInvertAsym.Layout.Column=6;
 
 edtRings = uispinner(ctrlGL, 'Value', 0, ...
-    'Limits', [0 10], 'Step', 1, ...
+    'Limits', [0 20], 'Step', 1, ...
     'RoundFractionalValues', 'on', ...
     'ValueChangedFcn', @onRingsChanged, ...
     'FontColor', FC, 'BackgroundColor', CB);
@@ -810,6 +818,10 @@ onScan();
                 'Color','w', 'FontSize',10, 'FontWeight','bold');
         end
         updateSliceContours();
+        % Refresh planes in streamline viewer if the window is open
+        if ~isempty(S.tck_fig) && isvalid(S.tck_fig)
+            updateStreamlineView();
+        end
     end
 
     function updateSliceContours()
@@ -1238,6 +1250,7 @@ onScan();
 
         updateAsymPlot();
         updateDepthLine();
+        updateStreamlineView();
     end
 
     function updateAsymPlot()
@@ -1476,6 +1489,147 @@ onScan();
         else
             s = ['...' p(end-38:end)];
         end
+    end
+
+    % ── TCK loader ────────────────────────────────────────────────────────────
+    function onLoadTck(hemi)
+        [fname, fpath] = uigetfile('*.tck', sprintf('Select %s TCK file', upper(hemi)));
+        if isequal(fname, 0), return; end
+        fullpath = fullfile(fpath, fname);
+        lblStatus.Text = sprintf('Loading %s TCK…', upper(hemi));
+        drawnow;
+        try
+            t = read_mrtrix_tracks(fullpath);
+            if strcmp(hemi, 'lh')
+                S.lh_tck = t.data;
+                lblStatus.Text = sprintf('LH TCK loaded: %d streamlines.', numel(S.lh_tck));
+            else
+                S.rh_tck = t.data;
+                lblStatus.Text = sprintf('RH TCK loaded: %d streamlines.', numel(S.rh_tck));
+            end
+            updateStreamlineView();
+        catch ME
+            lblStatus.Text = sprintf('TCK load failed: %s', ME.message);
+        end
+    end
+
+    function onClearTck(~,~)
+        S.lh_tck = [];
+        S.rh_tck = [];
+        if ~isempty(S.tck_fig) && isvalid(S.tck_fig)
+            close(S.tck_fig);
+        end
+        S.tck_fig = [];
+        lblStatus.Text = 'Streamlines cleared.';
+    end
+
+    function updateStreamlineView()
+        if isempty(S.lh_tck) && isempty(S.rh_tck), return; end
+
+        % Resolve vertex set
+        if S.list_mode && ~isempty(S.vertex_list)
+            all_v = S.vertex_list;
+        elseif ~isnan(S.sel_vertex)
+            all_v = getNeighborRings(S.lh_surf.faces, S.sel_vertex, S.n_rings);
+        else
+            all_v = [];
+        end
+
+        % Don't open the window without a selection; update if already open
+        if isempty(all_v) && (isempty(S.tck_fig) || ~isvalid(S.tck_fig))
+            return;
+        end
+
+        % Clamp indices to available streamlines
+        if ~isempty(S.lh_tck) && ~isempty(all_v)
+            lh_v = all_v(all_v >= 1 & all_v <= numel(S.lh_tck));
+        else
+            lh_v = [];
+        end
+        if ~isempty(S.rh_tck) && ~isempty(all_v)
+            rh_v = all_v(all_v >= 1 & all_v <= numel(S.rh_tck));
+        else
+            rh_v = [];
+        end
+
+        % Create or reuse figure — preserve camera view between updates
+        if isempty(S.tck_fig) || ~isvalid(S.tck_fig)
+            S.tck_fig = figure('Name','Streamline Viewer', ...
+                'Color',[0.08 0.08 0.08], 'NumberTitle','off');
+            prev_view = [];
+        else
+            ax_old = findobj(S.tck_fig, 'Type','axes');
+            if ~isempty(ax_old)
+                prev_view = [get(ax_old(1),'CameraPosition'); ...
+                             get(ax_old(1),'CameraTarget'); ...
+                             get(ax_old(1),'CameraUpVector')];
+            else
+                prev_view = [];
+            end
+            clf(S.tck_fig);
+        end
+
+        ax = axes(S.tck_fig, 'Color',[0.08 0.08 0.08], ...
+            'XColor','none','YColor','none','ZColor','none');
+        hold(ax,'on');
+        axis(ax,'equal'); axis(ax,'vis3d');
+        colormap(ax, gray(256));
+
+        % ── Orthoslice planes ────────────────────────────────────────────────
+        if ~isempty(S.vol_data) && ~isempty(S.vol_geom)
+            vol_clim = [min(S.vol_data(:)), max(S.vol_data(:))];
+            for w = 1:3
+                p   = S.vol_geom(w);
+                k   = S.slice_idx(w);
+                world_fix = p.scale_fix * (k-1) + p.transl_fix;
+
+                idx = {':',':',':'};
+                idx{p.fix_vox} = k;
+                img = double(squeeze(S.vol_data(idx{:})));
+                if p.needs_T, img = img'; end   % rows=v_world, cols=h_world
+
+                [H, V] = meshgrid(p.h_coords, p.v_coords);
+                Wg = zeros([size(H), 3]);
+                Wg(:,:,p.h_world) = H;
+                Wg(:,:,p.v_world) = V;
+                Wg(:,:,w)         = world_fix;   % w == fixed world axis (1=X,2=Y,3=Z)
+
+                surface(ax, Wg(:,:,1), Wg(:,:,2), Wg(:,:,3), img, ...
+                    'EdgeColor','none', 'FaceColor','texturemap', ...
+                    'CDataMapping','scaled');
+            end
+            set(ax, 'CLim', vol_clim);
+        end
+
+        % ── Streamlines ──────────────────────────────────────────────────────
+        lh_col = [0.40 0.70 1.00];
+        rh_col = [1.00 0.52 0.30];
+        for k = 1:numel(lh_v)
+            sl = S.lh_tck{lh_v(k)};
+            if size(sl,1) < 2, continue; end
+            plot3(ax, sl(:,1), sl(:,2), sl(:,3), '-', ...
+                'Color', lh_col, 'LineWidth', 0.8);
+        end
+        for k = 1:numel(rh_v)
+            sl = S.rh_tck{rh_v(k)};
+            if size(sl,1) < 2, continue; end
+            plot3(ax, sl(:,1), sl(:,2), sl(:,3), '-', ...
+                'Color', rh_col, 'LineWidth', 0.8);
+        end
+
+        hold(ax,'off');
+
+        % Restore camera or set default view
+        if ~isempty(prev_view)
+            set(ax, 'CameraPosition', prev_view(1,:), ...
+                    'CameraTarget',   prev_view(2,:), ...
+                    'CameraUpVector', prev_view(3,:));
+        else
+            view(ax, 3);
+        end
+
+        n = numel(lh_v) + numel(rh_v);
+        title(ax, sprintf('Streamlines  (n=%d)', n), 'Color','w', 'FontSize',11);
     end
 
 end  % cortical_DWI_browser
