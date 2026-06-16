@@ -108,12 +108,30 @@ topGL.BackgroundColor = BG;
 
 surfBG = [0.06 0.06 0.06];
 plotBG = [0.14 0.14 0.14];
-ax1 = uiaxes(topGL, 'BackgroundColor', surfBG, 'Color', surfBG);
-ax1.Layout.Row=1; ax1.Layout.Column=1;
-ax2 = uiaxes(topGL, 'BackgroundColor', surfBG, 'Color', surfBG);
-ax2.Layout.Row=1; ax2.Layout.Column=2;
-ax3 = uiaxes(topGL, 'BackgroundColor', surfBG, 'Color', surfBG);
-ax3.Layout.Row=1; ax3.Layout.Column=3;
+
+% Each surface panel gets a 2-row sub-grid: label (outside/above) + axes.
+% This keeps the title out of the 3D scene regardless of camera angle.
+surfLabels = {'Left Hemisphere', 'Right Hemisphere', 'Asymmetry index'};
+surfAxes   = gobjects(1,3);
+for col = 1:3
+    sg = uigridlayout(topGL, [2,1]);
+    sg.Layout.Row = 1; sg.Layout.Column = col;
+    sg.RowHeight  = {20, '1x'};
+    sg.Padding    = [0 0 0 0];
+    sg.RowSpacing = 0;
+    sg.BackgroundColor = BG;
+    lbl = uilabel(sg, 'Text', surfLabels{col}, ...
+        'FontColor','w', 'FontSize',11, 'FontWeight','bold', ...
+        'HorizontalAlignment','center', 'BackgroundColor', BG);
+    lbl.Layout.Row = 1; lbl.Layout.Column = 1;
+    ax = uiaxes(sg, 'BackgroundColor', surfBG, 'Color', surfBG);
+    ax.Layout.Row = 2; ax.Layout.Column = 1;
+    surfAxes(col) = ax;
+end
+ax1 = surfAxes(1);
+ax2 = surfAxes(2);
+ax3 = surfAxes(3);
+
 ax4 = uiaxes(topGL, 'BackgroundColor', plotBG, 'Color', plotBG);
 ax4.Layout.Row=1; ax4.Layout.Column=4;
 
@@ -123,9 +141,6 @@ for ax = [ax1 ax2 ax3]
     ax.DataAspectRatio = [1 1 1];
     ax.XColor = 'none'; ax.YColor = 'none'; ax.ZColor = 'none';
 end
-title(ax1,'Left Hemisphere',      'Color','w','FontSize',11,'FontWeight','bold');
-title(ax2,'Right Hemisphere',     'Color','w','FontSize',11,'FontWeight','bold');
-title(ax3,'Asymmetry index',      'Color','w','FontSize',11,'FontWeight','bold');
 title(ax4,'Vertex depth profile', 'Color','w','FontSize',11,'FontWeight','bold');
 
 ax4.XColor    = [0.75 0.75 0.75];
@@ -1074,8 +1089,10 @@ onScan();
         % Colorbars — recreated here so cla() can't destroy them first
         for cbax = [ax1 ax2 ax3]
             cb = colorbar(cbax, 'Location','southoutside', ...
-                'Color','w', 'FontSize',8, 'TickDirection','out');
+                'Color','w', 'FontSize',7, 'TickDirection','out');
             cb.Label.Color = 'w';
+            %cb.Ticks = [cb.Limits(1),  cb.Limits(2)];
+            disp(cb.Limits)
         end
 
         % Refresh contours if a volume is already loaded
@@ -1187,6 +1204,17 @@ onScan();
                     'Color', rh_thin, 'LineWidth', 0.7, ...
                     'HandleVisibility','off');
             end
+        elseif numel(all_v) > MAX_THIN
+            d_lh_sd = std(d_lh_all, 0, 1, 'omitnan');
+            d_rh_sd = std(d_rh_all, 0, 1, 'omitnan');
+            plot(ax4, depths, d_lh_mean + d_lh_sd, '--', ...
+                'Color', lh_thin, 'LineWidth', 1.0, 'HandleVisibility','off');
+            plot(ax4, depths, d_lh_mean - d_lh_sd, '--', ...
+                'Color', lh_thin, 'LineWidth', 1.0, 'HandleVisibility','off');
+            plot(ax4, depths, d_rh_mean + d_rh_sd, '--', ...
+                'Color', rh_thin, 'LineWidth', 1.0, 'HandleVisibility','off');
+            plot(ax4, depths, d_rh_mean - d_rh_sd, '--', ...
+                'Color', rh_thin, 'LineWidth', 1.0, 'HandleVisibility','off');
         end
 
         % Thick mean lines
@@ -1254,6 +1282,12 @@ onScan();
                     'Color', asym_thin, 'LineWidth', 0.7, ...
                     'HandleVisibility','off');
             end
+        elseif numel(all_v) > MAX_THIN
+            d_asym_sd = std(d_asym_all, 0, 1, 'omitnan');
+            plot(ax5, depths, d_asym_mean + d_asym_sd, '--', ...
+                'Color', asym_thin, 'LineWidth', 1.0, 'HandleVisibility','off');
+            plot(ax5, depths, d_asym_mean - d_asym_sd, '--', ...
+                'Color', asym_thin, 'LineWidth', 1.0, 'HandleVisibility','off');
         end
 
         % Thick mean line
