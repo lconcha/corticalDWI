@@ -59,6 +59,10 @@ S.list_mode    = false;
 S.sel_vertex   = NaN;
 S.hDepthLine   = [];   % xline handle for depth marker in ax4
 S.hDepthLine2  = [];   % xline handle for depth marker in ax5
+S.vol_data     = [];   % 3D volume (double)
+S.vol_info     = [];   % niftiinfo struct
+S.vol_geom     = [];   % per-panel geometry (built from affine in buildVolGeom)
+S.slice_idx    = [1 1 1];   % slice indices for [sagittal, coronal, axial] panels
 
 % ── Figure ────────────────────────────────────────────────────────────────
 BG = [0.12 0.12 0.12];
@@ -72,6 +76,11 @@ mClick = uimenu(hMenuMode, 'Text', 'Click vertex', ...
 mList  = uimenu(hMenuMode, 'Text', 'Load vertex list', ...
     'Checked', 'off', 'MenuSelectedFcn', @(~,~) setMode('list'));
 
+% ── Volume menu ───────────────────────────────────────────────────────────
+hMenuVol = uimenu(hFig, 'Text', 'Volume');
+uimenu(hMenuVol, 'Text', 'Load NIfTI volume…', 'MenuSelectedFcn', @onLoadVolume);
+uimenu(hMenuVol, 'Text', 'Show coordinate diagnostics', 'MenuSelectedFcn', @onVolDiagnostics);
+
 % ── View menu (independent panel toggles) ─────────────────────────────────
 S.show_surf = [true true true];   % [LH, RH, Asym]
 hMenuView  = uimenu(hFig, 'Text', 'View');
@@ -82,9 +91,9 @@ mShowRH    = uimenu(hMenuView, 'Text', 'RH surface',   'Checked','on', ...
 mShowAsym  = uimenu(hMenuView, 'Text', 'Asym surface', 'Checked','on', ...
     'MenuSelectedFcn', @(~,~) toggleSurface(3));
 
-% Main 2-row grid ──────────────────────────────────────────────────────────
-mainGL = uigridlayout(hFig, [2,1]);
-mainGL.RowHeight   = {'3x', '1x'};
+% Main 3-row grid ──────────────────────────────────────────────────────────
+mainGL = uigridlayout(hFig, [3,1]);
+mainGL.RowHeight   = {'3x', '1.5x', '1x'};
 mainGL.ColumnWidth = {'1x'};
 mainGL.Padding     = [5 5 5 5];
 mainGL.RowSpacing  = 5;
@@ -132,6 +141,48 @@ for ax = [ax4 ax5]
     ax.XGrid     = 'on'; ax.YGrid = 'on';
 end
 
+% ── Middle row: orthoslice panels ─────────────────────────────────────────
+sliceBG = [0.04 0.04 0.04];
+orthoGL = uigridlayout(mainGL, [2, 3]);
+orthoGL.Layout.Row    = 2;
+orthoGL.Layout.Column = 1;
+orthoGL.ColumnWidth   = {'1x','1x','1x'};
+orthoGL.RowHeight     = {'1x', 28};
+orthoGL.Padding       = [0 0 0 0];
+orthoGL.ColumnSpacing = 5;
+orthoGL.RowSpacing    = 2;
+orthoGL.BackgroundColor = BG;
+
+ax6 = uiaxes(orthoGL,'BackgroundColor',sliceBG,'Color',sliceBG);
+ax6.Layout.Row=1; ax6.Layout.Column=1;
+ax7 = uiaxes(orthoGL,'BackgroundColor',sliceBG,'Color',sliceBG);
+ax7.Layout.Row=1; ax7.Layout.Column=2;
+ax8 = uiaxes(orthoGL,'BackgroundColor',sliceBG,'Color',sliceBG);
+ax8.Layout.Row=1; ax8.Layout.Column=3;
+
+for ax = [ax6 ax7 ax8]
+    ax.XColor = 'none'; ax.YColor = 'none';
+    colormap(ax, gray(256));
+end
+title(ax6,'Sagittal','Color','w','FontSize',10,'FontWeight','bold');
+title(ax7,'Coronal', 'Color','w','FontSize',10,'FontWeight','bold');
+title(ax8,'Axial',   'Color','w','FontSize',10,'FontWeight','bold');
+
+sldSag = uislider(orthoGL,'Limits',[1 2],'Value',1,...
+    'MajorTicks',[],'MinorTicks',[],...
+    'ValueChangedFcn',@(src,~) onSliceChanged(src,1));
+sldSag.Layout.Row=2; sldSag.Layout.Column=1;
+
+sldCor = uislider(orthoGL,'Limits',[1 2],'Value',1,...
+    'MajorTicks',[],'MinorTicks',[],...
+    'ValueChangedFcn',@(src,~) onSliceChanged(src,2));
+sldCor.Layout.Row=2; sldCor.Layout.Column=2;
+
+sldAx = uislider(orthoGL,'Limits',[1 2],'Value',1,...
+    'MajorTicks',[],'MinorTicks',[],...
+    'ValueChangedFcn',@(src,~) onSliceChanged(src,3));
+sldAx.Layout.Row=2; sldAx.Layout.Column=3;
+
 % ── Bottom row: control panel (4 rows × 8 cols) ───────────────────────────
 %   Cols 1-3: scan controls  [label | field | button]
 %   Cols 4-8: viz controls   [Depth | Data | Asym | Vertex# | Step]
@@ -140,7 +191,7 @@ end
 %              R3 (dropdowns):depthval cmap(d)   cmap(a)   vtxhint   —
 %              R4 (thin):     status (cols 1-3)
 ctrlGL = uigridlayout(mainGL, [4, 8]);
-ctrlGL.Layout.Row    = 2;
+ctrlGL.Layout.Row    = 3;
 ctrlGL.Layout.Column = 1;
 ctrlGL.ColumnWidth   = {100, '1.5x', 80, '2x', 130, 130, 100, 90};
 ctrlGL.RowHeight     = {40, 40, 40, 18};
@@ -543,6 +594,237 @@ onScan();
         lblStatus.Text = 'Vertex list cleared.';
     end
 
+    function onVolDiagnostics(~,~)
+        fprintf('\n══════ Coordinate Diagnostics ══════\n');
+
+        if ~isempty(S.vol_info)
+            T   = S.vol_info.Transform;
+            M   = T.T;   % 4×4 in MATLAB row convention
+            fprintf('\n─── NIfTI volume ───\n');
+            fprintf('File:        %s\n', S.vol_info.Filename);
+            fprintf('Dimensions:  %d × %d × %d\n', S.vol_info.ImageSize(1:3));
+            fprintf('Voxel size:  %.4f × %.4f × %.4f mm\n', S.vol_info.PixelDimensions(1:3));
+            fprintf('sform_code:  %d\n', S.vol_info.AdditiveOffset);   % proxy check
+            fprintf('Affine (MATLAB Transform.T):\n');
+            disp(M);
+            dims = S.vol_info.ImageSize(1:3);
+            p0 = transformPointsForward(T, [1 1 1]);
+            p1 = transformPointsForward(T, dims);
+            fprintf('World at voxel (1,1,1):       [%.2f  %.2f  %.2f] mm\n', p0);
+            fprintf('World at voxel (%d,%d,%d): [%.2f  %.2f  %.2f] mm\n', dims, p1);
+            if ~isempty(S.vol_geom)
+                for w=1:3
+                    p = S.vol_geom(w);
+                    fprintf('Panel %d (%s): fix vox-dim %d, h-world %d, v-world %d, needs_T=%d\n',...
+                        w, p.name, p.fix_vox, p.h_world, p.v_world, p.needs_T);
+                end
+            end
+        else
+            fprintf('No volume loaded.\n');
+        end
+
+        if ~isempty(S.lh_surf)
+            lv = S.lh_surf.vertices;
+            rv = S.rh_surf.vertices;
+            fprintf('\n─── LH surface vertices ───\n');
+            fprintf('X range: %.2f → %.2f\n', min(lv(:,1)), max(lv(:,1)));
+            fprintf('Y range: %.2f → %.2f\n', min(lv(:,2)), max(lv(:,2)));
+            fprintf('Z range: %.2f → %.2f\n', min(lv(:,3)), max(lv(:,3)));
+            fprintf('\n─── RH surface vertices ───\n');
+            fprintf('X range: %.2f → %.2f\n', min(rv(:,1)), max(rv(:,1)));
+            fprintf('Y range: %.2f → %.2f\n', min(rv(:,2)), max(rv(:,2)));
+            fprintf('Z range: %.2f → %.2f\n', min(rv(:,3)), max(rv(:,3)));
+        else
+            fprintf('No surface loaded.\n');
+        end
+
+        if ~isempty(S.vol_info) && ~isempty(S.lh_surf)
+            lv = S.lh_surf.vertices;
+            vol_center = transformPointsForward(S.vol_info.Transform, ...
+                S.vol_info.ImageSize(1:3)/2);
+            surf_center = mean(lv, 1);
+            fprintf('\n─── Center comparison ───\n');
+            fprintf('Volume center:  [%.2f  %.2f  %.2f] mm\n', vol_center);
+            fprintf('LH surf center: [%.2f  %.2f  %.2f] mm\n', surf_center);
+            fprintf('Offset (surf - vol): [%.2f  %.2f  %.2f] mm\n', surf_center - vol_center);
+        end
+
+        fprintf('═════════════════════════════════════\n\n');
+    end
+
+    function onLoadVolume(~,~)
+        [fname, fpath] = uigetfile({'*.nii;*.nii.gz','NIfTI files (*.nii,*.nii.gz)'}, ...
+            'Select NIfTI volume');
+        if isequal(fname,0), return; end
+        lblStatus.Text = 'Loading volume…'; drawnow;
+        S.vol_info = niftiinfo(fullfile(fpath, fname));
+        S.vol_data = double(niftiread(S.vol_info));
+        S.vol_geom = buildVolGeom(S.vol_info, size(S.vol_data));
+
+        % Start at center slice for each panel
+        for w = 1:3
+            S.slice_idx(w) = round(S.vol_geom(w).n_slices / 2);
+        end
+        sldSag.Limits = [1 S.vol_geom(1).n_slices]; sldSag.Value = S.slice_idx(1);
+        sldCor.Limits = [1 S.vol_geom(2).n_slices]; sldCor.Value = S.slice_idx(2);
+        sldAx.Limits  = [1 S.vol_geom(3).n_slices]; sldAx.Value  = S.slice_idx(3);
+        updateSlices();
+        dims = size(S.vol_data);
+        lblStatus.Text = sprintf('Volume loaded: %d×%d×%d voxels.', dims(1), dims(2), dims(3));
+    end
+
+    function g = buildVolGeom(vol_info, dims)
+        % Parse the affine to determine axis permutation (works for any
+        % orthogonal NIfTI regardless of axis order or sign flips).
+        %
+        % MATLAB convention: [xw yw zw 1] = [xv yv zv 1] * T.T
+        %   Row r of M33 = how a unit step in vox dim r affects world XYZ.
+        %   Column c of M33 = which vox dim drives world axis c.
+        M33   = vol_info.Transform.T(1:3, 1:3);
+        transl = vol_info.Transform.T(4, 1:3);   % world origin offset
+
+        % For each vox dim, find which world axis it drives (largest |value|)
+        [~, vox2world] = max(abs(M33), [], 2);   % vox2world(d) = world axis (1=X,2=Y,3=Z)
+        world2vox = zeros(1,3);
+        for d = 1:3, world2vox(vox2world(d)) = d; end
+
+        % Standard anatomical panel layout:
+        %   Sagittal (fix world X): show Y horiz, Z vert
+        %   Coronal  (fix world Y): show X horiz, Z vert
+        %   Axial    (fix world Z): show X horiz, Y vert
+        panel_h = [2 1 1];   % horizontal world axis per panel
+        panel_v = [3 3 2];   % vertical   world axis per panel
+        names   = {'Sagittal','Coronal','Axial'};
+        wnames  = {'X','Y','Z'};
+
+        for w = 1:3
+            fvd = world2vox(w);          % vox dim to fix
+            hw  = panel_h(w);            % desired horizontal world axis
+            vw  = panel_v(w);            % desired vertical world axis
+            hvd = world2vox(hw);         % vox dim for horizontal
+            vvd = world2vox(vw);         % vox dim for vertical
+
+            % World coords along each display axis (0-indexed: MATLAB array
+            % index 1 = NIfTI voxel 0, and Transform.T is the raw 0-indexed affine)
+            h_coords = M33(hvd, hw) * (0:dims(hvd)-1) + transl(hw);
+            v_coords = M33(vvd, vw) * (0:dims(vvd)-1) + transl(vw);
+
+            % squeeze(vol(...fixed at fvd...)) has dims in ascending vox-dim order.
+            % We need rows=vvd, cols=hvd; check if transpose is required.
+            other_sorted = sort(setdiff(1:3, fvd));
+            needs_T = (other_sorted(1) == hvd);  % first squeeze dim is horiz → transpose
+
+            g(w).fix_vox    = fvd;
+            g(w).h_vox      = hvd;
+            g(w).v_vox      = vvd;
+            g(w).h_world    = hw;
+            g(w).v_world    = vw;
+            g(w).h_coords   = h_coords(:);
+            g(w).v_coords   = v_coords(:);
+            g(w).needs_T    = needs_T;
+            g(w).scale_fix  = M33(fvd, w);
+            g(w).transl_fix = transl(w);
+            g(w).n_slices   = dims(fvd);
+            g(w).name       = names{w};
+            g(w).wname      = wnames{w};
+        end
+    end
+
+    function onSliceChanged(src, dim)
+        if isempty(S.vol_data), return; end
+        S.slice_idx(dim) = round(src.Value);
+        updateSlices();
+    end
+
+    function updateSlices()
+        if isempty(S.vol_data) || isempty(S.vol_geom), return; end
+        ax_h = [ax6, ax7, ax8];
+        for w = 1:3
+            ax = ax_h(w);
+            p  = S.vol_geom(w);
+            k  = S.slice_idx(w);
+
+            % Extract slice (fix the appropriate vox dim)
+            idx = {':',':',':'};
+            idx{p.fix_vox} = k;
+            img = squeeze(S.vol_data(idx{:}));
+            if p.needs_T, img = img'; end   % ensure rows=vert, cols=horiz
+
+            cla(ax);
+            imagesc(ax, p.h_coords, p.v_coords, img);
+            set(ax, 'YDir','normal', 'XColor','none', 'YColor','none');
+            % Radiological orientation: patient right on viewer's left → reverse X when
+            % the horizontal axis is world X (coronal and axial panels).
+            if p.h_world == 1
+                set(ax, 'XDir','reverse');
+            else
+                set(ax, 'XDir','normal');
+            end
+            axis(ax, 'image');
+            world_pos = p.scale_fix * (k-1) + p.transl_fix;   % k is 1-indexed MATLAB; NIfTI voxel = k-1
+            title(ax, sprintf('%s  %s=%.1f mm', p.name, p.wname, world_pos), ...
+                'Color','w', 'FontSize',10, 'FontWeight','bold');
+        end
+        updateSliceContours();
+    end
+
+    function updateSliceContours()
+        if isempty(S.lh_surf) || isempty(S.rh_surf) || isempty(S.vol_geom), return; end
+        lv = S.lh_surf.vertices; lf = S.lh_surf.faces;
+        rv = S.rh_surf.vertices; rf = S.rh_surf.faces;
+        lh_col = [0.40 0.70 1.00];
+        rh_col = [1.00 0.65 0.30];
+        ax_h = [ax6, ax7, ax8];
+        for w = 1:3
+            ax = ax_h(w);
+            p  = S.vol_geom(w);
+            k  = S.slice_idx(w);
+            world_pos = p.scale_fix * (k-1) + p.transl_fix;
+            proj = [p.h_world, p.v_world];
+            hold(ax, 'on');
+            drawContour(ax, lv, lf, w, world_pos, proj, lh_col);
+            drawContour(ax, rv, rf, w, world_pos, proj, rh_col);
+            hold(ax, 'off');
+        end
+    end
+
+    function drawContour(ax, verts, faces, dim, pos, proj, col)
+        segs = meshPlaneIntersect(verts, faces, dim, pos);
+        if isempty(segs), return; end
+        % segs is Nx6: [p1x p1y p1z  p2x p2y p2z]
+        % proj selects which two world coords to use as horiz/vert
+        x_seg = [segs(:,proj(1)), segs(:,proj(1)+3), nan(size(segs,1),1)]';
+        y_seg = [segs(:,proj(2)), segs(:,proj(2)+3), nan(size(segs,1),1)]';
+        plot(ax, x_seg(:), y_seg(:), '-', 'Color', col, 'LineWidth', 0.7, ...
+            'HitTest','off');
+    end
+
+    function segs = meshPlaneIntersect(verts, faces, dim, pos)
+        d  = verts(:,dim) - pos;
+        eA = [1 2 3];
+        eB = [2 3 1];
+        all_pts = zeros(0,3);
+        all_tri = zeros(0,1,'int32');
+        for e = 1:3
+            da = d(faces(:,eA(e)));
+            db = d(faces(:,eB(e)));
+            mask = da .* db < 0;
+            if ~any(mask), continue; end
+            va = verts(faces(mask, eA(e)), :);
+            vb = verts(faces(mask, eB(e)), :);
+            t  = da(mask) ./ (da(mask) - db(mask));
+            all_pts = [all_pts; va + t .* (vb - va)]; %#ok<AGROW>
+            all_tri = [all_tri; int32(find(mask))];   %#ok<AGROW>
+        end
+        if isempty(all_tri), segs = zeros(0,6); return; end
+        [sorted_tri, ord] = sort(all_tri);
+        sorted_pts = all_pts(ord,:);
+        [~, ia] = unique(sorted_tri,'first');
+        [~, ib] = unique(sorted_tri,'last');
+        valid = (ib - ia) == 1;
+        segs = [sorted_pts(ia(valid),:), sorted_pts(ib(valid),:)];
+    end
+
     function onExport(~,~)
         if isempty(S.lh_M)
             lblStatus.Text = 'Nothing to export — load data first.';
@@ -711,6 +993,11 @@ onScan();
             cb = colorbar(cbax, 'Location','southoutside', ...
                 'Color','w', 'FontSize',8, 'TickDirection','out');
             cb.Label.Color = 'w';
+        end
+
+        % Refresh contours if a volume is already loaded
+        if ~isempty(S.vol_data)
+            updateSliceContours();
         end
     end
 
