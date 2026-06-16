@@ -93,17 +93,17 @@ mShowAsym  = uimenu(hMenuView, 'Text', 'Asym surface', 'Checked','on', ...
 
 % Main 3-row grid ──────────────────────────────────────────────────────────
 mainGL = uigridlayout(hFig, [3,1]);
-mainGL.RowHeight   = {'3x', '1.5x', '1x'};
+mainGL.RowHeight   = {'2x', '1.5x', '1x'};
 mainGL.ColumnWidth = {'1x'};
 mainGL.Padding     = [5 5 5 5];
 mainGL.RowSpacing  = 5;
 mainGL.BackgroundColor = BG;
 
 % ── Top row: five axes panels ─────────────────────────────────────────────
-topGL = uigridlayout(mainGL, [1,5]);
+topGL = uigridlayout(mainGL, [1,4]);
 topGL.Layout.Row    = 1;
 topGL.Layout.Column = 1;
-topGL.ColumnWidth   = {'1x','1x','1x','1x','1x'};
+topGL.ColumnWidth   = {'1x','1x','1x','1x'};
 topGL.RowHeight     = {'1x'};
 topGL.Padding       = [0 0 0 0];
 topGL.ColumnSpacing = 5;
@@ -119,8 +119,6 @@ ax3 = uiaxes(topGL, 'BackgroundColor', surfBG, 'Color', surfBG);
 ax3.Layout.Row=1; ax3.Layout.Column=3;
 ax4 = uiaxes(topGL, 'BackgroundColor', plotBG, 'Color', plotBG);
 ax4.Layout.Row=1; ax4.Layout.Column=4;
-ax5 = uiaxes(topGL, 'BackgroundColor', plotBG, 'Color', plotBG);
-ax5.Layout.Row=1; ax5.Layout.Column=5;
 
 for ax = [ax1 ax2 ax3]
     axis(ax, 'equal');
@@ -128,25 +126,22 @@ for ax = [ax1 ax2 ax3]
     ax.DataAspectRatio = [1 1 1];
     ax.XColor = 'none'; ax.YColor = 'none'; ax.ZColor = 'none';
 end
-title(ax1,'Left Hemisphere',        'Color','w','FontSize',11,'FontWeight','bold');
-title(ax2,'Right Hemisphere',       'Color','w','FontSize',11,'FontWeight','bold');
-title(ax3,'Asymmetry index', 'Color','w','FontSize',11,'FontWeight','bold');
-title(ax4,'Vertex depth profile',   'Color','w','FontSize',11,'FontWeight','bold');
-title(ax5,'Asymmetry index',        'Color','w','FontSize',11,'FontWeight','bold');
+title(ax1,'Left Hemisphere',      'Color','w','FontSize',11,'FontWeight','bold');
+title(ax2,'Right Hemisphere',     'Color','w','FontSize',11,'FontWeight','bold');
+title(ax3,'Asymmetry index',      'Color','w','FontSize',11,'FontWeight','bold');
+title(ax4,'Vertex depth profile', 'Color','w','FontSize',11,'FontWeight','bold');
 
-for ax = [ax4 ax5]
-    ax.XColor    = [0.75 0.75 0.75];
-    ax.YColor    = [0.75 0.75 0.75];
-    ax.GridColor = [0.35 0.35 0.35]; ax.GridAlpha = 0.5;
-    ax.XGrid     = 'on'; ax.YGrid = 'on';
-end
+ax4.XColor    = [0.75 0.75 0.75];
+ax4.YColor    = [0.75 0.75 0.75];
+ax4.GridColor = [0.35 0.35 0.35]; ax4.GridAlpha = 0.5;
+ax4.XGrid     = 'on'; ax4.YGrid = 'on';
 
-% ── Middle row: orthoslice panels ─────────────────────────────────────────
+% ── Middle row: orthoslice panels + asymmetry plot ────────────────────────
 sliceBG = [0.04 0.04 0.04];
-orthoGL = uigridlayout(mainGL, [2, 3]);
+orthoGL = uigridlayout(mainGL, [2, 4]);
 orthoGL.Layout.Row    = 2;
 orthoGL.Layout.Column = 1;
-orthoGL.ColumnWidth   = {'1x','1x','1x'};
+orthoGL.ColumnWidth   = {'1x','1x','1x','1x'};
 orthoGL.RowHeight     = {'1x', 28};
 orthoGL.Padding       = [0 0 0 0];
 orthoGL.ColumnSpacing = 5;
@@ -159,14 +154,22 @@ ax7 = uiaxes(orthoGL,'BackgroundColor',sliceBG,'Color',sliceBG);
 ax7.Layout.Row=1; ax7.Layout.Column=2;
 ax8 = uiaxes(orthoGL,'BackgroundColor',sliceBG,'Color',sliceBG);
 ax8.Layout.Row=1; ax8.Layout.Column=3;
+ax5 = uiaxes(orthoGL,'BackgroundColor',plotBG,'Color',plotBG);
+ax5.Layout.Row=1; ax5.Layout.Column=4;
 
 for ax = [ax6 ax7 ax8]
     ax.XColor = 'none'; ax.YColor = 'none';
     colormap(ax, gray(256));
 end
-title(ax6,'Sagittal','Color','w','FontSize',10,'FontWeight','bold');
-title(ax7,'Coronal', 'Color','w','FontSize',10,'FontWeight','bold');
-title(ax8,'Axial',   'Color','w','FontSize',10,'FontWeight','bold');
+title(ax6,'Sagittal',       'Color','w','FontSize',10,'FontWeight','bold');
+title(ax7,'Coronal',        'Color','w','FontSize',10,'FontWeight','bold');
+title(ax8,'Axial',          'Color','w','FontSize',10,'FontWeight','bold');
+title(ax5,'Asymmetry index','Color','w','FontSize',11,'FontWeight','bold');
+
+ax5.XColor    = [0.75 0.75 0.75];
+ax5.YColor    = [0.75 0.75 0.75];
+ax5.GridColor = [0.35 0.35 0.35]; ax5.GridAlpha = 0.5;
+ax5.XGrid     = 'on'; ax5.YGrid = 'on';
 
 sldSag = uislider(orthoGL,'Limits',[1 2],'Value',1,...
     'MajorTicks',[],'MinorTicks',[],...
@@ -523,7 +526,7 @@ onScan();
     end
 
     function updateTopLayout()
-        w = {'1x','1x','1x','1x','1x'};
+        w = {'1x','1x','1x','1x'};
         for k = 1:3
             if ~S.show_surf(k), w{k} = 0; end
         end
