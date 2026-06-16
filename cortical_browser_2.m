@@ -818,6 +818,10 @@ onScan();
                 'Color','w', 'FontSize',10, 'FontWeight','bold');
         end
         updateSliceContours();
+        % Sync slider positions to S.slice_idx (safe here, outside ButtonDownFcn)
+        sldSag.Value = S.slice_idx(1);
+        sldCor.Value = S.slice_idx(2);
+        sldAx.Value  = S.slice_idx(3);
         % Refresh planes in streamline viewer if the window is open
         if ~isempty(S.tck_fig) && isvalid(S.tck_fig)
             updateStreamlineView();
@@ -1137,6 +1141,23 @@ onScan();
         S.sel_vertex    = v;
         edtVertex.Value = v;
         updateMarkers(v);
+
+        % Snap orthoslices to the selected vertex world position
+        if ~isempty(S.vol_geom) && ~isempty(S.vol_info)
+            wcoord = verts(v, :);
+            affine = S.vol_info.Transform.T;
+            vox0   = [wcoord 1] * inv(affine);
+            vox1   = round(vox0(1:3)) + 1;
+            for w = 1:3
+                g = S.vol_geom(w);
+                idx = vox1(g.fix_vox);
+                if isfinite(idx)
+                    S.slice_idx(w) = max(1, min(g.n_slices, idx));
+                end
+            end
+            updateSlices();   % reads S.slice_idx; also syncs slider positions
+        end
+
         updatePlot();
     end
 
