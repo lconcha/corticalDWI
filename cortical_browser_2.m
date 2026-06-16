@@ -906,6 +906,59 @@ onScan();
 %  DATA LOADING
 % ══════════════════════════════════════════════════════════════════════════
 
+    function autoLoadBrain()
+        mriDir = fullfile(S.subjects_dir, S.subj_id, 'mri');
+        % Prefer an already-converted NIfTI to avoid mrconvert overhead
+        candidates = { ...
+            fullfile(mriDir, 'brain.nii.gz'), ...
+            fullfile(mriDir, 'brain.nii'), ...
+            fullfile(mriDir, 'brain.mgz')};
+        volFile = '';
+        for i = 1:numel(candidates)
+            if isfile(candidates{i})
+                volFile = candidates{i};
+                break;
+            end
+        end
+        if isempty(volFile), return; end
+
+        [~, ~, fext] = fileparts(volFile);
+        tmpNii = '';
+        try
+            if strcmpi(fext, '.mgz')
+                lblStatus.Text = 'Converting brain.mgz → NIfTI…'; drawnow;
+                tmpNii = [tempname '.nii'];
+                cmd = sprintf('env -u LD_LIBRARY_PATH mrconvert "%s" "%s" -force', volFile, tmpNii);
+                [st, msg] = system(cmd);
+                if st ~= 0
+                    fprintf('autoLoadBrain: mrconvert failed: %s\n', msg);
+                    return;
+                end
+                niiPath = tmpNii;
+            else
+                niiPath = volFile;
+            end
+            S.vol_info = niftiinfo(niiPath);
+            S.vol_data = double(niftiread(S.vol_info));
+            S.vol_info.Filename = volFile;
+            if ~isempty(tmpNii) && isfile(tmpNii), delete(tmpNii); end
+            S.vol_geom = buildVolGeom(S.vol_info, size(S.vol_data));
+            for w = 1:3
+                S.slice_idx(w) = round(S.vol_geom(w).n_slices / 2);
+            end
+            sldSag.Limits = [1 S.vol_geom(1).n_slices]; sldSag.Value = S.slice_idx(1);
+            sldCor.Limits = [1 S.vol_geom(2).n_slices]; sldCor.Value = S.slice_idx(2);
+            sldAx.Limits  = [1 S.vol_geom(3).n_slices]; sldAx.Value  = S.slice_idx(3);
+            updateSlices();
+            [~, fn, fe] = fileparts(volFile);
+            lblStatus.Text = sprintf('Loaded. %d vertices, %d depths. Volume: %s', ...
+                size(S.lh_M,1), S.nDepths, [fn fe]);
+        catch ME
+            if ~isempty(tmpNii) && isfile(tmpNii), delete(tmpNii); end
+            fprintf('autoLoadBrain: %s\n', ME.message);
+        end
+    end
+
     function loadAndRender()
         lblStatus.Text = 'Loading…';
         drawnow;
@@ -946,6 +999,7 @@ onScan();
             updateDepthLabel();
             lblStatus.Text = sprintf('Loaded. %d vertices, %d depths.', ...
                 size(S.lh_M,1), S.nDepths);
+            autoLoadBrain();
         catch ME
             lblStatus.Text = ['Error: ' ME.message];
             warning('cortical_DWI_browser:load', '%s\n%s', ME.message, ME.getReport());
