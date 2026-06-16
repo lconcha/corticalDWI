@@ -854,6 +854,13 @@ onScan();
             p  = S.vol_geom(w);
             k  = S.slice_idx(w);
 
+            % Preserve zoom/pan if the user has manually adjusted the view
+            if strcmp(ax.XLimMode, 'manual')
+                saved_xl = ax.XLim; saved_yl = ax.YLim;
+            else
+                saved_xl = [];
+            end
+
             % Extract slice (fix the appropriate vox dim)
             idx = {':',':',':'};
             idx{p.fix_vox} = k;
@@ -863,19 +870,24 @@ onScan();
             cla(ax);
             imagesc(ax, p.h_coords, p.v_coords, img);
             set(ax, 'YDir','normal', 'XColor','none', 'YColor','none');
-            % Radiological orientation: patient right on viewer's left → reverse X when
-            % the horizontal axis is world X (coronal and axial panels).
             if p.h_world == 1
                 set(ax, 'XDir','reverse');
             else
                 set(ax, 'XDir','normal');
             end
             axis(ax, 'image');
-            world_pos = p.scale_fix * (k-1) + p.transl_fix;   % k is 1-indexed MATLAB; NIfTI voxel = k-1
+
+            % Restore zoom/pan
+            if ~isempty(saved_xl)
+                ax.XLim = saved_xl; ax.YLim = saved_yl;
+            end
+
+            world_pos = p.scale_fix * (k-1) + p.transl_fix;
             title(ax, sprintf('%s  %s=%.1f mm', p.name, p.wname, world_pos), ...
                 'Color','w', 'FontSize',10, 'FontWeight','bold');
         end
         updateSliceContours();
+        updateOrthoMarker();
         % Sync slider positions to S.slice_idx (safe here, outside ButtonDownFcn)
         sldSag.Value = S.slice_idx(1);
         sldCor.Value = S.slice_idx(2);
@@ -883,6 +895,28 @@ onScan();
         % Refresh planes in streamline viewer if the window is open
         if ~isempty(S.tck_fig) && isvalid(S.tck_fig)
             updateStreamlineView();
+        end
+    end
+
+    function updateOrthoMarker()
+        ax_h = [ax6, ax7, ax8];
+        % Remove any stale marker (survives slice changes via hold; needed for updatePlot path)
+        for w = 1:3
+            delete(findobj(ax_h(w), 'Tag', 'ortho_vertex_marker'));
+        end
+        if isnan(S.sel_vertex) || S.list_mode || isempty(S.lh_surf) || isempty(S.vol_geom)
+            return;
+        end
+        vcoord = S.lh_surf.vertices(S.sel_vertex, :);   % [X Y Z] world mm
+        for w = 1:3
+            ax = ax_h(w);
+            p  = S.vol_geom(w);
+            hold(ax, 'on');
+            plot(ax, vcoord(p.h_world), vcoord(p.v_world), 'o', ...
+                'MarkerSize', 6, 'MarkerEdgeColor', [1 0.25 0.25], ...
+                'MarkerFaceColor', 'none', 'LineWidth', 2, ...
+                'HandleVisibility', 'off', 'Tag', 'ortho_vertex_marker');
+            hold(ax, 'off');
         end
     end
 
@@ -1328,6 +1362,7 @@ onScan();
         updateAsymPlot();
         updateDepthLine();
         updateStreamlineView();
+        updateOrthoMarker();
     end
 
     function updateAsymPlot()
