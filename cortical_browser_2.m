@@ -8,13 +8,10 @@ function cortical_DWI_browser()
 %
 %  Requires: read_surface, read_mrtrix_tsf, cortical_cell2mat (on path)
 
-addpath(genpath('/misc/lauterbur2/lconcha/code/gifti'));
-addpath(genpath('/home/inb/soporte/lanirem_software/mrtrix_3.0.4/matlab'));
-addpath(genpath('/misc/lauterbur2/lconcha/code/cbrewer'));
-addpath(genpath('/misc/lauterbur2/lconcha/code/corticalDWI'));
+cortical_matlab_setup();
 
 % ── Default paths ─────────────────────────────────────────────────────────
-DEF_SUBJECTS_DIR = '/misc/sherrington/lconcha/TMP/glaucoma/fs_glaucoma';
+DEF_SUBJECTS_DIR = getenv('SUBJECTS_DIR');
 DEF_SUBJ_ID      = 'sub-79864';
 
 % ── App state ─────────────────────────────────────────────────────────────
@@ -78,7 +75,7 @@ mList  = uimenu(hMenuMode, 'Text', 'Load vertex list', ...
 
 % ── Volume menu ───────────────────────────────────────────────────────────
 hMenuVol = uimenu(hFig, 'Text', 'Volume');
-uimenu(hMenuVol, 'Text', 'Load NIfTI volume…', 'MenuSelectedFcn', @onLoadVolume);
+uimenu(hMenuVol, 'Text', 'Load volume…', 'MenuSelectedFcn', @onLoadVolume);
 uimenu(hMenuVol, 'Text', 'Show coordinate diagnostics', 'MenuSelectedFcn', @onVolDiagnostics);
 
 % ── View menu (independent panel toggles) ─────────────────────────────────
@@ -656,12 +653,41 @@ onScan();
     end
 
     function onLoadVolume(~,~)
-        [fname, fpath] = uigetfile({'*.nii;*.nii.gz','NIfTI files (*.nii,*.nii.gz)'}, ...
-            'Select NIfTI volume');
+        [fname, fpath] = uigetfile({ ...
+            '*.nii;*.nii.gz;*.mgz', 'Volume files (*.nii, *.nii.gz, *.mgz)'; ...
+            '*.nii;*.nii.gz',       'NIfTI files'; ...
+            '*.mgz',                'FreeSurfer MGZ'}, ...
+            'Select volume');
         if isequal(fname,0), return; end
+
+        srcPath = fullfile(fpath, fname);
+        [~, ~, fext] = fileparts(fname);
+        tmpNii = '';
+
+        if strcmpi(fext, '.mgz')
+            lblStatus.Text = 'Converting MGZ → NIfTI…'; drawnow;
+            tmpNii = [tempname '.nii'];
+            cmd = sprintf('env -u LD_LIBRARY_PATH mrconvert "%s" "%s" -force', srcPath, tmpNii);
+            [st, msg] = system(cmd);
+            if st ~= 0
+                uialert(hFig, sprintf('mrconvert failed:\n%s', msg), 'MGZ conversion failed');
+                lblStatus.Text = 'Load failed.';
+                return;
+            end
+            niiPath = tmpNii;
+        else
+            niiPath = srcPath;
+        end
+
         lblStatus.Text = 'Loading volume…'; drawnow;
-        S.vol_info = niftiinfo(fullfile(fpath, fname));
+        S.vol_info = niftiinfo(niiPath);
         S.vol_data = double(niftiread(S.vol_info));
+        S.vol_info.Filename = srcPath;   % show original filename in diagnostics
+
+        if ~isempty(tmpNii) && isfile(tmpNii)
+            delete(tmpNii);
+        end
+
         S.vol_geom = buildVolGeom(S.vol_info, size(S.vol_data));
 
         % Start at center slice for each panel
@@ -1069,20 +1095,24 @@ onScan();
         % Vertex set: list mode overrides single-vertex + rings
         if S.list_mode && ~isempty(S.vertex_list)
             all_v = S.vertex_list;
+            nbrs  = [];
         elseif ~isnan(S.sel_vertex)
             v     = S.sel_vertex;
             all_v = getNeighborRings(S.lh_surf.faces, v, S.n_rings);
+            nbrs  = all_v(all_v ~= v);
         else
             return;
         end
-        nbrs = [];   % not used for title in list mode
         d_lh_all = double(S.lh_M(all_v, :));
         d_rh_all = double(S.rh_M(all_v, :));
         d_lh_mean = mean(d_lh_all, 1, 'omitnan');
         d_rh_mean = mean(d_rh_all, 1, 'omitnan');
 
-        lh_col = [0.40 0.70 1.00];
-        rh_col = [1.00 0.52 0.30];
+        lh_col  = [0.40 0.70 1.00];
+        rh_col  = [1.00 0.52 0.30];
+        bg      = [0.14 0.14 0.14];
+        lh_thin = lh_col * 0.30 + bg * 0.70;   % muted opaque stand-in for alpha
+        rh_thin = rh_col * 0.30 + bg * 0.70;
 
         if ~isempty(S.hDepthLine) && isvalid(S.hDepthLine)
             delete(S.hDepthLine);
@@ -1092,15 +1122,15 @@ onScan();
         cla(ax4);
         hold(ax4, 'on');
 
-        % Thin semi-transparent lines (only when multiple vertices, capped for performance)
+        % Thin faint lines for individual vertices (capped for performance)
         MAX_THIN = 50;
         if numel(all_v) > 1 && numel(all_v) <= MAX_THIN
             for k = 1:size(d_lh_all, 1)
                 plot(ax4, depths, d_lh_all(k,:), '-', ...
-                    'Color', [lh_col 0.18], 'LineWidth', 0.7, ...
+                    'Color', lh_thin, 'LineWidth', 0.7, ...
                     'HandleVisibility','off');
                 plot(ax4, depths, d_rh_all(k,:), '-', ...
-                    'Color', [rh_col 0.18], 'LineWidth', 0.7, ...
+                    'Color', rh_thin, 'LineWidth', 0.7, ...
                     'HandleVisibility','off');
             end
         end
@@ -1134,13 +1164,14 @@ onScan();
 
         if S.list_mode && ~isempty(S.vertex_list)
             all_v = S.vertex_list;
+            nbrs  = [];
         elseif ~isnan(S.sel_vertex)
             v     = S.sel_vertex;
             all_v = getNeighborRings(S.lh_surf.faces, v, S.n_rings);
+            nbrs  = all_v(all_v ~= v);
         else
             return;
         end
-        nbrs = [];
         d_lh_all = double(S.lh_M(all_v, :));
         d_rh_all = double(S.rh_M(all_v, :));
 
@@ -1149,7 +1180,9 @@ onScan();
         d_asym_all(~isfinite(d_asym_all)) = NaN;
         d_asym_mean = mean(d_asym_all, 1, 'omitnan');
 
-        asym_col = [0.88 0.88 0.30];
+        asym_col  = [0.88 0.88 0.30];
+        bg        = [0.14 0.14 0.14];
+        asym_thin = asym_col * 0.30 + bg * 0.70;
 
         if ~isempty(S.hDepthLine2) && isvalid(S.hDepthLine2)
             delete(S.hDepthLine2);
@@ -1159,12 +1192,12 @@ onScan();
         cla(ax5);
         hold(ax5, 'on');
 
-        % Thin semi-transparent lines (only when multiple vertices, capped for performance)
+        % Thin faint lines for individual vertices (capped for performance)
         MAX_THIN = 50;
         if numel(all_v) > 1 && numel(all_v) <= MAX_THIN
             for k = 1:size(d_asym_all, 1)
                 plot(ax5, depths, d_asym_all(k,:), '-', ...
-                    'Color', [asym_col 0.18], 'LineWidth', 0.7, ...
+                    'Color', asym_thin, 'LineWidth', 0.7, ...
                     'HandleVisibility','off');
             end
         end
@@ -1358,3 +1391,5 @@ onScan();
     end
 
 end  % cortical_DWI_browser
+
+
