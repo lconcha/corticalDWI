@@ -67,7 +67,7 @@ S.tck_fig     = [];   % handle to separate streamline viewer figure
 % ── Figure ────────────────────────────────────────────────────────────────
 BG = [0.12 0.12 0.12];
 hFig = uifigure('Name','Cortical Browser','Position',[30 30 1750 970],...
-    'Color', BG);
+    'Color', BG, 'KeyPressFcn', @onKeyPress);
 
 % ── Mode menu (radio-button style) ────────────────────────────────────────
 hMenuMode = uimenu(hFig, 'Text', 'Selection Mode');
@@ -87,7 +87,9 @@ uimenu(hMenuTck, 'Text', 'Load RH TCK…', 'MenuSelectedFcn', @(~,~) onLoadTck('
 uimenu(hMenuTck, 'Text', 'Clear streamlines', 'MenuSelectedFcn', @onClearTck);
 
 % ── View menu (independent panel toggles) ─────────────────────────────────
-S.show_surf = [true true true];   % [LH, RH, Asym]
+S.show_surf  = [true true true];   % [LH, RH, Asym]
+S.show_ortho = [true true true];   % [Sagittal, Coronal, Axial]
+S.show_plot  = [true true];        % [Depth profile, Asymmetry profile]
 hMenuView  = uimenu(hFig, 'Text', 'View');
 mShowLH    = uimenu(hMenuView, 'Text', 'LH surface',   'Checked','on', ...
     'MenuSelectedFcn', @(~,~) toggleSurface(1));
@@ -95,6 +97,16 @@ mShowRH    = uimenu(hMenuView, 'Text', 'RH surface',   'Checked','on', ...
     'MenuSelectedFcn', @(~,~) toggleSurface(2));
 mShowAsym  = uimenu(hMenuView, 'Text', 'Asym surface', 'Checked','on', ...
     'MenuSelectedFcn', @(~,~) toggleSurface(3));
+mShowSag   = uimenu(hMenuView, 'Text', 'Sagittal slice',   'Checked','on', ...
+    'Separator','on', 'MenuSelectedFcn', @(~,~) toggleOrtho(1));
+mShowCor   = uimenu(hMenuView, 'Text', 'Coronal slice',    'Checked','on', ...
+    'MenuSelectedFcn', @(~,~) toggleOrtho(2));
+mShowAx    = uimenu(hMenuView, 'Text', 'Axial slice',      'Checked','on', ...
+    'MenuSelectedFcn', @(~,~) toggleOrtho(3));
+mShowDepth = uimenu(hMenuView, 'Text', 'Depth profile',    'Checked','on', ...
+    'Separator','on', 'MenuSelectedFcn', @(~,~) togglePlot(1));
+mShowAsymP = uimenu(hMenuView, 'Text', 'Asymmetry profile','Checked','on', ...
+    'MenuSelectedFcn', @(~,~) togglePlot(2));
 
 % Main 3-row grid ──────────────────────────────────────────────────────────
 mainGL = uigridlayout(hFig, [3,1]);
@@ -537,12 +549,27 @@ onScan();
     function toggleSurface(idx)
         S.show_surf(idx) = ~S.show_surf(idx);
         mHandles = [mShowLH, mShowRH, mShowAsym];
-        if S.show_surf(idx)
-            mHandles(idx).Checked = 'on';
-        else
-            mHandles(idx).Checked = 'off';
-        end
+        mHandles(idx).Checked = onOff(S.show_surf(idx));
         updateTopLayout();
+    end
+
+    function toggleOrtho(idx)
+        S.show_ortho(idx) = ~S.show_ortho(idx);
+        mHandles = [mShowSag, mShowCor, mShowAx];
+        mHandles(idx).Checked = onOff(S.show_ortho(idx));
+        updateOrthoLayout();
+    end
+
+    function togglePlot(idx)
+        S.show_plot(idx) = ~S.show_plot(idx);
+        mHandles = [mShowDepth, mShowAsymP];
+        mHandles(idx).Checked = onOff(S.show_plot(idx));
+        updateTopLayout();
+        updateOrthoLayout();
+    end
+
+    function s = onOff(val)
+        if val; s = 'on'; else; s = 'off'; end
     end
 
     function updateTopLayout()
@@ -550,7 +577,17 @@ onScan();
         for k = 1:3
             if ~S.show_surf(k), w{k} = 0; end
         end
+        if ~S.show_plot(1), w{4} = 0; end
         topGL.ColumnWidth = w;
+    end
+
+    function updateOrthoLayout()
+        w = {'1x','1x','1x','1x'};
+        for k = 1:3
+            if ~S.show_ortho(k), w{k} = 0; end
+        end
+        if ~S.show_plot(2), w{4} = 0; end
+        orthoGL.ColumnWidth = w;
     end
 
     function setMode(mode)
@@ -785,6 +822,27 @@ onScan();
     function onSliceChanged(src, dim)
         if isempty(S.vol_data), return; end
         S.slice_idx(dim) = round(src.Value);
+        updateSlices();
+    end
+
+    function onKeyPress(~, event)
+        if isempty(S.vol_geom), return; end
+        switch event.Key
+            case 'rightarrow'
+                S.slice_idx(1) = min(S.vol_geom(1).n_slices, S.slice_idx(1) + 1);
+            case 'leftarrow'
+                S.slice_idx(1) = max(1, S.slice_idx(1) - 1);
+            case 'pageup'
+                S.slice_idx(2) = min(S.vol_geom(2).n_slices, S.slice_idx(2) + 1);
+            case 'pagedown'
+                S.slice_idx(2) = max(1, S.slice_idx(2) - 1);
+            case 'uparrow'
+                S.slice_idx(3) = min(S.vol_geom(3).n_slices, S.slice_idx(3) + 1);
+            case 'downarrow'
+                S.slice_idx(3) = max(1, S.slice_idx(3) - 1);
+            otherwise
+                return;
+        end
         updateSlices();
     end
 
@@ -1107,8 +1165,6 @@ onScan();
             cb = colorbar(cbax, 'Location','southoutside', ...
                 'Color','w', 'FontSize',7, 'TickDirection','out');
             cb.Label.Color = 'w';
-            %cb.Ticks = [cb.Limits(1),  cb.Limits(2)];
-            disp(cb.Limits)
         end
 
         % Refresh contours if a volume is already loaded
