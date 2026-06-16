@@ -51,14 +51,36 @@ S.dot3         = [];
 S.nbr1         = [];   % neighbor-vertex markers (orange)
 S.nbr2         = [];
 S.nbr3         = [];
+S.lst1         = [];   % vertex-list markers
+S.lst2         = [];
+S.lst3         = [];
+S.vertex_list  = [];   % loaded vertex IDs
+S.list_mode    = false;
 S.sel_vertex   = NaN;
 S.hDepthLine   = [];   % xline handle for depth marker in ax4
 S.hDepthLine2  = [];   % xline handle for depth marker in ax5
 
 % ── Figure ────────────────────────────────────────────────────────────────
 BG = [0.12 0.12 0.12];
-hFig = uifigure('Name','Cortical DWI Browser','Position',[30 30 1750 970],...
+hFig = uifigure('Name','Cortical Browser','Position',[30 30 1750 970],...
     'Color', BG);
+
+% ── Mode menu (radio-button style) ────────────────────────────────────────
+hMenuMode = uimenu(hFig, 'Text', 'Selection Mode');
+mClick = uimenu(hMenuMode, 'Text', 'Click vertex', ...
+    'Checked', 'on', 'MenuSelectedFcn', @(~,~) setMode('click'));
+mList  = uimenu(hMenuMode, 'Text', 'Load vertex list', ...
+    'Checked', 'off', 'MenuSelectedFcn', @(~,~) setMode('list'));
+
+% ── View menu (independent panel toggles) ─────────────────────────────────
+S.show_surf = [true true true];   % [LH, RH, Asym]
+hMenuView  = uimenu(hFig, 'Text', 'View');
+mShowLH    = uimenu(hMenuView, 'Text', 'LH surface',   'Checked','on', ...
+    'MenuSelectedFcn', @(~,~) toggleSurface(1));
+mShowRH    = uimenu(hMenuView, 'Text', 'RH surface',   'Checked','on', ...
+    'MenuSelectedFcn', @(~,~) toggleSurface(2));
+mShowAsym  = uimenu(hMenuView, 'Text', 'Asym surface', 'Checked','on', ...
+    'MenuSelectedFcn', @(~,~) toggleSurface(3));
 
 % Main 2-row grid ──────────────────────────────────────────────────────────
 mainGL = uigridlayout(hFig, [2,1]);
@@ -121,7 +143,7 @@ ctrlGL = uigridlayout(mainGL, [4, 8]);
 ctrlGL.Layout.Row    = 2;
 ctrlGL.Layout.Column = 1;
 ctrlGL.ColumnWidth   = {100, '1.5x', 80, '2x', 130, 130, 100, 90};
-ctrlGL.RowHeight     = {30, 30, 30, 18};
+ctrlGL.RowHeight     = {40, 40, 40, 18};
 ctrlGL.Padding       = [8 5 8 5];
 ctrlGL.ColumnSpacing = 8;
 ctrlGL.RowSpacing    = 3;
@@ -252,6 +274,21 @@ edtRings = uispinner(ctrlGL, 'Value', 0, ...
     'ValueChangedFcn', @onRingsChanged, ...
     'FontColor', FC, 'BackgroundColor', CB);
 edtRings.Layout.Row=4; edtRings.Layout.Column=7;
+
+btnLoadList = uibutton(ctrlGL,'Text','Load list...','ButtonPushedFcn',@onLoadVertexList,...
+    'Enable','off', ...
+     'Tooltip', 'Load a text file with one vertex ID per row (zero-based indexing)');
+btnLoadList.Layout.Row=3; btnLoadList.Layout.Column=8;
+btnLoadList.FontColor=[0.9 0.9 0.9]; btnLoadList.BackgroundColor=[0.30 0.40 0.28];
+
+btnClearList = uibutton(ctrlGL,'Text','Clear list','ButtonPushedFcn',@onClearVertexList,...
+    'Enable','off');
+btnClearList.Layout.Row=4; btnClearList.Layout.Column=8;
+btnClearList.FontColor=[0.9 0.9 0.9]; btnClearList.BackgroundColor=[0.38 0.28 0.28];
+
+btnExport = uibutton(ctrlGL,'Text','Export to workspace','ButtonPushedFcn',@onExport);
+btnExport.Layout.Row=4; btnExport.Layout.Column=4;
+btnExport.FontColor=[0.9 0.9 0.9]; btnExport.BackgroundColor=[0.35 0.28 0.45];
 
 lblStatus = uilabel(ctrlGL,'Text','Press Scan to discover TSF files.',...
     'FontSize',9,'FontColor',[0.55 0.80 0.55], ...
@@ -423,6 +460,137 @@ onScan();
         end
     end
 
+    function toggleSurface(idx)
+        S.show_surf(idx) = ~S.show_surf(idx);
+        mHandles = [mShowLH, mShowRH, mShowAsym];
+        if S.show_surf(idx)
+            mHandles(idx).Checked = 'on';
+        else
+            mHandles(idx).Checked = 'off';
+        end
+        updateTopLayout();
+    end
+
+    function updateTopLayout()
+        w = {'1x','1x','1x','1x','1x'};
+        for k = 1:3
+            if ~S.show_surf(k), w{k} = 0; end
+        end
+        topGL.ColumnWidth = w;
+    end
+
+    function setMode(mode)
+        S.list_mode = strcmp(mode, 'list');
+        mClick.Checked = 'off'; mList.Checked = 'off';
+        if S.list_mode
+            mList.Checked       = 'on';
+            btnLoadList.Enable  = 'on';
+            btnClearList.Enable = 'on';
+            edtRings.Enable     = 'off';
+            % hide single-vertex and neighbor markers
+            for h = [S.dot1 S.dot2 S.dot3 S.nbr1 S.nbr2 S.nbr3]
+                if ~isempty(h) && isvalid(h), set(h,'Visible','off'); end
+            end
+        else
+            mClick.Checked      = 'on';
+            btnLoadList.Enable  = 'off';
+            btnClearList.Enable = 'off';
+            edtRings.Enable     = 'on';
+            % clear list state and markers
+            S.vertex_list = [];
+            for h = [S.lst1 S.lst2 S.lst3]
+                if ~isempty(h) && isvalid(h)
+                    set(h,'XData',NaN,'YData',NaN,'ZData',NaN,'Visible','off');
+                end
+            end
+            % restore single-vertex marker if one is selected
+            if ~isnan(S.sel_vertex) && ~isempty(S.srf1)
+                updateMarkers(S.sel_vertex);
+                updatePlot();
+            end
+        end
+        lblStatus.Text = sprintf('Mode: %s', mode);
+    end
+
+    function onLoadVertexList(~,~)
+        [fname, fpath] = uigetfile('*.txt', 'Select vertex ID file');
+        if isequal(fname, 0), return; end
+        raw  = dlmread(fullfile(fpath, fname)); %#ok<DLMRD>
+        vids = unique(round(raw(:)));
+        if ~isempty(S.lh_M)
+            vids = vids(vids >= 1 & vids <= size(S.lh_M, 1));
+        end
+        if isempty(vids)
+            lblStatus.Text = 'No valid vertices in file.';
+            return;
+        end
+        vids = vids +1;  % convert from 0-based to 1-based indexing
+        S.vertex_list = vids;
+        lblStatus.Text = sprintf('Loading %d vertices…', numel(vids));
+        drawnow;
+        updateListMarkers();
+        updatePlot();
+        lblStatus.Text = sprintf('List loaded: %d vertices.', numel(vids));
+    end
+
+    function onClearVertexList(~,~)
+        S.vertex_list = [];
+        for h = [S.lst1 S.lst2 S.lst3]
+            if ~isempty(h) && isvalid(h)
+                set(h,'XData',NaN,'YData',NaN,'ZData',NaN,'Visible','off');
+            end
+        end
+        lblStatus.Text = 'Vertex list cleared.';
+    end
+
+    function onExport(~,~)
+        if isempty(S.lh_M)
+            lblStatus.Text = 'Nothing to export — load data first.';
+            return;
+        end
+
+        % Determine active vertex set (same logic as updatePlot)
+        if S.list_mode && ~isempty(S.vertex_list)
+            all_v = S.vertex_list;
+        elseif ~isnan(S.sel_vertex)
+            all_v = getNeighborRings(S.lh_surf.faces, S.sel_vertex, S.n_rings);
+        else
+            lblStatus.Text = 'No vertex selected.';
+            return;
+        end
+
+        depths   = (0 : S.nDepths-1) .* S.step_size;
+        lh_data  = double(S.lh_M(all_v, :));
+        rh_data  = double(S.rh_M(all_v, :));
+        asym_data = (lh_data - rh_data) ./ ((lh_data + rh_data) ./ 2);
+        asym_data(~isfinite(asym_data)) = NaN;
+
+        out.vertex_ids  = all_v;
+        out.depths_mm   = depths(:);
+        out.lh_data     = lh_data;
+        out.rh_data     = rh_data;
+        out.lh_mean     = mean(lh_data,  1, 'omitnan');
+        out.rh_mean     = mean(rh_data,  1, 'omitnan');
+        out.asym_data   = asym_data;
+        out.asym_mean   = mean(asym_data, 1, 'omitnan');
+        out.metric      = S.metric_name;
+        out.subject     = S.subj_id;
+        out.n_vertices  = numel(all_v);
+
+        assignin('base', 'cortical_export', out);
+        lblStatus.Text = sprintf('Exported ''cortical_export'' (%d vertices) to workspace.', numel(all_v));
+    end
+
+    function updateListMarkers()
+        if isempty(S.vertex_list) || isempty(S.srf1), return; end
+        vl   = S.srf1.Vertices;
+        vr   = S.srf2.Vertices;
+        vids = S.vertex_list;
+        set(S.lst1,'XData',vl(vids,1),'YData',vl(vids,2),'ZData',vl(vids,3),'Visible','on');
+        set(S.lst2,'XData',vr(vids,1),'YData',vr(vids,2),'ZData',vr(vids,3),'Visible','on');
+        set(S.lst3,'XData',vl(vids,1),'YData',vl(vids,2),'ZData',vl(vids,3),'Visible','on');
+    end
+
 % ══════════════════════════════════════════════════════════════════════════
 %  DATA LOADING
 % ══════════════════════════════════════════════════════════════════════════
@@ -499,6 +667,7 @@ onScan();
         hold(ax1,'on');
         S.nbr1 = scatter3(ax1, NaN,NaN,NaN, smallMarkerSize, smallMarkerColor, 'filled', 'Visible','off');
         S.dot1 = scatter3(ax1, NaN,NaN,NaN, 120, 'r', 'filled', 'Visible','off');
+        S.lst1 = scatter3(ax1, NaN,NaN,NaN, smallMarkerSize, smallMarkerColor, 'filled', 'Visible','off');
 
         % Panel 2 – RH data
         S.srf2 = trisurf(rh.faces, ...
@@ -510,6 +679,7 @@ onScan();
         hold(ax2,'on');
         S.nbr2 = scatter3(ax2, NaN,NaN,NaN, smallMarkerSize, smallMarkerColor, 'filled', 'Visible','off');
         S.dot2 = scatter3(ax2, NaN,NaN,NaN, 120, 'r', 'filled', 'Visible','off');
+        S.lst2 = scatter3(ax2, NaN,NaN,NaN, smallMarkerSize, smallMarkerColor, 'filled', 'Visible','off');
 
         % Panel 3 – Asymmetry on LH geometry
         S.srf3 = trisurf(lh.faces, ...
@@ -521,6 +691,7 @@ onScan();
         hold(ax3,'on');
         S.nbr3 = scatter3(ax3, NaN,NaN,NaN, smallMarkerSize, smallMarkerColor, 'filled', 'Visible','off');
         S.dot3 = scatter3(ax3, NaN,NaN,NaN, 120, 'r', 'filled', 'Visible','off');
+        S.lst3 = scatter3(ax3, NaN,NaN,NaN, smallMarkerSize, smallMarkerColor, 'filled', 'Visible','off');
 
         % Colormaps
         applyDataCmap();
@@ -576,10 +747,12 @@ onScan();
         vr = S.srf2.Vertices;
         if v < 1 || v > size(vl,1), return; end
 
-        % Selected vertex (red)
-        set(S.dot1,'XData',vl(v,1),'YData',vl(v,2),'ZData',vl(v,3),'Visible','on');
-        set(S.dot2,'XData',vr(v,1),'YData',vr(v,2),'ZData',vr(v,3),'Visible','on');
-        set(S.dot3,'XData',vl(v,1),'YData',vl(v,2),'ZData',vl(v,3),'Visible','on');
+        % Selected vertex (red) — hidden in list mode
+        vis = 'on';
+        if S.list_mode, vis = 'off'; end
+        set(S.dot1,'XData',vl(v,1),'YData',vl(v,2),'ZData',vl(v,3),'Visible',vis);
+        set(S.dot2,'XData',vr(v,1),'YData',vr(v,2),'ZData',vr(v,3),'Visible',vis);
+        set(S.dot3,'XData',vl(v,1),'YData',vl(v,2),'ZData',vl(v,3),'Visible',vis);
 
         % Neighbors (orange) — same topology for LH and RH
         all_v = getNeighborRings(S.lh_surf.faces, v, S.n_rings);
@@ -600,13 +773,19 @@ onScan();
 % ══════════════════════════════════════════════════════════════════════════
 
     function updatePlot()
-        if isnan(S.sel_vertex) || isempty(S.lh_M), return; end
-        v      = S.sel_vertex;
+        if isempty(S.lh_M), return; end
         depths = (0 : S.nDepths-1) .* S.step_size;
 
-        % Selected vertex + n_rings of mesh neighbors
-        all_v    = getNeighborRings(S.lh_surf.faces, v, S.n_rings);
-        nbrs     = all_v(all_v ~= v);
+        % Vertex set: list mode overrides single-vertex + rings
+        if S.list_mode && ~isempty(S.vertex_list)
+            all_v = S.vertex_list;
+        elseif ~isnan(S.sel_vertex)
+            v     = S.sel_vertex;
+            all_v = getNeighborRings(S.lh_surf.faces, v, S.n_rings);
+        else
+            return;
+        end
+        nbrs = [];   % not used for title in list mode
         d_lh_all = double(S.lh_M(all_v, :));
         d_rh_all = double(S.rh_M(all_v, :));
         d_lh_mean = mean(d_lh_all, 1, 'omitnan');
@@ -623,8 +802,9 @@ onScan();
         cla(ax4);
         hold(ax4, 'on');
 
-        % Thin semi-transparent lines (only when there are neighbors)
-        if S.n_rings > 0
+        % Thin semi-transparent lines (only when multiple vertices, capped for performance)
+        MAX_THIN = 50;
+        if numel(all_v) > 1 && numel(all_v) <= MAX_THIN
             for k = 1:size(d_lh_all, 1)
                 plot(ax4, depths, d_lh_all(k,:), '-', ...
                     'Color', [lh_col 0.18], 'LineWidth', 0.7, ...
@@ -645,7 +825,11 @@ onScan();
         legend(ax4, 'TextColor','w','Color','none','EdgeColor','none','Location','best');
         xlabel(ax4, 'Depth from pial surface (mm)', 'Color',[0.80 0.80 0.80]);
         ylabel(ax4, S.metric_name, 'Color',[0.80 0.80 0.80], 'Interpreter','none');
-        title(ax4, sprintf('Vertex %d  (+%d nbrs, %d rings)', v, numel(nbrs), S.n_rings), 'Color','w');
+        if S.list_mode
+            title(ax4, sprintf('Vertex list  (n=%d)', numel(all_v)), 'Color','w');
+        else
+            title(ax4, sprintf('Vertex %d  (+%d nbrs, %d rings)', v, numel(nbrs), S.n_rings), 'Color','w');
+        end
         ax4.XColor = [0.70 0.70 0.70]; ax4.YColor = [0.70 0.70 0.70];
         ax4.Color  = [0.14 0.14 0.14];
         ax4.XGrid  = 'on'; ax4.YGrid = 'on';
@@ -655,12 +839,18 @@ onScan();
     end
 
     function updateAsymPlot()
-        if isnan(S.sel_vertex) || isempty(S.lh_M), return; end
-        v      = S.sel_vertex;
+        if isempty(S.lh_M), return; end
         depths = (0 : S.nDepths-1) .* S.step_size;
 
-        all_v    = getNeighborRings(S.lh_surf.faces, v, S.n_rings);
-        nbrs     = all_v(all_v ~= v);
+        if S.list_mode && ~isempty(S.vertex_list)
+            all_v = S.vertex_list;
+        elseif ~isnan(S.sel_vertex)
+            v     = S.sel_vertex;
+            all_v = getNeighborRings(S.lh_surf.faces, v, S.n_rings);
+        else
+            return;
+        end
+        nbrs = [];
         d_lh_all = double(S.lh_M(all_v, :));
         d_rh_all = double(S.rh_M(all_v, :));
 
@@ -679,8 +869,9 @@ onScan();
         cla(ax5);
         hold(ax5, 'on');
 
-        % Thin semi-transparent lines (only when there are neighbors)
-        if S.n_rings > 0
+        % Thin semi-transparent lines (only when multiple vertices, capped for performance)
+        MAX_THIN = 50;
+        if numel(all_v) > 1 && numel(all_v) <= MAX_THIN
             for k = 1:size(d_asym_all, 1)
                 plot(ax5, depths, d_asym_all(k,:), '-', ...
                     'Color', [asym_col 0.18], 'LineWidth', 0.7, ...
@@ -695,11 +886,17 @@ onScan();
         yline(ax5, 0, '--', 'Color',[0.6 0.6 0.6], 'LineWidth',1, ...
             'HandleVisibility','off');
 
+        ax5.YLim = [-max(abs(d_asym_mean))*1.2, max(abs(d_asym_mean))*1.2];
+
         hold(ax5, 'off');
         legend(ax5, 'TextColor','w','Color','none','EdgeColor','none','Location','best');
         xlabel(ax5, 'Depth from pial surface (mm)', 'Color',[0.80 0.80 0.80]);
         ylabel(ax5, 'Asymmetry index',              'Color',[0.80 0.80 0.80]);
-        title(ax5, sprintf('Vertex %d  (+%d nbrs, %d rings)', v, numel(nbrs), S.n_rings), 'Color','w');
+        if S.list_mode
+            title(ax5, sprintf('Vertex list  (n=%d)', numel(all_v)), 'Color','w');
+        else
+            title(ax5, sprintf('Vertex %d  (+%d nbrs, %d rings)', v, numel(nbrs), S.n_rings), 'Color','w');
+        end
         ax5.XColor = [0.70 0.70 0.70]; ax5.YColor = [0.70 0.70 0.70];
         ax5.Color  = [0.14 0.14 0.14];
         ax5.XGrid  = 'on'; ax5.YGrid = 'on';
