@@ -205,3 +205,11 @@ Run `cortical_matlab_setup()` to add all paths, or call it is called automatical
 - On Linux, MATLAB's `LD_LIBRARY_PATH` is temporarily unset for `mrconvert` calls to avoid library conflicts.
 - Vertex indices throughout the GUI are **1-based** (MATLAB convention).
 - The asymmetry index is defined as `(LH − RH) / ((LH + RH) / 2)`, i.e., a fractional difference relative to the bilateral mean.
+
+---
+
+```html
+<video controls width="640" src="figures/cortical_browser.webm">
+	Your browser does not support the video tag. <a href="figures/cortical_browse.webm">Download the video</a>
+</video>
+```
