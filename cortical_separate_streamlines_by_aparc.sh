@@ -1,9 +1,12 @@
 #!/bin/bash
 source `which my_do_cmd`
 
+# ── Defaults / config / CLI args ──────────────────────────────────────────────
+target_type=fsLR-32k
+source cortical_load_params.sh 2>/dev/null || true
 subjID=$1
 hemi=$2
-target_type=$3
+[ -n "$3" ] && target_type=$3
 
 
 help() {
@@ -19,9 +22,9 @@ help() {
   "
 }
 
-if [ $# -lt 3 ]
+if [ $# -lt 2 ]
 then
-  echolor red "[ERROR] Not enough arguments"
+  echolor red "[ERROR] Not enough arguments (subjID and hemi are required)"
   help
   exit 0
 fi

@@ -12,22 +12,32 @@ help() {
   <target_type>  target type, e.g. fsLR-32k or ico6_sym
   This script samples DTI metrics from a tck file and saves them in both tsf and txt formats.
 
-  Matlab is needed for this script, as it calls cortical_tsf2txt_matlab.sh.
   "
 }
 
 
-if [ $# -ne 3 ]
+if [ $# -lt 1 ]
 then
-  echolor red "Wrong number of arguments"
+  echolor red "Wrong number of arguments (subjID is required)"
   help
   exit 0
 fi
 
+# ── Defaults / config / CLI args ──────────────────────────────────────────────
+nDepths=30
+target_type=ico6_sym
+source cortical_load_params.sh 2>/dev/null || true
 subjID=$1
-nDepths=$2; # number of depth points to keep in the txt file. The tsf saves them all.
-target_type=$3; # target type, e.g. fsLR-32k or ico6_sym
+[ -n "$2" ] && nDepths=$2
+[ -n "$3" ] && target_type=$3
 
+
+fcheck=${SUBJECTS_DIR}/${subjID}/dwi/lh_${target_type}_fa.tsf
+if [ -f $fcheck ]
+then
+  echolor green "[INFO] File exists, will not overwrite: $fcheck"
+  exit 0
+fi
 
     
 metrics="fa md ad rd"

@@ -9,11 +9,17 @@ Y='\033[1;33m'
 B='\033[1m'
 NC='\033[0m'
 
-target_type=fsLR-32k
+target_type=ico6_sym          # built-in fallback
+target_type_cli=""            # set only when -t is explicitly passed
+fixel_dir=csd_fixels_singletissue  # built-in fallback
+fixel_dir_cli=""               # set only when -f is explicitly passed
 tsv_mode=0
 remaining_mode=0
 script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 config_file="${script_dir}/cortical_status_steps.conf"
+
+# 1. Repo-level defaults
+[[ -f "${script_dir}/corticalDWI_params.conf" ]] && source "${script_dir}/corticalDWI_params.conf"
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -37,17 +43,18 @@ load_config() {
 usage() {
     cat <<EOF
 
-Usage: $(basename "$0") [options] <subjects_dir> [subject1 subject2 ...]
+Usage: $(basename "$0") [options] [subject1 subject2 ...]
 
 Reports which corticalDWI pipeline steps are complete for each subject
 by checking for key output files. Nothing is run or re-run.
 
 Arguments:
-  <subjects_dir>   FreeSurfer SUBJECTS_DIR (contains sub-* folders)
-  [subject...]     Subject IDs to check (default: all sub-* in subjects_dir)
+  [subject...]     Subject IDs to check (default: all sub-* in SUBJECTS_DIR)
 
 Options:
   -t <type>   Surface target type (default: ${target_type})
+  -f <dir>    Fixel directory name, relative to dwi/, for the sCSD step
+              (default: ${fixel_dir})
   -c <file>   Step config file (default: cortical_status_steps.conf)
   -r          List remaining (incomplete) steps per subject with long names
   -T          TSV output — machine-readable, no colors (1=done, 0=missing)
@@ -67,6 +74,7 @@ EOF
 Examples:
   cortical_status.sh /data/subjects
   cortical_status.sh -t fsLR-32k /data/subjects sub-001 sub-002
+  cortical_status.sh -f csd_fixels /data/subjects                # check a different fixel dir
   cortical_status.sh -T /data/subjects | awk -F'\t' '$5==0'   # missing REG
   cortical_status.sh -r /data/subjects                        # what still needs to run
 EOF
@@ -74,9 +82,10 @@ EOF
 
 # ── Args ──────────────────────────────────────────────────────────────────────
 
-while getopts "t:c:rTh" opt; do
+while getopts "t:f:c:rTh" opt; do
     case $opt in
-        t) target_type=$OPTARG ;;
+        t) target_type_cli=$OPTARG ;;
+        f) fixel_dir_cli=$OPTARG ;;
         c) config_file=$OPTARG ;;
         r) remaining_mode=1 ;;
         T) tsv_mode=1 ;;
@@ -89,21 +98,27 @@ shift $((OPTIND-1))
 [ ! -f "$config_file" ] && { echo "ERROR: Config not found: $config_file" >&2; exit 1; }
 load_config "$config_file"
 
-subjects_dir=$1; shift
-[ -z "$subjects_dir" ] && { echo "ERROR: <subjects_dir> required." >&2; usage; exit 1; }
-[ ! -d "$subjects_dir" ] && { echo "ERROR: Not a directory: $subjects_dir" >&2; exit 1; }
+[ -z "$SUBJECTS_DIR" ] && { echo "ERROR: <SUBJECTS_DIR> required." >&2; usage; exit 1; }
+[ ! -d "$SUBJECTS_DIR" ] && { echo "ERROR: Not a directory: $SUBJECTS_DIR" >&2; exit 1; }
+
+# 2. Study-level overrides (may reset target_type)
+[[ -f "${SUBJECTS_DIR}/corticalDWI_params.conf" ]] && source "${SUBJECTS_DIR}/corticalDWI_params.conf"
+
+# 3. CLI -t / -f win over everything
+[[ -n "$target_type_cli" ]] && target_type=$target_type_cli
+[[ -n "$fixel_dir_cli" ]] && fixel_dir=$fixel_dir_cli
 
 if [ $# -gt 0 ]; then
     subjects=("$@")
 else
-    mapfile -t subjects < <(ls -d "${subjects_dir}"/sub-* 2>/dev/null | xargs -n1 basename)
+    mapfile -t subjects < <(ls -d "${SUBJECTS_DIR}"/sub-* 2>/dev/null | xargs -n1 basename)
 fi
-[ ${#subjects[@]} -eq 0 ] && { echo "No sub-* directories found in ${subjects_dir}" >&2; exit 1; }
+[ ${#subjects[@]} -eq 0 ] && { echo "No sub-* directories found in ${SUBJECTS_DIR}" >&2; exit 1; }
 
 # ── Layout ────────────────────────────────────────────────────────────────────
 
 n_steps=${#labels[@]}
-subj_w=22
+subj_w=16
 
 # Column width: widest label + 1 padding
 col_w=4
@@ -114,7 +129,6 @@ cell_w=$(( col_w + 2 ))   # 2 leading spaces per cell
 total_w=$(( subj_w + n_steps * cell_w + 8 ))
 
 # ── Header ────────────────────────────────────────────────────────────────────
-
 if [ "$remaining_mode" -eq 0 ]; then
     if [ "$tsv_mode" -eq 1 ]; then
         printf "subject"
@@ -133,7 +147,10 @@ fi
 n_done=0; n_total=0
 
 for sID in "${subjects[@]}"; do
-    sd="${subjects_dir}/${sID}"
+    if [ -f ${SUBJECTS_DIR}/${sID}/skip ]; then
+        continue
+    fi
+    sd="${SUBJECTS_DIR}/${sID}"
 
     if [ ! -d "$sd" ]; then
         if [ "$tsv_mode" -eq 1 ]; then
@@ -149,6 +166,7 @@ for sID in "${subjects[@]}"; do
     steps=()
     for pattern in "${patterns[@]}"; do
         resolved="${sd}/${pattern/\{target_type\}/${target_type}}"
+        resolved="${resolved/\{fixel_dir\}/${fixel_dir}}"
         steps+=("$(chk "$resolved")")
     done
 
@@ -193,6 +211,6 @@ done
 if [ "$tsv_mode" -eq 0 ] && [ "$remaining_mode" -eq 0 ] && [ "$n_total" -gt 0 ]; then
     printf '%0.s-' $(seq 1 $total_w); printf "\n"
     pct=$(( n_done * 100 / n_total ))
-    printf "Total: ${G}%d${NC} / %d steps done across %d subject(s) (%d%%)\n" \
-        "$n_done" "$n_total" "${#subjects[@]}" "$pct"
+    printf "Total: ${G}%d${NC} / %d steps done across %d subject(s) (%d%%) for target type ${G}%s${NC}\n" \
+        "$n_done" "$n_total" "${#subjects[@]}" "$pct" "$target_type"
 fi

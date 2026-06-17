@@ -11,6 +11,7 @@ subjects_dir=/misc/sherrington/lconcha/TMP/glaucoma/fs_glaucoma
 # Paths to tools needed
 mrtrix_modules_dir=/misc/sherrington/lconcha/code/inb_mrtrix_modules/bin
 corticalDWI_dir=/misc/sherrington/lconcha/code/corticalDWI
+export CORTICAL_DWI_DIR=${corticalDWI_dir}
 inb_tools_dir=/misc/sherrington/lconcha/code/inb_tools
 #### Parameters
 target_type=fsLR-32k

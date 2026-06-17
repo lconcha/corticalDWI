@@ -9,6 +9,7 @@ source `which my_do_cmd`
 ###
 
 export SUBJECTS_DIR=/datos/lauterbur2/lconcha/Edmonton/fs_edmonton
+export CORTICAL_DWI_DIR=$(dirname $(realpath ${BASH_SOURCE[0]}))
 sID=sub-Mcd014
 nsteps=100
 step_size="0.1"

@@ -21,19 +21,27 @@ help() {
   "
 }
 
-if [ $# -ne 5 ]
+if [ $# -lt 1 ]
 then
-  echolor red "Wrong number of arguments"
+  echolor red "Wrong number of arguments (subjID is required)"
   help
   exit 0
 fi
 
-
+# ── Defaults / config / CLI args ──────────────────────────────────────────────
+angle=45
+nDepths=30
+target_type=ico6_sym
+source cortical_load_params.sh 2>/dev/null || true
 subjID=$1
-fixel_dir=$2; # csd_fixels
-angle=$3
-nDepths=$4; # number of depth points to keep in the txt file. The tsf saves them all.
-target_type=$5 # fsLR-5k or fsLR-32k
+[ -n "$2" ] && fixel_dir=$2
+[ -n "$3" ] && angle=$3
+[ -n "$4" ] && nDepths=$4
+[ -n "$5" ] && target_type=$5
+
+
+
+
 
 isOK=1
 
@@ -44,6 +52,16 @@ then
   isOK=0
   #exit 2
 fi
+
+
+fcheck=${fixel_dir}/rh_${target_type}_afd-par.tsf
+echolor bold "Looking for $fcheck"
+if [ -f $fcheck ]
+then
+  echolor green "[INFO] File exists, will not overwrite: $fcheck"
+  exit 0
+fi
+
 
 
 for hemi in lh rh
@@ -64,14 +82,6 @@ do
   done
 
 
-  fcheck=${fixel_dir}/${hemi}_${target_type}_afd-par-perp-indices.tsf
-  echo "looking for $fcheck"
-  if [ -f $fcheck ]
-  then
-    echolor yellow "[WARN] File exists, will not overwrite: $fcheck"
-    exit 0
-  fi
-
 
   if [ $isOK -eq 1 ]
   then
@@ -90,11 +100,5 @@ do
   
 done
 
-
-# for tsf in ${fixel_dir}/*.tsf
-# do
-#   txt=${tsf%.tsf}.txt
-#   my_do_cmd  cortical_tsf2txt_matlab.sh $tsf $txt $nDepths
-# done
 
 my_do_cmd cortical_tsf2txt_in_fixeldir.sh $fixel_dir $nDepths
