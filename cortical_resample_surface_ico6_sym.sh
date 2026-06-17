@@ -45,6 +45,11 @@ echo " XHEMI   : $XHEMI"
 echo " TEMPLATE: $TEMPLATE"
 echo "========================================"
 
+if [ -f $SURF/lh_white_ico6_sym.surf.gii ] && [ -f $SURF/rh_white_ico6_sym.surf.gii ]; then
+    echo ">>> Surfaces already resampled to ico6_sym, skipping."
+    exit 0
+fi
+
 # Sanity checks
 [[ -d $SURF ]]     || { echo "ERROR: surf dir not found: $SURF";     exit 1; }
 
