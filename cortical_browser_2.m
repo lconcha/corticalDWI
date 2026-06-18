@@ -1,5 +1,8 @@
-function cortical_DWI_browser()
+function cortical_DWI_browser(subj_id)
 %CORTICAL_DWI_BROWSER  Interactive browser for cortical DWI depth-profile data.
+%
+%  CORTICAL_DWI_BROWSER(subj_id) opens with subj_id pre-loaded instead of
+%  the first subject found in SUBJECTS_DIR.
 %
 %  Three surface panels: LH overlay, RH overlay, LH asymmetry.
 %  Panels 1 & 2 share colormap / CLim.  Panel 3 uses a diverging colormap.
@@ -12,7 +15,19 @@ cortical_matlab_setup();
 
 % ── Default paths ─────────────────────────────────────────────────────────
 DEF_SUBJECTS_DIR = getenv('SUBJECTS_DIR');
-DEF_SUBJ_ID      = 'sub-79864';
+
+subj_dirs = dir(fullfile(DEF_SUBJECTS_DIR, 'sub-*'));
+subj_dirs = subj_dirs([subj_dirs.isdir]);
+if isempty(subj_dirs)
+    DEF_SUBJ_ID = '';
+else
+    [~, idx] = sort({subj_dirs.name});
+    DEF_SUBJ_ID = subj_dirs(idx(1)).name;
+end
+
+if nargin > 0 && ~isempty(subj_id)
+    DEF_SUBJ_ID = subj_id;
+end
 
 % ── App state ─────────────────────────────────────────────────────────────
 S.subjects_dir   = DEF_SUBJECTS_DIR;
@@ -404,7 +419,7 @@ onScan();
         SUBJ  = edtSubjID.Value;
         dwiDir = fullfile(SDIR, SUBJ, 'dwi');
 
-        D = dir(fullfile(dwiDir, '**', '*.tsf'));
+        D = dir(fullfile(dwiDir, '**', '*ico6_sym*.tsf'));
         if isempty(D)
             lblStatus.Text = sprintf('No .tsf files found in %s', dwiDir);
             return;
