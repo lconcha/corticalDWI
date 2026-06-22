@@ -1163,29 +1163,63 @@ onScan();
     end
 
     function loadNormativeData()
-        % Look for cortical_create_normative_data_from_tsf.m's output
-        % (mean/std/n .tsf, one per metric+hemisphere) for the metric
-        % currently being visualized. Leaves S.norm_* as [] if not found.
+        % Compute normative mean/std/n from the subject list in
+        % templates/subjects_to_average.txt, for the metric currently being
+        % visualized — same averaging logic as
+        % cortical_create_normative_data_from_tsf.m, via the shared
+        % cortical_find_subject_files/cortical_average_tsf_files functions.
+        % Results are cached as .func.gii in templates/normative/ so future
+        % visits to the same metric load from disk instead of recomputing;
+        % the cache is recomputed if subjects_to_average.txt is newer than
+        % the cached files. Leaves S.norm_* as [] if the list is missing or
+        % nothing is found.
         S.norm_lh_mean = []; S.norm_rh_mean = [];
         S.norm_lh_std  = []; S.norm_rh_std  = [];
         S.norm_lh_n    = []; S.norm_rh_n    = [];
 
+        f_avg_subjects = fullfile(S.subjects_dir, 'templates', 'subjects_to_average.txt');
+        if ~isfile(f_avg_subjects), return; end
+
+        avg_subjects = readlines(f_avg_subjects);
+        avg_subjects = avg_subjects(strlength(strtrim(avg_subjects)) > 0);
+        if isempty(avg_subjects), return; end
+
+        listInfo       = dir(f_avg_subjects);
         normDir        = fullfile(S.subjects_dir, 'templates', 'normative');
         rh_metric_name = strrep(S.metric_name, 'lh', 'rh');
 
-        S.norm_lh_mean = loadNormTsf(fullfile(normDir, [S.metric_name  '_mean.tsf']));
-        S.norm_rh_mean = loadNormTsf(fullfile(normDir, [rh_metric_name '_mean.tsf']));
-        S.norm_lh_std  = loadNormTsf(fullfile(normDir, [S.metric_name  '_std.tsf']));
-        S.norm_rh_std  = loadNormTsf(fullfile(normDir, [rh_metric_name '_std.tsf']));
-        S.norm_lh_n    = loadNormTsf(fullfile(normDir, [S.metric_name  '_n.tsf']));
-        S.norm_rh_n    = loadNormTsf(fullfile(normDir, [rh_metric_name '_n.tsf']));
+        [S.norm_lh_mean, S.norm_lh_std, S.norm_lh_n] = loadOrComputeNormative( ...
+            normDir, S.metric_name, avg_subjects, listInfo.datenum);
+        [S.norm_rh_mean, S.norm_rh_std, S.norm_rh_n] = loadOrComputeNormative( ...
+            normDir, rh_metric_name, avg_subjects, listInfo.datenum);
     end
 
-    function M = loadNormTsf(filename)
-        M = [];
-        if ~isfile(filename), return; end
-        tsf = read_mrtrix_tsf(filename);
-        M   = cortical_cell2mat(tsf.data);
+    function [M_avg, M_std, M_n] = loadOrComputeNormative(normDir, metric_name, avg_subjects, listDatenum)
+        M_avg = []; M_std = []; M_n = [];
+
+        meanFile = fullfile(normDir, [metric_name '_mean.func.gii']);
+        stdFile  = fullfile(normDir, [metric_name '_std.func.gii']);
+        nFile    = fullfile(normDir, [metric_name '_n.func.gii']);
+
+        if isfile(meanFile) && isfile(stdFile) && isfile(nFile)
+            cacheInfo = dir(meanFile);
+            if cacheInfo.datenum >= listDatenum
+                M_avg = cortical_load_gifti_matrix(meanFile);
+                M_std = cortical_load_gifti_matrix(stdFile);
+                M_n   = cortical_load_gifti_matrix(nFile);
+                return;
+            end
+        end
+
+        files = cortical_find_subject_files(S.subjects_dir, avg_subjects, [metric_name '.tsf']);
+        if isempty(files), return; end
+
+        [M_avg, M_std, M_n] = cortical_average_tsf_files(files);
+
+        if ~exist(normDir, 'dir'), mkdir(normDir); end
+        cortical_save_gifti_matrix(M_avg, meanFile);
+        cortical_save_gifti_matrix(M_std, stdFile);
+        cortical_save_gifti_matrix(M_n,   nFile);
     end
 
 % ══════════════════════════════════════════════════════════════════════════

@@ -14,25 +14,8 @@ rh_tsfs = containers.Map();
 
 for m = 1:numel(metrics)
     metric = metrics{m};
-    lh_files = {};
-    rh_files = {};
-
-    for s = 1:numel(subjects)
-        subj_dir = fullfile(SUBJECTS_DIR, subjects{s});
-
-        lh_found = dir(fullfile(subj_dir, '**', ['lh_ico6_sym_' metric '.tsf']));
-        rh_found = dir(fullfile(subj_dir, '**', ['rh_ico6_sym_' metric '.tsf']));
-
-        for k = 1:numel(lh_found)
-            lh_files{end+1} = fullfile(lh_found(k).folder, lh_found(k).name); %#ok<AGROW>
-        end
-        for k = 1:numel(rh_found)
-            rh_files{end+1} = fullfile(rh_found(k).folder, rh_found(k).name); %#ok<AGROW>
-        end
-    end
-
-    lh_tsfs(metric) = lh_files;
-    rh_tsfs(metric) = rh_files;
+    lh_tsfs(metric) = cortical_find_subject_files(SUBJECTS_DIR, subjects, ['lh_ico6_sym_' metric '.tsf']);
+    rh_tsfs(metric) = cortical_find_subject_files(SUBJECTS_DIR, subjects, ['rh_ico6_sym_' metric '.tsf']);
 end
 
 
@@ -55,10 +38,11 @@ end
 
 for m = 1:numel(metrics)
     metric = metrics{m};
-    fprintf(1,'  Averaging %s\n',metric);
+    fprintf(1,'  Averaging %s (LH n=%d, RH n=%d)\n', metric, ...
+        numel(lh_tsfs(metric)), numel(rh_tsfs(metric)));
 
-    [lh_avg(metric), lh_std(metric), lh_n(metric)] = average_tsf_files(lh_tsfs(metric));
-    [rh_avg(metric), rh_std(metric), rh_n(metric)] = average_tsf_files(rh_tsfs(metric));
+    [lh_avg(metric), lh_std(metric), lh_n(metric)] = cortical_average_tsf_files(lh_tsfs(metric));
+    [rh_avg(metric), rh_std(metric), rh_n(metric)] = cortical_average_tsf_files(rh_tsfs(metric));
 
     save_tsf_matrix(lh_avg(metric), fullfile(out_dir, ['lh_ico6_sym_' metric '_mean.tsf']));
     save_tsf_matrix(lh_std(metric), fullfile(out_dir, ['lh_ico6_sym_' metric '_std.tsf']));
@@ -68,49 +52,13 @@ for m = 1:numel(metrics)
     save_tsf_matrix(rh_std(metric), fullfile(out_dir, ['rh_ico6_sym_' metric '_std.tsf']));
     save_tsf_matrix(rh_n(metric),   fullfile(out_dir, ['rh_ico6_sym_' metric '_n.tsf']));
 
-    save_gifti_matrix(lh_avg(metric), fullfile(out_dir, ['lh_ico6_sym_' metric '_mean.func.gii']));
-    save_gifti_matrix(lh_std(metric), fullfile(out_dir, ['lh_ico6_sym_' metric '_std.func.gii']));
-    save_gifti_matrix(lh_n(metric),   fullfile(out_dir, ['lh_ico6_sym_' metric '_n.func.gii']));
+    cortical_save_gifti_matrix(lh_avg(metric), fullfile(out_dir, ['lh_ico6_sym_' metric '_mean.func.gii']));
+    cortical_save_gifti_matrix(lh_std(metric), fullfile(out_dir, ['lh_ico6_sym_' metric '_std.func.gii']));
+    cortical_save_gifti_matrix(lh_n(metric),   fullfile(out_dir, ['lh_ico6_sym_' metric '_n.func.gii']));
 
-    save_gifti_matrix(rh_avg(metric), fullfile(out_dir, ['rh_ico6_sym_' metric '_mean.func.gii']));
-    save_gifti_matrix(rh_std(metric), fullfile(out_dir, ['rh_ico6_sym_' metric '_std.func.gii']));
-    save_gifti_matrix(rh_n(metric),   fullfile(out_dir, ['rh_ico6_sym_' metric '_n.func.gii']));
-end
-
-
-function [M_avg, M_std, M_n] = average_tsf_files(tsf_files)
-% Load one .tsf file per subject (same hemisphere/metric) and average
-% them per-streamline, per-depth-point. Each tsf's data cell is converted
-% to a matrix via cortical_cell2mat (NaN-padded to that subject's own
-% longest streamline), then all subjects are stacked into a 3D array
-% NaN-padded to the longest streamline across subjects, and averaged
-% along the subject dimension with 'omitnan'.
-
-nSubj = numel(tsf_files);
-fprintf(1,'    (n=%d)\n',nSubj);
-
-subj_mats = cell(1, nSubj);
-maxLen = 0;
-
-for s = 1:nSubj
-    tsf = read_mrtrix_tsf(tsf_files{s});
-    subj_mats{s} = cortical_cell2mat(tsf.data);
-    fprintf(1,'  Loaded %s (%d streamlines)\n',tsf_files{s},length(tsf.data));
-    maxLen = max(maxLen, size(subj_mats{s}, 2));
-end
-
-nStreamlines = size(subj_mats{1}, 1);
-stack = NaN(nStreamlines, maxLen, nSubj);
-
-for s = 1:nSubj
-    this_mat = subj_mats{s};
-    stack(:, 1:size(this_mat, 2), s) = this_mat;
-end
-
-M_avg = mean(stack, 3, 'omitnan');
-M_std = std(stack, 0, 3, 'omitnan');
-M_n   = sum(~isnan(stack), 3);
-
+    cortical_save_gifti_matrix(rh_avg(metric), fullfile(out_dir, ['rh_ico6_sym_' metric '_mean.func.gii']));
+    cortical_save_gifti_matrix(rh_std(metric), fullfile(out_dir, ['rh_ico6_sym_' metric '_std.func.gii']));
+    cortical_save_gifti_matrix(rh_n(metric),   fullfile(out_dir, ['rh_ico6_sym_' metric '_n.func.gii']));
 end
 
 
@@ -122,18 +70,6 @@ function save_tsf_matrix(M, filename)
 tsf = struct();
 tsf.data = trim_nan_padding(M);
 write_mrtrix_tsf(tsf, filename);
-fprintf(1,'    Wrote %s\n', filename);
-
-end
-
-
-function save_gifti_matrix(M, filename)
-% Write an N x maxLen matrix (one row per vertex/streamline, one column
-% per depth point) as a multi-map .func.gii, one map per depth point, so
-% it can be viewed (e.g. as a time series) in fsleyes or wb_view.
-
-g = gifti({M});
-save(g, filename);
 fprintf(1,'    Wrote %s\n', filename);
 
 end
