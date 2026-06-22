@@ -43,6 +43,12 @@ S.lh_surf      = [];
 S.rh_surf      = [];
 S.lh_M         = [];   % nVerts × nDepths
 S.rh_M         = [];
+S.norm_lh_mean = [];   % nVerts × nDepths normative mean (LH), [] if unavailable
+S.norm_rh_mean = [];
+S.norm_lh_std  = [];
+S.norm_rh_std  = [];
+S.norm_lh_n    = [];
+S.norm_rh_n    = [];
 S.depth        = 1;
 S.nDepths      = 1;
 S.step_size    = 0.5;  % mm per depth step
@@ -69,6 +75,7 @@ S.lst3         = [];
 S.vertex_list  = [];   % loaded vertex IDs
 S.list_mode    = false;
 S.sel_vertex   = NaN;
+S.sel_hemi     = 'lh';   % which surface S.sel_vertex's coordinates come from
 S.hDepthLine   = [];   % xline handle for depth marker in ax4
 S.hDepthLine2  = [];   % xline handle for depth marker in ax5
 S.vol_data     = [];   % 3D volume (double)
@@ -78,6 +85,7 @@ S.slice_idx    = [1 1 1];   % slice indices for [sagittal, coronal, axial] panel
 S.lh_tck      = [];   % cell array of streamlines (one per vertex, LH)
 S.rh_tck      = [];   % cell array of streamlines (one per vertex, RH)
 S.tck_fig     = [];   % handle to separate streamline viewer figure
+S.norm_fig    = [];   % handle to separate normative-comparison figure
 
 % ── Figure ────────────────────────────────────────────────────────────────
 BG = [0.12 0.12 0.12];
@@ -280,7 +288,7 @@ lbl_asym = uilabel(ctrlGL,'Text','Asym','FontColor',LC,'FontWeight',LW,...
     'HorizontalAlignment','center');
 lbl_asym.Layout.Row=1; lbl_asym.Layout.Column=6;
 
-lbl_vx = uilabel(ctrlGL,'Text','Vertex #:','FontColor',LC,'FontWeight',LW,...
+lbl_vx = uilabel(ctrlGL,'Text','Vertex # (1based):','FontColor',LC,'FontWeight',LW,...
     'HorizontalAlignment','center');
 lbl_vx.Layout.Row=1; lbl_vx.Layout.Column=7;
 
@@ -922,7 +930,11 @@ onScan();
         if isnan(S.sel_vertex) || S.list_mode || isempty(S.lh_surf) || isempty(S.vol_geom)
             return;
         end
-        vcoord = S.lh_surf.vertices(S.sel_vertex, :);   % [X Y Z] world mm
+        if strcmp(S.sel_hemi, 'rh')
+            vcoord = S.rh_surf.vertices(S.sel_vertex, :);   % [X Y Z] world mm
+        else
+            vcoord = S.lh_surf.vertices(S.sel_vertex, :);   % [X Y Z] world mm
+        end
         for w = 1:3
             ax = ax_h(w);
             p  = S.vol_geom(w);
@@ -1117,6 +1129,8 @@ onScan();
             [~, fn] = fileparts(S.lh_tsf_file);
             S.metric_name = fn;
 
+            loadNormativeData();
+
             % Auto CLim from finite values
             d1 = S.lh_M(:,1);
             d1 = d1(isfinite(d1));
@@ -1135,13 +1149,43 @@ onScan();
 
             renderSurfaces();
             updateDepthLabel();
-            lblStatus.Text = sprintf('Loaded. %d vertices, %d depths.', ...
-                size(S.lh_M,1), S.nDepths);
+            normStr = 'no normative data';
+            if ~isempty(S.norm_lh_mean) || ~isempty(S.norm_rh_mean)
+                normStr = 'normative data loaded';
+            end
+            lblStatus.Text = sprintf('Loaded. %d vertices, %d depths (%s).', ...
+                size(S.lh_M,1), S.nDepths, normStr);
             autoLoadBrain();
         catch ME
             lblStatus.Text = ['Error: ' ME.message];
             warning('cortical_DWI_browser:load', '%s\n%s', ME.message, ME.getReport());
         end
+    end
+
+    function loadNormativeData()
+        % Look for cortical_create_normative_data_from_tsf.m's output
+        % (mean/std/n .tsf, one per metric+hemisphere) for the metric
+        % currently being visualized. Leaves S.norm_* as [] if not found.
+        S.norm_lh_mean = []; S.norm_rh_mean = [];
+        S.norm_lh_std  = []; S.norm_rh_std  = [];
+        S.norm_lh_n    = []; S.norm_rh_n    = [];
+
+        normDir        = fullfile(S.subjects_dir, 'templates', 'normative');
+        rh_metric_name = strrep(S.metric_name, 'lh', 'rh');
+
+        S.norm_lh_mean = loadNormTsf(fullfile(normDir, [S.metric_name  '_mean.tsf']));
+        S.norm_rh_mean = loadNormTsf(fullfile(normDir, [rh_metric_name '_mean.tsf']));
+        S.norm_lh_std  = loadNormTsf(fullfile(normDir, [S.metric_name  '_std.tsf']));
+        S.norm_rh_std  = loadNormTsf(fullfile(normDir, [rh_metric_name '_std.tsf']));
+        S.norm_lh_n    = loadNormTsf(fullfile(normDir, [S.metric_name  '_n.tsf']));
+        S.norm_rh_n    = loadNormTsf(fullfile(normDir, [rh_metric_name '_n.tsf']));
+    end
+
+    function M = loadNormTsf(filename)
+        M = [];
+        if ~isfile(filename), return; end
+        tsf = read_mrtrix_tsf(filename);
+        M   = cortical_cell2mat(tsf.data);
     end
 
 % ══════════════════════════════════════════════════════════════════════════
@@ -1237,13 +1281,14 @@ onScan();
 %  SURFACE CLICK → vertex selection
 % ══════════════════════════════════════════════════════════════════════════
 
-    function onSurfaceClick(src, event, ax, dot, hemi) %#ok<INUSL>
+    function onSurfaceClick(src, event, ax, dot, hemi)
         clickPt = event.IntersectionPoint;
         verts   = src.Vertices;
         dists   = vecnorm(verts - clickPt, 2, 2);
         [~, v]  = min(dists);
 
         S.sel_vertex    = v;
+        S.sel_hemi      = hemi;   % which surface's coordinates to use for this vertex
         edtVertex.Value = v;
         updateMarkers(v);
 
@@ -1377,6 +1422,7 @@ onScan();
         updateAsymPlot();
         updateDepthLine();
         updateStreamlineView();
+        updateNormativeView();
         updateOrthoMarker();
     end
 
@@ -1757,6 +1803,178 @@ onScan();
 
         n = numel(lh_v) + numel(rh_v);
         title(ax, sprintf('Streamlines  (n=%d)', n), 'Color','w', 'FontSize',11);
+    end
+
+% ══════════════════════════════════════════════════════════════════════════
+%  NORMATIVE COMPARISON (separate figure, opens only when normative data
+%  exists for the metric being visualized)
+% ══════════════════════════════════════════════════════════════════════════
+
+    function updateNormativeView()
+        haveNorm = ~isempty(S.norm_lh_mean) || ~isempty(S.norm_rh_mean);
+
+        % Resolve vertex set (same logic as updatePlot/updateAsymPlot)
+        if S.list_mode && ~isempty(S.vertex_list)
+            all_v = S.vertex_list;
+            nbrs  = [];
+        elseif ~isnan(S.sel_vertex)
+            v     = S.sel_vertex;
+            all_v = getNeighborRings(S.lh_surf.faces, v, S.n_rings);
+            nbrs  = all_v(all_v ~= v);
+        else
+            all_v = [];
+        end
+
+        if ~haveNorm || isempty(all_v)
+            if ~isempty(S.norm_fig) && isvalid(S.norm_fig)
+                close(S.norm_fig);
+            end
+            S.norm_fig = [];
+            return;
+        end
+
+        d_lh_all   = double(S.lh_M(all_v, :));
+        d_rh_all   = double(S.rh_M(all_v, :));
+        d_lh_mean  = mean(d_lh_all, 1, 'omitnan');
+        d_rh_mean  = mean(d_rh_all, 1, 'omitnan');
+        d_asym_all = (d_lh_all - d_rh_all) ./ ((d_lh_all + d_rh_all) ./ 2);
+        d_asym_all(~isfinite(d_asym_all)) = NaN;
+        d_asym_mean = mean(d_asym_all, 1, 'omitnan');
+
+        n_subj = numel(all_v);
+
+        lh_col    = [0.40 0.70 1.00];
+        rh_col    = [1.00 0.52 0.30];
+        asym_col  = [0.88 0.88 0.30];
+        bg        = [0.14 0.14 0.14];
+        lh_thin   = lh_col   * 0.30 + bg * 0.70;
+        rh_thin   = rh_col   * 0.30 + bg * 0.70;
+        asym_thin = asym_col * 0.30 + bg * 0.70;
+
+        if isempty(S.norm_fig) || ~isvalid(S.norm_fig)
+            S.norm_fig = figure('Name','Normative Comparison', ...
+                'Color', bg, 'NumberTitle','off', 'Position',[80 80 1500 460]);
+        else
+            clf(S.norm_fig);
+        end
+
+        axL = subplot(1,3,1,'Parent',S.norm_fig);
+        n_norm_lh = plotProfilePanel(axL, d_lh_all, d_lh_mean, lh_col, lh_thin, ...
+            S.norm_lh_mean, S.norm_lh_std, all_v, 'Left Hemisphere');
+
+        axR = subplot(1,3,2,'Parent',S.norm_fig);
+        n_norm_rh = plotProfilePanel(axR, d_rh_all, d_rh_mean, rh_col, rh_thin, ...
+            S.norm_rh_mean, S.norm_rh_std, all_v, 'Right Hemisphere');
+
+        % ── Asymmetry panel (built from the two normative means) ───────────
+        axA = subplot(1,3,3,'Parent',S.norm_fig);
+        depths = (0 : size(d_asym_all,2)-1) .* S.step_size;
+        cla(axA); hold(axA, 'on');
+
+        if n_subj > 1
+            d_asym_sd = std(d_asym_all, 0, 1, 'omitnan');
+            plot(axA, depths, d_asym_mean + d_asym_sd, '--', 'Color', asym_thin, ...
+                'LineWidth', 1.0, 'HandleVisibility','off');
+            plot(axA, depths, d_asym_mean - d_asym_sd, '--', 'Color', asym_thin, ...
+                'LineWidth', 1.0, 'HandleVisibility','off');
+        end
+        plot(axA, depths, d_asym_mean, '-', 'Color', asym_col, 'LineWidth', 2.5, ...
+            'DisplayName', 'Subject');
+
+        n_norm_asym = 0;
+        % TODO: this is asymmetry-of-group-means (LH mean vs RH mean), not
+        % the average of each subject's own asymmetry. Improve by computing
+        % asymmetry per subject before averaging. We'll get to that later.
+        if ~isempty(S.norm_lh_mean) && ~isempty(S.norm_rh_mean) ...
+                && max(all_v) <= size(S.norm_lh_mean,1) && max(all_v) <= size(S.norm_rh_mean,1)
+            nl    = double(S.norm_lh_mean(all_v,:));
+            nr    = double(S.norm_rh_mean(all_v,:));
+            ncols = min(size(nl,2), size(nr,2));
+            na    = (nl(:,1:ncols) - nr(:,1:ncols)) ./ ((nl(:,1:ncols) + nr(:,1:ncols)) ./ 2);
+            na(~isfinite(na)) = NaN;
+            norm_asym_mean   = mean(na, 1, 'omitnan');
+            norm_asym_depths = (0 : ncols-1) .* S.step_size;
+            n_norm_asym      = numel(all_v);
+            plot(axA, norm_asym_depths, norm_asym_mean, '-', 'Color', [1 1 1], ...
+                'LineWidth', 2.5, 'DisplayName', 'Normative');
+        end
+        yline(axA, 0, '--', 'Color',[0.6 0.6 0.6], 'LineWidth',1, 'HandleVisibility','off');
+
+        hold(axA, 'off');
+        legend(axA, 'TextColor','w','Color','none','EdgeColor','none','Location','best');
+        xlabel(axA, 'Depth from pial surface (mm)', 'Color',[0.80 0.80 0.80]);
+        ylabel(axA, 'Asymmetry index', 'Color',[0.80 0.80 0.80]);
+        axA.Color  = bg;
+        axA.XColor = [0.70 0.70 0.70]; axA.YColor = [0.70 0.70 0.70];
+        axA.XGrid  = 'on'; axA.YGrid  = 'on';
+        title(axA, 'Asymmetry', 'Color','w');
+
+        if S.list_mode
+            selDesc = 'Vertex list';
+        else
+            selDesc = sprintf('Vertex %d (+%d nbrs, %d rings)', v, numel(nbrs), S.n_rings);
+        end
+
+        % Number of control subjects the normative data was derived from.
+        % M_n decreases with depth (fewer subjects reach deeper points), so
+        % its max gives the size of the control cohort itself.
+        n_controls_lh = 0; n_controls_rh = 0;
+        if ~isempty(S.norm_lh_n), n_controls_lh = max(S.norm_lh_n(:)); end
+        if ~isempty(S.norm_rh_n), n_controls_rh = max(S.norm_rh_n(:)); end
+
+        sgtitle(S.norm_fig, sprintf( ...
+            ['%s — %s — %s |  Number of controls: %d'], ...
+            S.subj_id, S.metric_name, selDesc, ...
+            n_controls_lh), ...
+            'Color','w','FontWeight','bold','Interpreter','none');
+    end
+
+    function n_norm = plotProfilePanel(ax, d_all, d_mean, col, thin_col, norm_M, norm_std_M, all_v, panelTitle)
+        % Subject's own profile (same convention as updatePlot/updateAsymPlot)
+        % with the normative mean ± 1 SD overlaid in white. Returns the
+        % number of vertices actually used from the normative data, which
+        % should equal numel(all_v) — i.e. the same vertices selected for
+        % the subject.
+        depths = (0 : size(d_all,2)-1) .* S.step_size;
+        n = size(d_all,1);
+        cla(ax); hold(ax, 'on');
+
+        if n > 1
+            d_sd = std(d_all, 0, 1, 'omitnan');
+            plot(ax, depths, d_mean + d_sd, '--', 'Color', thin_col, ...
+                'LineWidth', 1.0, 'HandleVisibility','off');
+            plot(ax, depths, d_mean - d_sd, '--', 'Color', thin_col, ...
+                'LineWidth', 1.0, 'HandleVisibility','off');
+        end
+        plot(ax, depths, d_mean, '-', 'Color', col, 'LineWidth', 2.5, ...
+            'DisplayName', 'Subject');
+
+        n_norm = 0;
+        if ~isempty(norm_M) && max(all_v) <= size(norm_M,1)
+            norm_depths  = (0 : size(norm_M,2)-1) .* S.step_size;
+            norm_profile = mean(double(norm_M(all_v,:)), 1, 'omitnan');
+            n_norm = numel(all_v);
+
+            if ~isempty(norm_std_M) && max(all_v) <= size(norm_std_M,1)
+                norm_sd = mean(double(norm_std_M(all_v,:)), 1, 'omitnan');
+                ncols   = min(numel(norm_profile), numel(norm_sd));
+                plot(ax, norm_depths(1:ncols), norm_profile(1:ncols) + norm_sd(1:ncols), ...
+                    '--', 'Color', [1 1 1].*0.75, 'LineWidth', 1.0, 'HandleVisibility','off');
+                plot(ax, norm_depths(1:ncols), norm_profile(1:ncols) - norm_sd(1:ncols), ...
+                    '--', 'Color', [1 1 1].*0.75, 'LineWidth', 1.0, 'HandleVisibility','off');
+            end
+
+            plot(ax, norm_depths, norm_profile, '-', 'Color', [1 1 1], ...
+                'LineWidth', 2.5, 'DisplayName', 'Normative');
+        end
+
+        hold(ax, 'off');
+        legend(ax, 'TextColor','w','Color','none','EdgeColor','none','Location','best');
+        xlabel(ax, 'Depth from pial surface (mm)', 'Color',[0.80 0.80 0.80]);
+        ax.Color  = [0.14 0.14 0.14];
+        ax.XColor = [0.70 0.70 0.70]; ax.YColor = [0.70 0.70 0.70];
+        ax.XGrid  = 'on'; ax.YGrid  = 'on';
+        title(ax, panelTitle, 'Color','w');
     end
 
 end  % cortical_DWI_browser
