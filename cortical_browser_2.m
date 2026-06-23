@@ -1204,6 +1204,7 @@ onScan();
         if isfile(meanFile) && isfile(stdFile) && isfile(nFile)
             cacheInfo = dir(meanFile);
             if cacheInfo.datenum >= listDatenum
+                fprintf(1,'Using cached average files\n');
                 M_avg = cortical_load_gifti_matrix(meanFile);
                 M_std = cortical_load_gifti_matrix(stdFile);
                 M_n   = cortical_load_gifti_matrix(nFile);

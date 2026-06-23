@@ -1,4 +1,4 @@
-function [M_avg, M_std, M_n] = cortical_average_tsf_files(tsf_files)
+function [M_avg, M_std, M_n, stack] = cortical_average_tsf_files(tsf_files)
 % function [M_avg, M_std, M_n] = cortical_average_tsf_files(tsf_files)
 %
 % Load one .tsf file per subject (same hemisphere/metric) and average them

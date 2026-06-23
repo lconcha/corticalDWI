@@ -1,3 +1,4 @@
+
 SUBJECTS_DIR = getenv('SUBJECTS_DIR');
 
 
@@ -18,6 +19,18 @@ for m = 1:numel(metrics)
     rh_tsfs(metric) = cortical_find_subject_files(SUBJECTS_DIR, subjects, ['rh_ico6_sym_' metric '.tsf']);
 end
 
+% Figure out the number of vertices so and build a large
+% multidimensional matrix
+dummyvar = lh_tsfs(metrics{1});
+onetsf   = dummyvar{1};
+dummytsf = read_mrtrix_tsf(onetsf);
+nVerts   = size(dummytsf.data,2);
+nMetrics = length(metrics);
+dummyMat = cortical_cell2mat(dummytsf.data);
+nDepths  = size(dummyMat,2) .* 2; % pad it twice as large, as other subjects may have deeper streamlines.
+nSubjects= length(lh_tsfs(metrics{1}));
+lh_M        = nan(nVerts,nDepths,nSubjects,nMetrics);
+rh_M        = nan(nVerts,nDepths,nSubjects,nMetrics);
 
 % Average across subjects, per vertex/streamline and per depth point.
 % Streamline lengths vary within and across subjects (cortical thickness),
@@ -31,6 +44,11 @@ rh_std = containers.Map();
 lh_n   = containers.Map();
 rh_n   = containers.Map();
 
+% Also save the full stack for each metric so we can build a
+% multidimensional array
+lh_stack = containers.Map();
+rh_stack = containers.Map();
+
 out_dir = fullfile(SUBJECTS_DIR, 'templates', 'normative');
 if ~exist(out_dir, 'dir')
     mkdir(out_dir);
@@ -41,8 +59,13 @@ for m = 1:numel(metrics)
     fprintf(1,'  Averaging %s (LH n=%d, RH n=%d)\n', metric, ...
         numel(lh_tsfs(metric)), numel(rh_tsfs(metric)));
 
-    [lh_avg(metric), lh_std(metric), lh_n(metric)] = cortical_average_tsf_files(lh_tsfs(metric));
-    [rh_avg(metric), rh_std(metric), rh_n(metric)] = cortical_average_tsf_files(rh_tsfs(metric));
+    [lh_avg(metric), lh_std(metric), lh_n(metric), lh_stack(metric)] = cortical_average_tsf_files(lh_tsfs(metric));
+    [rh_avg(metric), rh_std(metric), rh_n(metric), rh_stack(metric)] = cortical_average_tsf_files(rh_tsfs(metric));
+
+    l_nDepths     = size(lh_stack(metric),2);
+    r_nDepths     = size(rh_stack(metric),2);
+    lh_M(:,1:l_nDepths,:,m) = lh_stack(metric);
+    rh_M(:,1:r_nDepths ,:,m) = rh_stack(metric);
 
     save_tsf_matrix(lh_avg(metric), fullfile(out_dir, ['lh_ico6_sym_' metric '_mean.tsf']));
     save_tsf_matrix(lh_std(metric), fullfile(out_dir, ['lh_ico6_sym_' metric '_std.tsf']));
@@ -62,15 +85,32 @@ for m = 1:numel(metrics)
 end
 
 
+% remove the extra Nans at the end of second dimension in the large
+% multidimensional matrices
+lh_toRemove = sum(isnan(lh_M(:,:,1,1))) == nVerts;
+lh_M(:,lh_toRemove,:,:) = [];
+rh_toRemove = sum(isnan(rh_M(:,:,1,1))) == nVerts;
+rh_M(:,rh_toRemove,:,:) = [];
+
+fprintf(1,'Sizes for multidimensional matrices:\n')
+fprintf(1,'  Left  hemisphere: %s\n',mat2str(size(lh_M)))
+fprintf(1,'  Right hemisphere: %s\n',mat2str(size(rh_M)))
+
+% save a .mat file for easier data handling of multivariate data
+mat_fname = fullfile(out_dir, 'ico6_sym_multivariate.mat');
+fprintf(1,'Saving mat file: %s\n',mat_fname)
+save(mat_fname,'lh_M','rh_M','metrics','subjects');
+
+
 function save_tsf_matrix(M, filename)
 % Write a NaN-padded (per-streamline, per-depth-point) matrix to a
 % MRtrix .tsf file, trimming each row's trailing NaN padding back to
 % that streamline's real length before writing.
 
-tsf = struct();
-tsf.data = trim_nan_padding(M);
-write_mrtrix_tsf(tsf, filename);
-fprintf(1,'    Wrote %s\n', filename);
+    tsf = struct();
+    tsf.data = trim_nan_padding(M);
+    write_mrtrix_tsf(tsf, filename);
+    fprintf(1,'    Wrote %s\n', filename);
 
 end
 
@@ -80,15 +120,15 @@ function data = trim_nan_padding(M)
 % end of each row, per cortical_cell2mat's convention) back into a
 % 1 x N cell array of column vectors with the padding removed.
 
-nRows = size(M, 1);
-data = cell(1, nRows);
-for i = 1:nRows
-    valid = find(~isnan(M(i, :)), 1, 'last');
-    if isempty(valid)
-        valid = 0;
+    nRows = size(M, 1);
+    data = cell(1, nRows);
+    for i = 1:nRows
+        valid = find(~isnan(M(i, :)), 1, 'last');
+        if isempty(valid)
+            valid = 0;
+        end
+        data{i} = M(i, 1:valid).';
     end
-    data{i} = M(i, 1:valid).';
-end
 
 end
 
