@@ -99,39 +99,37 @@ fprintf(1,'rh_M: %s\n', mat2str(size(rh_M)));
 
 
 % save a .mat file for easier data handling of multivariate data
-mat_fname = fullfile(out_dir, ['multivariate.mat']);
+mat_fname = fullfile(out_dir, 'ico6_sym_multivariate.mat');
 fprintf(1,'Saving multivariate mat file: %s\n',mat_fname);
 save(mat_fname,'lh_M','rh_M','metrics','subjects');
+finfo = dir(mat_fname);
+fprintf(1,'File size: %.1f MB\n', finfo.bytes / 1e6);
 
 
 function save_tsf_matrix(M, filename)
-% Write a NaN-padded (per-streamline, per-depth-point) matrix to a
-% MRtrix .tsf file, trimming each row's trailing NaN padding back to
-% that streamline's real length before writing.
-
-tsf = struct();
-tsf.data = trim_nan_padding(M);
-write_mrtrix_tsf(tsf, filename);
-fprintf(1,'    Wrote %s\n', filename);
-
+    % Write a NaN-padded (per-streamline, per-depth-point) matrix to a
+    % MRtrix .tsf file, trimming each row's trailing NaN padding back to
+    % that streamline's real length before writing.
+    tsf = struct();
+    tsf.data = trim_nan_padding(M);
+    write_mrtrix_tsf(tsf, filename);
+    fprintf(1,'    Wrote %s\n', filename);
 end
 
 
 function data = trim_nan_padding(M)
-% Convert an N x maxLen NaN-padded matrix (NaN padding only ever at the
-% end of each row, per cortical_cell2mat's convention) back into a
-% 1 x N cell array of column vectors with the padding removed.
-
-nRows = size(M, 1);
-data = cell(1, nRows);
-for i = 1:nRows
-    valid = find(~isnan(M(i, :)), 1, 'last');
-    if isempty(valid)
-        valid = 0;
+    % Convert an N x maxLen NaN-padded matrix (NaN padding only ever at the
+    % end of each row, per cortical_cell2mat's convention) back into a
+    % 1 x N cell array of column vectors with the padding removed.
+    nRows = size(M, 1);
+    data = cell(1, nRows);
+    for i = 1:nRows
+        valid = find(~isnan(M(i, :)), 1, 'last');
+        if isempty(valid)
+            valid = 0;
+        end
+        data{i} = M(i, 1:valid).';
     end
-    data{i} = M(i, 1:valid).';
-end
-
 end
 
 end% function

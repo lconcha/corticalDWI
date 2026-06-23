@@ -7,7 +7,7 @@ function cortical_save_gifti_matrix(M, filename)
 % back with cortical_load_gifti_matrix.
 
 g = gifti({M});
-fprintf(1,'Saving %s\n',filename)
+fprintf(1,'    Saving %s\n',filename)
 save(g, filename);
 
 end
