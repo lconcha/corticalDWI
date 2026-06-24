@@ -1,7 +1,7 @@
-function cortical_DWI_browser(subj_id)
+function cortical_browser_2(subj_id)
 %CORTICAL_DWI_BROWSER  Interactive browser for cortical DWI depth-profile data.
 %
-%  CORTICAL_DWI_BROWSER(subj_id) opens with subj_id pre-loaded instead of
+%  CORTICAL_BROWSER_2(subj_id) opens with subj_id pre-loaded instead of
 %  the first subject found in SUBJECTS_DIR.
 %
 %  Three surface panels: LH overlay, RH overlay, LH asymmetry.
@@ -86,6 +86,12 @@ S.lh_tck      = [];   % cell array of streamlines (one per vertex, LH)
 S.rh_tck      = [];   % cell array of streamlines (one per vertex, RH)
 S.tck_fig     = [];   % handle to separate streamline viewer figure
 S.norm_fig    = [];   % handle to separate normative-comparison figure
+S.normMV_fig  = [];   % handle to separate normative-explorer figure (multivariate .mat)
+S.normMV_axDepth = [];   % left panel axes (Mahalanobis-by-depth plot)
+S.normMV_axRadar = [];   % middle panel axes (radar plot)
+S.normMV_axBar   = [];   % right panel axes (bar plot)
+S.normMV_hDepthLine = [];   % xline handle for depth marker in normMV_axDepth
+S.normMV      = [];   % struct: lh_M, rh_M, metrics, subjects (cohort) + subj_lh_M, subj_rh_M (current subject)
 
 % ── Figure ────────────────────────────────────────────────────────────────
 BG = [0.12 0.12 0.12];
@@ -108,6 +114,9 @@ hMenuTck = uimenu(hFig, 'Text', 'Streamlines');
 uimenu(hMenuTck, 'Text', 'Load LH TCK…', 'MenuSelectedFcn', @(~,~) onLoadTck('lh'));
 uimenu(hMenuTck, 'Text', 'Load RH TCK…', 'MenuSelectedFcn', @(~,~) onLoadTck('rh'));
 uimenu(hMenuTck, 'Text', 'Clear streamlines', 'MenuSelectedFcn', @onClearTck);
+
+hMenuNorm = uimenu(hFig, 'Text', 'Normative');
+uimenu(hMenuNorm, 'Text', 'Open Multivariate Explorer window', 'MenuSelectedFcn', @onOpenNormativeWindow);
 
 % ── View menu (independent panel toggles) ─────────────────────────────────
 S.show_surf  = [true true true];   % [LH, RH, Asym]
@@ -495,6 +504,9 @@ onScan();
         updateDepthLabel();
         updateOverlays();
         updateDepthLine();   % move the marker; don't redraw the whole profile
+        updateNormativeExplorerRadarPlot();   % radar reflects this single depth
+        updateNormativeExplorerBarPlot();     % bar plot reflects this single depth
+        updateNormativeExplorerDepthLine();   % move the marker; don't redraw the whole profile
     end
 
     function onClimChanged(src,~)
@@ -1458,6 +1470,9 @@ onScan();
         updateDepthLine();
         updateStreamlineView();
         updateNormativeView();
+        updateNormativeExplorerDepthPlot();
+        updateNormativeExplorerRadarPlot();
+        updateNormativeExplorerBarPlot();
         updateOrthoMarker();
     end
 
@@ -2010,6 +2025,345 @@ onScan();
         ax.XColor = [0.70 0.70 0.70]; ax.YColor = [0.70 0.70 0.70];
         ax.XGrid  = 'on'; ax.YGrid  = 'on';
         title(ax, panelTitle, 'Color','w');
+    end
+
+% ══════════════════════════════════════════════════════════════════════════
+%  MULTIVARIATE EXPLORER (separate figure, driven by the precomputed
+%  ico6_sym_multivariate.mat cohort file — all metrics at once)
+% ══════════════════════════════════════════════════════════════════════════
+
+    function onOpenNormativeWindow(~,~)
+        matFile = fullfile(S.subjects_dir, 'templates', 'normative', 'ico6_sym_multivariate.mat');
+        if ~isfile(matFile)
+            uialert(hFig, 'Run cortical_create_normative_data_from_tsf in the console', ...
+                'Normative data not found');
+            return;
+        end
+
+        try
+            lblStatus.Text = 'Loading normative multivariate data…'; drawnow;
+            S.normMV = load(matFile, 'lh_M', 'rh_M', 'metrics', 'subjects');
+            lblStatus.Text = 'Finished loading normative data.'; drawnow;
+
+            buildSubjectMultivariateStack();
+
+            if isempty(S.normMV_fig) || ~isvalid(S.normMV_fig)
+                S.normMV_fig = figure('Name','Multivariate Explorer', ...
+                    'Color',[0.12 0.12 0.12], 'NumberTitle','off', 'Position',[80 100 1800 550]);
+            else
+                clf(S.normMV_fig);
+            end
+
+            S.normMV_axDepth = subplot(1,3,1,'Parent',S.normMV_fig);
+            S.normMV_axDepth.Color  = [0.14 0.14 0.14];
+            S.normMV_axDepth.XColor = [0.70 0.70 0.70]; S.normMV_axDepth.YColor = [0.70 0.70 0.70];
+            S.normMV_axDepth.XGrid  = 'on'; S.normMV_axDepth.YGrid  = 'on';
+            title(S.normMV_axDepth, 'Depth profile', 'Color','w');
+            xlabel(S.normMV_axDepth, 'Depth from pial surface (mm)', 'Color',[0.80 0.80 0.80]);
+
+            S.normMV_axRadar = subplot(1,3,2,'Parent',S.normMV_fig);
+            S.normMV_axRadar.Color = [0.14 0.14 0.14];
+            axis(S.normMV_axRadar, 'equal'); axis(S.normMV_axRadar, 'off');
+            title(S.normMV_axRadar, 'Radar plot', 'Color','w');
+
+            S.normMV_axBar = subplot(1,3,3,'Parent',S.normMV_fig);
+            S.normMV_axBar.Color  = [0.14 0.14 0.14];
+            S.normMV_axBar.XColor = [0.70 0.70 0.70]; S.normMV_axBar.YColor = [0.70 0.70 0.70];
+            S.normMV_axBar.YGrid  = 'on';
+            title(S.normMV_axBar, 'Bar plot', 'Color','w');
+
+            sgtitle(S.normMV_fig, sprintf('Multivariate Explorer — %s', S.subj_id), ...
+                'Color','w','FontWeight','bold');
+
+            updateNormativeExplorerDepthPlot();
+            updateNormativeExplorerRadarPlot();
+            updateNormativeExplorerBarPlot();
+
+            lblStatus.Text = sprintf('Normative explorer ready (%d metrics, %d cohort subjects).', ...
+                numel(S.normMV.metrics), numel(S.normMV.subjects));
+        catch ME
+            lblStatus.Text = ['Error: ' ME.message];
+            warning('cortical_DWI_browser:normativeExplorer', '%s\n%s', ME.message, ME.getReport());
+        end
+    end
+
+    function buildSubjectMultivariateStack()
+        % Load the currently displayed subject's own tsf files for every
+        % metric in S.normMV.metrics (same order as the cohort lh_M/rh_M),
+        % convert each to a matrix via cortical_cell2mat, and concatenate
+        % along the 4th dimension — so S.normMV.subj_lh_M/subj_rh_M end up
+        % directly comparable to S.normMV.lh_M/rh_M metric-for-metric.
+        metrics = S.normMV.metrics;
+        nMetrics = numel(metrics);
+
+        lh_mats = cell(1, nMetrics);
+        rh_mats = cell(1, nMetrics);
+        nVerts    = [];
+        maxDepthL = 0;
+        maxDepthR = 0;
+
+        for m = 1:nMetrics
+            metric = metrics{m};
+            lh_found = cortical_find_subject_files(S.subjects_dir, {S.subj_id}, ['lh_ico6_sym_' metric '.tsf']);
+            rh_found = cortical_find_subject_files(S.subjects_dir, {S.subj_id}, ['rh_ico6_sym_' metric '.tsf']);
+            if isempty(lh_found) || isempty(rh_found)
+                warning('cortical_DWI_browser:normativeExplorer', ...
+                    'Missing %s tsf for subject %s — leaving that metric empty.', metric, S.subj_id);
+                continue;
+            end
+            lh_tsf = read_mrtrix_tsf(lh_found{1});
+            rh_tsf = read_mrtrix_tsf(rh_found{1});
+            lh_mats{m} = cortical_cell2mat(lh_tsf.data);
+            rh_mats{m} = cortical_cell2mat(rh_tsf.data);
+            nVerts    = size(lh_mats{m}, 1);
+            maxDepthL = max(maxDepthL, size(lh_mats{m}, 2));
+            maxDepthR = max(maxDepthR, size(rh_mats{m}, 2));
+        end
+
+        S.normMV.subj_lh_M = nan(nVerts, maxDepthL, 1, nMetrics);
+        S.normMV.subj_rh_M = nan(nVerts, maxDepthR, 1, nMetrics);
+        for m = 1:nMetrics
+            if isempty(lh_mats{m}), continue; end
+            S.normMV.subj_lh_M(:, 1:size(lh_mats{m},2), 1, m) = lh_mats{m};
+            S.normMV.subj_rh_M(:, 1:size(rh_mats{m},2), 1, m) = rh_mats{m};
+        end
+    end
+
+    function updateNormativeExplorerDepthPlot()
+        % Left panel of the Normative Explorer: Mahalanobis distance
+        % between the selected vertex's subject multivariate profile and
+        % the cohort's multivariate distribution, as a function of depth.
+        if isempty(S.normMV_fig) || ~isvalid(S.normMV_fig) || isempty(S.normMV)
+            return;
+        end
+        if isnan(S.sel_vertex)
+            return;
+        end
+
+        idx    = S.sel_vertex;
+        lh_col = [0.40 0.70 1.00];
+        rh_col = [1.00 0.52 0.30];
+
+        % cortical_subject_mahal_by_depth loops depth up to size(lh_M,2);
+        % pad each subject profile with NaN rows if it's shorter so the
+        % loop never runs out of bounds (NaN depths simply yield NaN mahal).
+        targetDepths = size(S.normMV.lh_M, 2);
+
+        lh_slice = squeeze(S.normMV.subj_lh_M(idx, :, 1, :));
+        if size(lh_slice, 1) < targetDepths
+            lh_slice(end+1:targetDepths, :) = NaN;
+        end
+        rh_slice = squeeze(S.normMV.subj_rh_M(idx, :, 1, :));
+        if size(rh_slice, 1) < targetDepths
+            rh_slice(end+1:targetDepths, :) = NaN;
+        end
+
+        lh_mahalVec = cortical_subject_mahal_by_depth(idx, lh_slice, S.normMV.lh_M, S.normMV.rh_M);
+        rh_mahalVec = cortical_subject_mahal_by_depth(idx, rh_slice, S.normMV.lh_M, S.normMV.rh_M);
+        lh_depths   = (0 : numel(lh_mahalVec)-1) .* S.step_size;
+        rh_depths   = (0 : numel(rh_mahalVec)-1) .* S.step_size;
+
+        ax = S.normMV_axDepth;
+        cla(ax); hold(ax, 'on');
+        plot(ax, lh_depths, lh_mahalVec, '-', 'Color', lh_col, ...
+            'LineWidth', 2, 'MarkerSize', 4, 'MarkerFaceColor', lh_col, 'DisplayName', 'LH');
+        plot(ax, rh_depths, rh_mahalVec, '-', 'Color', rh_col, ...
+            'LineWidth', 2, 'MarkerSize', 4, 'MarkerFaceColor', rh_col, 'DisplayName', 'RH');
+        hold(ax, 'off');
+        legend(ax, 'TextColor','w','Color','none','EdgeColor','none','Location','best');
+        ax.Color  = [0.14 0.14 0.14];
+        ax.XColor = [0.70 0.70 0.70]; ax.YColor = [0.70 0.70 0.70];
+        ax.XGrid  = 'on'; ax.YGrid  = 'on';
+        xlabel(ax, 'Depth from pial surface (mm)', 'Color',[0.80 0.80 0.80]);
+        ylabel(ax, 'Mahalanobis distance', 'Color',[0.80 0.80 0.80]);
+        title(ax, sprintf('Depth profile — vertex %d', idx), 'Color','w');
+
+        updateNormativeExplorerDepthLine();
+    end
+
+    function updateNormativeExplorerDepthLine()
+        % Vertical dashed line marking the main panel's depth slider
+        % position, mirroring updateDepthLine()/updateDepthLine2() for
+        % ax4/ax5.
+        if isempty(S.normMV_fig) || ~isvalid(S.normMV_fig) || isnan(S.sel_vertex)
+            return;
+        end
+        cur_mm = (S.depth - 1) .* S.step_size;
+        ax = S.normMV_axDepth;
+        if isempty(S.normMV_hDepthLine) || ~isvalid(S.normMV_hDepthLine)
+            hold(ax, 'on');
+            S.normMV_hDepthLine = xline(ax, cur_mm, '--', ...
+                'Color',[0.88 0.88 0.30], 'LineWidth',1.4, ...
+                'HandleVisibility','off');
+            hold(ax, 'off');
+        else
+            S.normMV_hDepthLine.Value = cur_mm;
+        end
+    end
+
+    function [lh_z, rh_z, idx, d] = getCurrentZScoresAtDepth()
+        % Univariate z-scores (one per metric) for the selected vertex, at
+        % the depth selected by the main depth slider, for both
+        % hemispheres — shared by the radar and bar panels so the
+        % Mahalanobis computation isn't repeated per panel.
+        lh_z = []; rh_z = []; idx = NaN; d = NaN;
+        if isempty(S.normMV) || isnan(S.sel_vertex)
+            return;
+        end
+
+        idx = S.sel_vertex;
+        targetDepths = size(S.normMV.lh_M, 2);
+
+        lh_slice = squeeze(S.normMV.subj_lh_M(idx, :, 1, :));
+        if size(lh_slice, 1) < targetDepths
+            lh_slice(end+1:targetDepths, :) = NaN;
+        end
+        rh_slice = squeeze(S.normMV.subj_rh_M(idx, :, 1, :));
+        if size(rh_slice, 1) < targetDepths
+            rh_slice(end+1:targetDepths, :) = NaN;
+        end
+
+        [~, lh_zscores] = cortical_subject_mahal_by_depth(idx, lh_slice, S.normMV.lh_M, S.normMV.rh_M);
+        [~, rh_zscores] = cortical_subject_mahal_by_depth(idx, rh_slice, S.normMV.lh_M, S.normMV.rh_M);
+
+        d    = max(1, min(S.depth, size(lh_zscores,1)));
+        lh_z = lh_zscores(d, :);
+        rh_z = rh_zscores(d, :);
+    end
+
+    function updateNormativeExplorerRadarPlot()
+        % Middle panel of the Normative Explorer: |z-score| (one per
+        % metric) at the depth selected by the main depth slider, shown
+        % as a radar/spider chart, fixed scale [0 3], one polygon per
+        % hemisphere.
+        if isempty(S.normMV_fig) || ~isvalid(S.normMV_fig) || isempty(S.normMV)
+            return;
+        end
+        [lh_z, rh_z, idx, d] = getCurrentZScoresAtDepth();
+        if isnan(idx), return; end
+
+        lh_col = [0.40 0.70 1.00];
+        rh_col = [1.00 0.52 0.30];
+
+        drawRadarChart(S.normMV_axRadar, S.normMV.metrics, [abs(lh_z); abs(rh_z)], ...
+            {lh_col, rh_col}, {'LH','RH'}, [0 3]);
+        title(S.normMV_axRadar, sprintf('|Z-score| — vertex %d, depth %d', idx, d), 'Color','w');
+    end
+
+    function updateNormativeExplorerBarPlot()
+        % Right panel of the Normative Explorer: same z-scores as the
+        % radar panel, shown as horizontal side-by-side bars (one per
+        % hemisphere) — metrics on the y-axis (so labels stay readable
+        % regardless of how many metrics there are), z-score on the
+        % x-axis, fixed scale [-3 3] centered at zero.
+        if isempty(S.normMV_fig) || ~isvalid(S.normMV_fig) || isempty(S.normMV)
+            return;
+        end
+        [lh_z, rh_z, idx, d] = getCurrentZScoresAtDepth();
+        if isnan(idx), return; end
+
+        lh_col = [0.40 0.70 1.00];
+        rh_col = [1.00 0.52 0.30];
+
+        ax = S.normMV_axBar;
+        cla(ax); hold(ax, 'on');
+
+        nMetrics = numel(S.normMV.metrics);
+        yPos = 1:nMetrics;
+        barWidth = 0.35;
+        offset   = 0.1;
+
+        % A hemisphere with any NaN (metric missing at this vertex/depth)
+        % is skipped entirely, same rule as the radar panel.
+        if ~any(isnan(lh_z))
+            barh(ax, yPos - offset, lh_z, barWidth, 'FaceColor', lh_col, 'FaceAlpha', 0.8, ...
+                'EdgeColor','none', 'DisplayName', 'LH');
+        end
+        if ~any(isnan(rh_z))
+            barh(ax, yPos + offset, rh_z, barWidth, 'FaceColor', rh_col, 'FaceAlpha', 0.8, ...
+                'EdgeColor','none', 'DisplayName', 'RH');
+        end
+        xline(ax, 0, '-', 'Color', [0.6 0.6 0.6], 'LineWidth', 1, 'HandleVisibility','off');
+
+        hold(ax, 'off');
+        legend(ax, 'TextColor','w','Color','none','EdgeColor','none','Location','best');
+        ax.YTick = yPos;
+        ax.YTickLabel = S.normMV.metrics;
+        ax.YDir   = 'reverse';   % first metric at the top
+        ax.XLim   = [-3 3];
+        ax.Color  = [0.14 0.14 0.14];
+        ax.XColor = [0.70 0.70 0.70]; ax.YColor = [0.70 0.70 0.70];
+        ax.XGrid  = 'on';
+        xlabel(ax, 'Z-score', 'Color',[0.80 0.80 0.80]);
+        title(ax, sprintf('Z-scores — vertex %d, depth %d', idx, d), 'Color','w');
+    end
+
+    function drawRadarChart(ax, labels, seriesData, seriesColors, seriesNames, rLimits)
+        % Radar/spider chart on a plain Cartesian axes. Negative values
+        % are supported by mapping rLimits(1) to the center (radius 0)
+        % and rLimits(2) to the outer edge, so the chart isn't restricted
+        % to non-negative data the way a polaraxes would assume.
+        nVars = numel(labels);
+        theta = linspace(0, 2*pi, nVars+1);
+        theta = theta(1:end-1) + pi/2;   % first spoke at 12 o'clock
+        rSpan = rLimits(2) - rLimits(1);
+
+        cla(ax); hold(ax, 'on');
+        axis(ax, 'equal'); axis(ax, 'off');
+
+        % Spokes
+        for k = 1:nVars
+            plot(ax, [0 rSpan*cos(theta(k))], [0 rSpan*sin(theta(k))], '-', ...
+                'Color', [0.45 0.45 0.45], 'LineWidth', 0.7, 'HandleVisibility','off');
+        end
+
+        % Reference rings, labeled with their underlying value along the
+        % first spoke
+        ringTheta = linspace(0, 2*pi, 100);
+        for ringVal = linspace(rLimits(1), rLimits(2), 5)
+            rr = ringVal - rLimits(1);
+            plot(ax, rr*cos(ringTheta), rr*sin(ringTheta), '-', ...
+                'Color', [0.35 0.35 0.35], 'LineWidth', 0.6, 'HandleVisibility','off');
+            text(ax, 0, rr, sprintf('%.1f', ringVal), 'Color', [0.6 0.6 0.6], ...
+                'FontSize', 8, 'HorizontalAlignment','center', 'VerticalAlignment','bottom');
+        end
+
+        % Spoke labels
+        for k = 1:nVars
+            lx = (rSpan*1.15) * cos(theta(k));
+            ly = (rSpan*1.15) * sin(theta(k));
+            ha = 'center';
+            if cos(theta(k)) > 0.15
+                ha = 'left';
+            elseif cos(theta(k)) < -0.15
+                ha = 'right';
+            end
+            text(ax, lx, ly, labels{k}, 'Color', 'w', 'FontSize', 9, ...
+                'HorizontalAlignment', ha, 'VerticalAlignment','middle', 'Interpreter','none');
+        end
+
+        % Data series, clipped to the chart's limits so outliers don't
+        % blow up the geometry. A series with any NaN (e.g. a metric
+        % missing at this vertex/depth) is skipped entirely rather than
+        % silently clipping the NaN to the chart's edge.
+        for s = 1:size(seriesData,1)
+            if any(isnan(seriesData(s,:)))
+                continue;
+            end
+            vals = max(min(seriesData(s,:), rLimits(2)), rLimits(1));
+            r = vals - rLimits(1);
+            x = r .* cos(theta);
+            y = r .* sin(theta);
+            x(end+1) = x(1); y(end+1) = y(1); %#ok<AGROW>
+            plot(ax, x, y, '-o', 'Color', seriesColors{s}, 'LineWidth', 2, ...
+                'MarkerSize', 5, 'MarkerFaceColor', seriesColors{s}, ...
+                'DisplayName', seriesNames{s});
+        end
+
+        hold(ax, 'off');
+        legend(ax, 'TextColor','w','Color','none','EdgeColor','none','Location','best');
+        xlim(ax, [-rSpan rSpan]*1.3);
+        ylim(ax, [-rSpan rSpan]*1.3);
     end
 
 end  % cortical_DWI_browser
