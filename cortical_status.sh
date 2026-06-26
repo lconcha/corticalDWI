@@ -40,6 +40,50 @@ load_config() {
     fi
 }
 
+# Collapse lh/rh step pairs (e.g. S.lh/S.rh, sDTIl/sDTIr) into one display
+# column each, for the default table view only. A label is treated as the
+# "lh" half of a pair when stripping a ".lh" or trailing "l" suffix yields
+# a base name for which a matching ".rh"/"r" label also exists; everything
+# else stays its own column. Populates disp_labels / disp_idx_a (lh, or the
+# step itself if unpaired) / disp_idx_b (rh, or -1 if unpaired).
+build_display_columns() {
+    disp_labels=(); disp_idx_a=(); disp_idx_b=()
+    local skip=() i j k lbl base this_suffix other_suffix want already
+    for ((i=0; i<${#labels[@]}; i++)); do
+        already=0
+        for j in "${skip[@]}"; do [ "$j" -eq "$i" ] && already=1 && break; done
+        [ "$already" -eq 1 ] && continue
+
+        lbl="${labels[$i]}"; base=""; this_suffix=""; other_suffix=""
+        if   [[ "$lbl" == *.lh ]]; then base="${lbl%.lh}"; this_suffix=".lh"; other_suffix=".rh"
+        elif [[ "$lbl" == *.rh ]]; then base="${lbl%.rh}"; this_suffix=".rh"; other_suffix=".lh"
+        elif [[ "$lbl" == *l ]];   then base="${lbl%l}";   this_suffix="l";  other_suffix="r"
+        elif [[ "$lbl" == *r ]];   then base="${lbl%r}";   this_suffix="r";  other_suffix="l"
+        fi
+
+        j=-1
+        if [ -n "$base" ]; then
+            want="${base}${other_suffix}"
+            for ((k=0; k<${#labels[@]}; k++)); do
+                [ "${labels[$k]}" == "$want" ] && j=$k && break
+            done
+        fi
+
+        if [ "$j" -ge 0 ]; then
+            disp_labels+=("$base")
+            if [[ "$this_suffix" == .lh || "$this_suffix" == l ]]; then
+                disp_idx_a+=("$i"); disp_idx_b+=("$j")
+            else
+                disp_idx_a+=("$j"); disp_idx_b+=("$i")
+            fi
+            skip+=("$j")
+        else
+            disp_labels+=("$lbl")
+            disp_idx_a+=("$i"); disp_idx_b+=(-1)
+        fi
+    done
+}
+
 usage() {
     cat <<EOF
 
@@ -120,13 +164,16 @@ fi
 n_steps=${#labels[@]}
 subj_w=16
 
-# Column width: widest label + 1 padding
+build_display_columns   # collapses lh/rh pairs for the default table view
+n_disp=${#disp_labels[@]}
+
+# Column width: widest display label + 1 padding (must fit "RL")
 col_w=4
-for lbl in "${labels[@]}"; do [ ${#lbl} -gt $col_w ] && col_w=${#lbl}; done
+for lbl in "${disp_labels[@]}"; do [ ${#lbl} -gt $col_w ] && col_w=${#lbl}; done
 (( col_w++ ))
 
 cell_w=$(( col_w + 2 ))   # 2 leading spaces per cell
-total_w=$(( subj_w + n_steps * cell_w + 8 ))
+total_w=$(( subj_w + n_disp * cell_w + 8 ))
 
 # ── Header ────────────────────────────────────────────────────────────────────
 if [ "$remaining_mode" -eq 0 ]; then
@@ -136,7 +183,7 @@ if [ "$remaining_mode" -eq 0 ]; then
         printf "\n"
     else
         printf "${B}%-${subj_w}s${NC}" "SUBJECT"
-        for lbl in "${labels[@]}"; do printf "  ${B}%-${col_w}s${NC}" "$lbl"; done
+        for lbl in "${disp_labels[@]}"; do printf "  ${B}%-${col_w}s${NC}" "$lbl"; done
         printf "\n"
         printf '%0.s-' $(seq 1 $total_w); printf "\n"
     fi
@@ -194,12 +241,23 @@ for sID in "${subjects[@]}"; do
         printf "\n"
     else
         printf "%-${subj_w}s" "$sID"
-        pad=$(( col_w - 1 ))   # ✓/✗ is 1 visible char; fill the rest
-        for s in "${steps[@]}"; do
-            if [ "$s" -eq 1 ]; then
-                printf "  ${G}✓${NC}%*s" $pad ""
+        for ((c=0; c<n_disp; c++)); do
+            a=${disp_idx_a[$c]}; b=${disp_idx_b[$c]}
+            if [ "$b" -eq -1 ]; then
+                # Unpaired step: single ✓/✗, as before.
+                if [ "${steps[$a]}" -eq 1 ]; then
+                    printf "  ${G}✓${NC}%*s" $(( col_w - 1 )) ""
+                else
+                    printf "  ${R}✗${NC}%*s" $(( col_w - 1 )) ""
+                fi
+            elif [ "${steps[$a]}" -eq 1 ] && [ "${steps[$b]}" -eq 1 ]; then
+                # Both hemispheres done: single green checkmark.
+                printf "  ${G}✓${NC}%*s" $(( col_w - 1 )) ""
             else
-                printf "  ${R}✗${NC}%*s" $pad ""
+                # Partial: "RL", each letter colored by its own completion.
+                lcol=$G; [ "${steps[$a]}" -eq 0 ] && lcol=$R
+                rcol=$G; [ "${steps[$b]}" -eq 0 ] && rcol=$R
+                printf "  ${rcol}R${NC}${lcol}L${NC}%*s" $(( col_w - 2 )) ""
             fi
         done
         printf "  (%d/%d)\n" "$subj_done" "$n_steps"
