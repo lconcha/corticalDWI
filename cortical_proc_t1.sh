@@ -18,7 +18,6 @@ help() {
   The gradient image will be saved as:
   <SUBJECTS_DIR>/<sID>/mri/T1w_proc_grad.nii.gz
 
-  Oddly, this script needs freesurfer 7.3.2.
   "
 }
 
@@ -43,22 +42,6 @@ else
   exit 2
 fi
 
-
-
-echolor cyan "Forcing freesurfer 7.3.2"
-export subjects_dir=$SUBJECTS_DIR
-module unload freesurfer
-module load freesurfer/7.3.2
-export SUBJECTS_DIR=$subjects_dir
-vers=$(recon-all -version | grep 7.3)
-echo $vers
-if [ -z "$vers" ]
-then
-  echolor red "[ERROR] Please load module for freesurfer 7.3"
-  exit 2
-else
-  echolor green "[INFO] Using: $vers"
-fi
 
 
 
