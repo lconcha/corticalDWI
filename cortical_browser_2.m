@@ -303,7 +303,8 @@ lbl_sd = uilabel(ctrlGL,'Text','Subjects dir:','FontColor',LC,'FontWeight',LW,..
 lbl_sd.Layout.Row=1; lbl_sd.Layout.Column=1;
 
 edtSubjectsDir = uieditfield(ctrlGL,'text','Value',DEF_SUBJECTS_DIR,...
-    'FontColor',FC,'BackgroundColor',CB,'Tooltip',DEF_SUBJECTS_DIR);
+    'FontColor',FC,'BackgroundColor',CB,'Tooltip',DEF_SUBJECTS_DIR,...
+    'ValueChangedFcn',@onScan);
 edtSubjectsDir.Layout.Row=1; edtSubjectsDir.Layout.Column=2;
 
 btnBrowse = uibutton(ctrlGL,'Text','Browse...','ButtonPushedFcn',@onBrowseDir);
@@ -336,7 +337,8 @@ lbl_sj = uilabel(ctrlGL,'Text','Subject ID:','FontColor',LC,'FontWeight',LW,...
 lbl_sj.Layout.Row=2; lbl_sj.Layout.Column=1;
 
 edtSubjID = uieditfield(ctrlGL,'text','Value',DEF_SUBJ_ID,...
-    'FontColor',FC,'BackgroundColor',CB);
+    'FontColor',FC,'BackgroundColor',CB,...
+    'ValueChangedFcn',@onScan);
 edtSubjID.Layout.Row=2; edtSubjID.Layout.Column=2;
 
 btnScan = uibutton(ctrlGL,'Text','Scan','ButtonPushedFcn',@onScan);
@@ -459,6 +461,8 @@ onScan();
         lblStatus.Text = 'Scanning...'; drawnow;
         SDIR  = edtSubjectsDir.Value;
         SUBJ  = edtSubjID.Value;
+        S.subjects_dir = SDIR;
+        S.subj_id      = SUBJ;
         dwiDir = fullfile(SDIR, SUBJ, 'dwi');
 
         D = dir(fullfile(dwiDir, '**', '*ico6_sym*.tsf'));
