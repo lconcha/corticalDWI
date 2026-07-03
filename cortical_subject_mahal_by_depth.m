@@ -40,13 +40,21 @@ warnState = warning('off', 'MATLAB:nearlySingularMatrix');
 
 for depth = 1 : maxDepth
     this_normative_multidim = [squeeze(lh_M(idx,depth,:,:)); squeeze(rh_M(idx,depth,:,:))]; %combine both hemispheres to improve estimation of covariance.
+    valid_rows = ~any(isnan(this_normative_multidim), 2);
+    this_normative_multidim = this_normative_multidim(valid_rows, :);
+
     this_subject_multidim   = squeeze(subject_multidim(depth,:));
-    if any(isnan(this_subject_multidim))
-        fprintf(1,'There are NaNs at depth %d\n',depth);
+    if any(isnan(this_subject_multidim)) 
+       %fprintf(1,'Depth %d: Subject has NaN values for one or more metrics. Returning NaN.\n', depth);
+       this_mahal = NaN;
+    elseif size(this_normative_multidim, 1) <= nMetrics
+        fprintf(1,'Depth %d: Not enough valid subjects (%d) to compute Mahalanobis distance for %d metrics. Returning NaN.\n', ...
+            depth, size(this_normative_multidim, 1), nMetrics);
         this_mahal = NaN;
     else
         this_mahal = mahal(this_subject_multidim , this_normative_multidim);
     end
+
     Mahal_vector(depth) = this_mahal;
 
     this_mu = mean(this_normative_multidim,1, 'omitnan');
