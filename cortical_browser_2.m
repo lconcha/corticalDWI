@@ -113,7 +113,8 @@ S.normMV      = [];   % struct: lh_M, rh_M, metrics, subjects (cohort) + subj_lh
 % ── Figure ────────────────────────────────────────────────────────────────
 BG = [0.12 0.12 0.12];
 hFig = uifigure('Name','Cortical Browser','Position',[30 30 1750 970],...
-    'Color', BG, 'KeyPressFcn', @onKeyPress);
+    'Color', BG, 'KeyPressFcn', @onKeyPress, ...
+    'CloseRequestFcn', @onMainClose);
 
 % ── Mode menu (radio-button style) ────────────────────────────────────────
 hMenuMode = uimenu(hFig, 'Text', 'Selection Mode');
@@ -449,6 +450,13 @@ onScan();
 % ══════════════════════════════════════════════════════════════════════════
 %  CALLBACKS
 % ══════════════════════════════════════════════════════════════════════════
+
+    function onMainClose(~,~)
+        for h = [S.tck_fig, S.norm_fig, S.normMV_fig]
+            if ~isempty(h) && isvalid(h), close(h); end
+        end
+        delete(hFig);
+    end
 
     function onBrowseDir(~,~)
         d = uigetdir(edtSubjectsDir.Value, 'Select SUBJECTS_DIR');
