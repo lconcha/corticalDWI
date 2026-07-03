@@ -279,6 +279,16 @@ for METRIC in sulc curv thickness; do
 done
 
 
+# inflate surfaces
+for hemi in lh rh; do
+    my_do_cmd $WB -surface-generate-inflated \
+      $SURF/${hemi}_white_ico6_sym.surf.gii \
+      ${SURF}/${hemi}_white_ico6_sym_inflated.surf.gii \
+      ${SURF}/${hemi}_white_ico6_sym_veryInflated.surf.gii
+done
+
+
+
 # ── Done ──────────────────────────────────────────────────────────────────────
 echo ""
 echo "========================================"

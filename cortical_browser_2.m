@@ -1,8 +1,11 @@
-function cortical_browser_2(subj_id)
+function cortical_browser_2(subj_id, varargin)
 %CORTICAL_DWI_BROWSER  Interactive browser for cortical DWI depth-profile data.
 %
 %  CORTICAL_BROWSER_2(subj_id) opens with subj_id pre-loaded instead of
 %  the first subject found in SUBJECTS_DIR.
+%
+%  CORTICAL_BROWSER_2(subj_id, 'SubjectsDir', '/path/to/dir') overrides the
+%  SUBJECTS_DIR environment variable.
 %
 %  Three surface panels: LH overlay, RH overlay, LH asymmetry.
 %  Panels 1 & 2 share colormap / CLim.  Panel 3 uses a diverging colormap.
@@ -14,7 +17,16 @@ function cortical_browser_2(subj_id)
 cortical_matlab_setup();
 
 % ── Default paths ─────────────────────────────────────────────────────────
-DEF_SUBJECTS_DIR = getenv('SUBJECTS_DIR');
+p = inputParser;
+p.addOptional('subj_id', '', @ischar);
+p.addParameter('SubjectsDir', getenv('SUBJECTS_DIR'), @ischar);
+if nargin == 0
+    p.parse();
+else
+    p.parse(subj_id, varargin{:});
+end
+
+DEF_SUBJECTS_DIR = p.Results.SubjectsDir;
 
 subj_dirs = dir(fullfile(DEF_SUBJECTS_DIR, 'sub-*'));
 subj_dirs = subj_dirs([subj_dirs.isdir]);
@@ -25,8 +37,8 @@ else
     DEF_SUBJ_ID = subj_dirs(idx(1)).name;
 end
 
-if nargin > 0 && ~isempty(subj_id)
-    DEF_SUBJ_ID = subj_id;
+if ~isempty(p.Results.subj_id)
+    DEF_SUBJ_ID = p.Results.subj_id;
 end
 
 % ── App state ─────────────────────────────────────────────────────────────
@@ -41,6 +53,9 @@ S.rh_files_list  = {};
 S.metrics_list   = {};
 S.lh_surf      = [];
 S.rh_surf      = [];
+S.asym_surf    = [];   % LH geometry for panel 3 (may differ from lh_surf)
+S.surf_type    = {'white','white','white'};  % per-panel surface type
+S.ddSurfType   = [];   % handles to the 3 surface-type dropdowns
 S.lh_M         = [];   % nVerts × nDepths
 S.rh_M         = [];
 S.norm_lh_mean = [];   % nVerts × nDepths normative mean (LH), [] if unavailable
@@ -91,6 +106,8 @@ S.normMV_axDepth = [];   % left panel axes (Mahalanobis-by-depth plot)
 S.normMV_axRadar = [];   % middle panel axes (radar plot)
 S.normMV_axBar   = [];   % right panel axes (bar plot)
 S.normMV_hDepthLine = [];   % xline handle for depth marker in normMV_axDepth
+S.normMV_zlim = 3;     % max |z| shown in radar/bar panels (user-editable)
+S.normMV_mahalLim = 10;   % max Mahalanobis distance shown in depth panel (user-editable)
 S.normMV      = [];   % struct: lh_M, rh_M, metrics, subjects (cohort) + subj_lh_M, subj_rh_M (current subject)
 
 % ── Figure ────────────────────────────────────────────────────────────────
@@ -161,16 +178,17 @@ topGL.BackgroundColor = BG;
 surfBG = [0.06 0.06 0.06];
 plotBG = [0.14 0.14 0.14];
 
-% Each surface panel gets a 2-row sub-grid: label (outside/above) + axes.
-% This keeps the title out of the 3D scene regardless of camera angle.
+% Each surface panel: 3-row sub-grid: label + axes + surface-type dropdown.
 surfLabels = {'Left Hemisphere', 'Right Hemisphere', 'Asymmetry index'};
 surfAxes   = gobjects(1,3);
+SURF_TYPES = {'pial','white','inflated','very_inflated'};
+ddSurfArr  = gobjects(1,3);
 for col = 1:3
-    sg = uigridlayout(topGL, [2,1]);
+    sg = uigridlayout(topGL, [3,1]);
     sg.Layout.Row = 1; sg.Layout.Column = col;
-    sg.RowHeight  = {20, '1x'};
+    sg.RowHeight  = {20, '1x', 26};
     sg.Padding    = [0 0 0 0];
-    sg.RowSpacing = 0;
+    sg.RowSpacing = 2;
     sg.BackgroundColor = BG;
     lbl = uilabel(sg, 'Text', surfLabels{col}, ...
         'FontColor','w', 'FontSize',11, 'FontWeight','bold', ...
@@ -179,7 +197,14 @@ for col = 1:3
     ax = uiaxes(sg, 'BackgroundColor', surfBG, 'Color', surfBG);
     ax.Layout.Row = 2; ax.Layout.Column = 1;
     surfAxes(col) = ax;
+    c = col;   % capture loop variable for closure
+    dd = uidropdown(sg, 'Items', SURF_TYPES, 'Value', 'white', ...
+        'BackgroundColor', [0.22 0.22 0.22], 'FontColor', [0.88 0.88 0.88], ...
+        'ValueChangedFcn', @(src,~) onSurfTypeChanged(c, src.Value));
+    dd.Layout.Row = 3; dd.Layout.Column = 1;
+    ddSurfArr(col) = dd;
 end
+S.ddSurfType = ddSurfArr;
 ax1 = surfAxes(1);
 ax2 = surfAxes(2);
 ax3 = surfAxes(3);
@@ -1058,10 +1083,78 @@ onScan();
         if isempty(S.vertex_list) || isempty(S.srf1), return; end
         vl   = S.srf1.Vertices;
         vr   = S.srf2.Vertices;
+        va   = S.srf3.Vertices;
         vids = S.vertex_list;
         set(S.lst1,'XData',vl(vids,1),'YData',vl(vids,2),'ZData',vl(vids,3),'Visible','on');
         set(S.lst2,'XData',vr(vids,1),'YData',vr(vids,2),'ZData',vr(vids,3),'Visible','on');
-        set(S.lst3,'XData',vl(vids,1),'YData',vl(vids,2),'ZData',vl(vids,3),'Visible','on');
+        set(S.lst3,'XData',va(vids,1),'YData',va(vids,2),'ZData',va(vids,3),'Visible','on');
+    end
+
+% ══════════════════════════════════════════════════════════════════════════
+%  SURFACE TYPE SELECTION
+% ══════════════════════════════════════════════════════════════════════════
+
+    function p = getSurfPath(hemi, surf_type)
+        surfDir = fullfile(S.subjects_dir, S.subj_id, 'surf');
+        switch surf_type
+            case 'pial'
+                fname = sprintf('%s_pial_ico6_sym.surf.gii', hemi);
+            case 'white'
+                fname = sprintf('%s_white_ico6_sym.surf.gii', hemi);
+            case 'inflated'
+                fname = sprintf('%s_white_ico6_sym_inflated.surf.gii', hemi);
+            case 'very_inflated'
+                fname = sprintf('%s_white_ico6_sym_veryInflated.surf.gii', hemi);
+            otherwise
+                fname = sprintf('%s_white_ico6_sym.surf.gii', hemi);
+        end
+        p = fullfile(surfDir, fname);
+    end
+
+    function p = ensureSurfaceFile(hemi, surf_type)
+        p = getSurfPath(hemi, surf_type);
+        if isfile(p), return; end
+        if ~ismember(surf_type, {'inflated','very_inflated'})
+            error('Surface file not found: %s', p);
+        end
+        surfDir   = fullfile(S.subjects_dir, S.subj_id, 'surf');
+        whitePath = fullfile(surfDir, sprintf('%s_white_ico6_sym.surf.gii', hemi));
+        inflPath  = fullfile(surfDir, sprintf('%s_white_ico6_sym_inflated.surf.gii', hemi));
+        vInflPath = fullfile(surfDir, sprintf('%s_white_ico6_sym_veryInflated.surf.gii', hemi));
+        lblStatus.Text = sprintf('Generating %s inflated surfaces…', hemi); drawnow;
+        cmd = sprintf('env -u LD_LIBRARY_PATH wb_command -surface-generate-inflated "%s" "%s" "%s"', ...
+            whitePath, inflPath, vInflPath);
+        [st, msg] = system(cmd);
+        if st ~= 0
+            error('wb_command failed for %s inflated:\n%s', hemi, msg);
+        end
+        if ~isfile(p)
+            error('wb_command did not produce expected file: %s', p);
+        end
+    end
+
+    function onSurfTypeChanged(panel_idx, val)
+        S.surf_type{panel_idx} = val;
+        if isempty(S.lh_M), return; end
+        hemi = 'lh';
+        if panel_idx == 2, hemi = 'rh'; end
+        try
+            p        = ensureSurfaceFile(hemi, val);
+            new_surf = read_surface(p);
+            switch panel_idx
+                case 1, S.lh_surf   = new_surf;
+                case 2, S.rh_surf   = new_surf;
+                case 3, S.asym_surf = new_surf;
+            end
+            renderSurfaces();
+            if ~isnan(S.sel_vertex)
+                updateMarkers(S.sel_vertex);
+            end
+            lblStatus.Text = sprintf('Panel %d: %s %s surface loaded.', panel_idx, hemi, val);
+        catch ME
+            lblStatus.Text = ['Surface error: ' ME.message];
+            warning('cortical_browser_2:surftype', '%s', ME.message);
+        end
     end
 
 % ══════════════════════════════════════════════════════════════════════════
@@ -1129,12 +1222,17 @@ onScan();
             fprintf(1,'  LH surface: %s\n  RH surface: %s\n', S.lh_surf_file, S.rh_surf_file);
             S.lh_surf = read_surface(S.lh_surf_file);
             S.rh_surf = read_surface(S.rh_surf_file);
+            S.asym_surf = S.lh_surf;
+            S.surf_type = {'white','white','white'};
+            if ~isempty(S.ddSurfType) && all(isvalid(S.ddSurfType))
+                for k = 1:3; S.ddSurfType(k).Value = 'white'; end
+            end
 
             fprintf(1,'  LH TSF: %s\n  RH TSF: %s\n', S.lh_tsf_file, S.rh_tsf_file);
             lh_tsf  = read_mrtrix_tsf(S.lh_tsf_file);
             rh_tsf  = read_mrtrix_tsf(S.rh_tsf_file);
-            S.lh_M  = cortical_cell2mat(lh_tsf.data);
-            S.rh_M  = cortical_cell2mat(rh_tsf.data);
+            S.lh_M  = cortical_cell2mat(lh_tsf.data,'MaskInvalid',true);
+            S.rh_M  = cortical_cell2mat(rh_tsf.data,'MaskInvalid',true);
             S.nDepths = size(S.lh_M, 2);
             S.depth   = 1;
 
@@ -1275,9 +1373,11 @@ onScan();
         S.dot2 = scatter3(ax2, NaN,NaN,NaN, 120, 'r', 'filled', 'Visible','off');
         S.lst2 = scatter3(ax2, NaN,NaN,NaN, smallMarkerSize, smallMarkerColor, 'filled', 'Visible','off');
 
-        % Panel 3 – Asymmetry on LH geometry
-        S.srf3 = trisurf(lh.faces, ...
-            lh.vertices(:,1), lh.vertices(:,2), lh.vertices(:,3), CA, ...
+        % Panel 3 – Asymmetry (LH topology, may use different surface type)
+        ag = S.asym_surf;
+        if isempty(ag), ag = lh; end
+        S.srf3 = trisurf(ag.faces, ...
+            ag.vertices(:,1), ag.vertices(:,2), ag.vertices(:,3), CA, ...
             'Parent', ax3, 'EdgeColor','none', 'FaceColor','interp');
         styleSurface(S.srf3);
         view(ax3, -90, 0);          % set camera BEFORE headlight
@@ -1362,6 +1462,7 @@ onScan();
         if isempty(S.srf1), return; end
         vl = S.srf1.Vertices;
         vr = S.srf2.Vertices;
+        va = S.srf3.Vertices;
         if v < 1 || v > size(vl,1), return; end
 
         % Selected vertex (red) — hidden in list mode
@@ -1369,7 +1470,7 @@ onScan();
         if S.list_mode, vis = 'off'; end
         set(S.dot1,'XData',vl(v,1),'YData',vl(v,2),'ZData',vl(v,3),'Visible',vis);
         set(S.dot2,'XData',vr(v,1),'YData',vr(v,2),'ZData',vr(v,3),'Visible',vis);
-        set(S.dot3,'XData',vl(v,1),'YData',vl(v,2),'ZData',vl(v,3),'Visible',vis);
+        set(S.dot3,'XData',va(v,1),'YData',va(v,2),'ZData',va(v,3),'Visible',vis);
 
         % Neighbors (orange) — same topology for LH and RH
         all_v = getNeighborRings(S.lh_surf.faces, v, S.n_rings);
@@ -1377,7 +1478,7 @@ onScan();
         if ~isempty(nbrs)
             set(S.nbr1,'XData',vl(nbrs,1),'YData',vl(nbrs,2),'ZData',vl(nbrs,3),'Visible','on');
             set(S.nbr2,'XData',vr(nbrs,1),'YData',vr(nbrs,2),'ZData',vr(nbrs,3),'Visible','on');
-            set(S.nbr3,'XData',vl(nbrs,1),'YData',vl(nbrs,2),'ZData',vl(nbrs,3),'Visible','on');
+            set(S.nbr3,'XData',va(nbrs,1),'YData',va(nbrs,2),'ZData',va(nbrs,3),'Visible','on');
         else
             set(S.nbr1,'XData',NaN,'YData',NaN,'ZData',NaN,'Visible','off');
             set(S.nbr2,'XData',NaN,'YData',NaN,'ZData',NaN,'Visible','off');
@@ -2075,6 +2176,24 @@ onScan();
             sgtitle(S.normMV_fig, sprintf('Multivariate Explorer — %s', S.subj_id), ...
                 'Color','w','FontWeight','bold');
 
+            uicontrol(S.normMV_fig, 'Style','text', 'String','Max Mahal:', ...
+                'Units','normalized', 'Position',[0.62 0.93 0.10 0.045], ...
+                'BackgroundColor',[0.12 0.12 0.12], 'ForegroundColor','w', ...
+                'HorizontalAlignment','right', 'FontSize',10);
+            uicontrol(S.normMV_fig, 'Style','edit', 'String', num2str(S.normMV_mahalLim), ...
+                'Units','normalized', 'Position',[0.725 0.93 0.05 0.045], ...
+                'BackgroundColor',[0.85 0.85 0.85], 'ForegroundColor',[0.10 0.10 0.10], ...
+                'FontSize',10, 'Callback', @onNormMVMahalLimChanged);
+
+            uicontrol(S.normMV_fig, 'Style','text', 'String','Max |Z|:', ...
+                'Units','normalized', 'Position',[0.82 0.93 0.08 0.045], ...
+                'BackgroundColor',[0.12 0.12 0.12], 'ForegroundColor','w', ...
+                'HorizontalAlignment','right', 'FontSize',10);
+            uicontrol(S.normMV_fig, 'Style','edit', 'String', num2str(S.normMV_zlim), ...
+                'Units','normalized', 'Position',[0.905 0.93 0.05 0.045], ...
+                'BackgroundColor',[0.85 0.85 0.85], 'ForegroundColor',[0.10 0.10 0.10], ...
+                'FontSize',10, 'Callback', @onNormMVZlimChanged);
+
             updateNormativeExplorerDepthPlot();
             updateNormativeExplorerRadarPlot();
             updateNormativeExplorerBarPlot();
@@ -2085,6 +2204,27 @@ onScan();
             lblStatus.Text = ['Error: ' ME.message];
             warning('cortical_DWI_browser:normativeExplorer', '%s\n%s', ME.message, ME.getReport());
         end
+    end
+
+    function onNormMVZlimChanged(src,~)
+        val = str2double(src.String);
+        if isnan(val) || val <= 0
+            src.String = num2str(S.normMV_zlim);   % revert to last valid value
+            return;
+        end
+        S.normMV_zlim = val;
+        updateNormativeExplorerRadarPlot();
+        updateNormativeExplorerBarPlot();
+    end
+
+    function onNormMVMahalLimChanged(src,~)
+        val = str2double(src.String);
+        if isnan(val) || val <= 0
+            src.String = num2str(S.normMV_mahalLim);   % revert to last valid value
+            return;
+        end
+        S.normMV_mahalLim = val;
+        updateNormativeExplorerDepthPlot();
     end
 
     function buildSubjectMultivariateStack()
@@ -2174,6 +2314,7 @@ onScan();
         ax.Color  = [0.14 0.14 0.14];
         ax.XColor = [0.70 0.70 0.70]; ax.YColor = [0.70 0.70 0.70];
         ax.XGrid  = 'on'; ax.YGrid  = 'on';
+        ax.YLim   = [0 S.normMV_mahalLim];
         xlabel(ax, 'Depth from pial surface (mm)', 'Color',[0.80 0.80 0.80]);
         ylabel(ax, 'Mahalanobis distance', 'Color',[0.80 0.80 0.80]);
         title(ax, sprintf('Depth profile — vertex %d', idx), 'Color','w');
@@ -2234,8 +2375,8 @@ onScan();
     function updateNormativeExplorerRadarPlot()
         % Middle panel of the Normative Explorer: |z-score| (one per
         % metric) at the depth selected by the main depth slider, shown
-        % as a radar/spider chart, fixed scale [0 3], one polygon per
-        % hemisphere.
+        % as a radar/spider chart, scale [0 S.normMV_zlim] (user-editable),
+        % one polygon per hemisphere.
         if isempty(S.normMV_fig) || ~isvalid(S.normMV_fig) || isempty(S.normMV)
             return;
         end
@@ -2246,7 +2387,7 @@ onScan();
         rh_col = [1.00 0.52 0.30];
 
         drawRadarChart(S.normMV_axRadar, S.normMV.metrics, [abs(lh_z); abs(rh_z)], ...
-            {lh_col, rh_col}, {'LH','RH'}, [0 3]);
+            {lh_col, rh_col}, {'LH','RH'}, [0 S.normMV_zlim]);
         title(S.normMV_axRadar, sprintf('|Z-score| — vertex %d, depth %d', idx, d), 'Color','w');
     end
 
@@ -2255,7 +2396,8 @@ onScan();
         % radar panel, shown as horizontal side-by-side bars (one per
         % hemisphere) — metrics on the y-axis (so labels stay readable
         % regardless of how many metrics there are), z-score on the
-        % x-axis, fixed scale [-3 3] centered at zero.
+        % x-axis, scale [-S.normMV_zlim S.normMV_zlim] (user-editable)
+        % centered at zero.
         if isempty(S.normMV_fig) || ~isvalid(S.normMV_fig) || isempty(S.normMV)
             return;
         end
@@ -2290,7 +2432,7 @@ onScan();
         ax.YTick = yPos;
         ax.YTickLabel = S.normMV.metrics;
         ax.YDir   = 'reverse';   % first metric at the top
-        ax.XLim   = [-3 3];
+        ax.XLim   = [-S.normMV_zlim S.normMV_zlim];
         ax.Color  = [0.14 0.14 0.14];
         ax.XColor = [0.70 0.70 0.70]; ax.YColor = [0.70 0.70 0.70];
         ax.XGrid  = 'on';
