@@ -16,7 +16,7 @@ maxLen = 0;
 
 for s = 1:nSubj
     tsf = read_mrtrix_tsf(tsf_files{s});
-    subj_mats{s} = cortical_cell2mat(tsf.data);
+    subj_mats{s} = cortical_cell2mat(tsf.data,"MaskInvalid",true);
     maxLen = max(maxLen, size(subj_mats{s}, 2));
 end
 
