@@ -1,14 +1,17 @@
 function cortical_matlab_setup()
 % Add toolbox paths needed by cortical_browser_2.
-% Edit the paths in this section to match your system.
 
-%%% Edit this section %%%
-brainstat   = '/home/lconcha/BrainStat/brainstat_matlab'; % https://github.com/MICA-MNI/Brainstat
-gifti       = '/home/lconcha/gifti'; % https://github.com/gllmflndn/gifti
-mrtrix      = '/home/lconcha/mrtrix3/matlab'; % https://github.com/Mrtrix3/mrtrix3
-corticalDWI = '/home/lconcha/corticalDWI'; 
-cbrewer     = '/home/lconcha/cbrewer';  % https://github.com/sijiazhao/cbrewer or https://git.fmrib.ox.ac.uk/amyh/bigmacanalysis/-/tree/main/cbrewer/cbrewer?ref_type=heads
-%%%%%%%%%%%%%%%%%%%%%%%%%%%
+if ~exist('cortical_browser_2_config.m','file')
+    error('cortical_browser_2_config.m not found. Copy default config or run setup.');
+end
+cfg = cortical_browser_2_config();
+
+genpath_filtered(cfg.brainstat);
+genpath_filtered(cfg.gifti);
+genpath_filtered(cfg.mrtrix);
+genpath_filtered(cfg.corticalDWI);
+genpath_filtered(cfg.cbrewer);
+end % function
 
 
 function tf = isOnPath(folder)
@@ -56,13 +59,4 @@ else
     addpath(p);
 end
 end
-
-
-
-genpath_filtered(brainstat);
-genpath_filtered(gifti);
-genpath_filtered(mrtrix);
-genpath_filtered(corticalDWI);
-genpath_filtered(cbrewer);
-end % function
 
