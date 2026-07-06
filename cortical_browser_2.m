@@ -182,7 +182,7 @@ plotBG = [0.14 0.14 0.14];
 % Each surface panel: 3-row sub-grid: label + axes + surface-type dropdown.
 surfLabels = {'Left Hemisphere', 'Right Hemisphere', 'Asymmetry index'};
 surfAxes   = gobjects(1,3);
-SURF_TYPES = {'pial','white','inflated','very_inflated'};
+SURF_TYPES = {'pial','white','inflated','very_inflated','average_white','average_pial'};
 ddSurfArr  = gobjects(1,3);
 for col = 1:3
     sg = uigridlayout(topGL, [3,1]);
@@ -1117,6 +1117,12 @@ onScan();
                 fname = sprintf('%s_white_ico6_sym_inflated.surf.gii', hemi);
             case 'very_inflated'
                 fname = sprintf('%s_white_ico6_sym_veryInflated.surf.gii', hemi);
+            case 'average_white'
+                fname = sprintf('%s/templates/surf/%s_white.ico6_sym.surf.gii',S.subjects_dir,hemi);
+                p = fname; return;
+            case 'average_pial'
+                fname = sprintf('%s/templates/surf/%s_pial.ico6_sym.surf.gii',S.subjects_dir,hemi);
+                p = fname; return;
             otherwise
                 fname = sprintf('%s_white_ico6_sym.surf.gii', hemi);
         end
