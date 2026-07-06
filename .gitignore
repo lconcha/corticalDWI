@@ -4,4 +4,4 @@ launch.json
 *.bak
 *oldstyle
 __pycache__/
-cortical_browser_3_config.m
+cortical_browser_2_config.m
