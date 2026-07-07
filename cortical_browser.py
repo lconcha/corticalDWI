@@ -166,10 +166,9 @@ canvas.nv-canvas { display: block; width: 100% !important; height: 100% !importa
   <div class="sep"></div>
 
   <label>Shader <select id="shaderSel">
-    <option value="Bright Matte">Bright Matte</option>
     <option value="Matte">Matte</option>
-    <option value="Hemi">Hemi</option>
     <option value="Phong">Phong</option>
+    <option value="Diffuse">Diffuse</option>
   </select></label>
   <div class="sep"></div>
 
@@ -252,7 +251,7 @@ let currentCmapAsym = 'bwr'
 let dataInvert     = false
 let asymInvert     = false
 let layerOpacity   = 1.0
-let currentShader  = 'Bright Matte'
+let currentShader  = 'Matte'
 let currentDepth   = 0
 let currentClimMin = 0, currentClimMax = 1
 let currentAsymMin = -1, currentAsymMax = 1
@@ -330,27 +329,6 @@ for (const nv of [nvLhL, nvRhL, nvAsym, nvSlices]) {
       console.warn(`[cmap] addColormap('${name}') FAILED:`, e.message)
     }
   }
-}
-
-// ── custom "Bright Matte" shader ──────────────────────────────────────────────
-const BRIGHT_MATTE_FRAG = `#version 300 es
-precision highp float;
-uniform float opacity;
-in vec4 vClr; in vec3 vN;
-out vec4 color;
-void main() {
-  vec3 n  = normalize(vN);
-  vec3 l1 = normalize(vec3(0.0,  10.0, -5.0));
-  vec3 l2 = normalize(vec3(0.0,  -5.0,  5.0));
-  vec3 c  = vClr.rgb * 0.45
-           + max(dot(n,l1),0.0) * vClr.rgb * 0.70
-           + max(dot(n,l2),0.0) * vClr.rgb * 0.18;
-  color = vec4(clamp(c,0.0,1.0), opacity);
-}`
-
-for (const nv of [nvLhL, nvRhL, nvAsym]) {
-  try { if (typeof nv.addMeshShader === 'function') nv.addMeshShader('Bright Matte', BRIGHT_MATTE_FRAG) }
-  catch(e) {}
 }
 
 function applyShader(nv, name) {
@@ -654,8 +632,11 @@ document.getElementById('shaderSel').addEventListener('change', e => {
 document.getElementById('radioConv').addEventListener('change', function() {
   nvSlices.setRadiologicalConvention(this.checked)
 })
+const defaultCrosshairWidth = nvSlices.opts.crosshairWidth
 document.getElementById('crosshairChk').addEventListener('change', function() {
-  nvSlices.opts.show3Dcrosshair = this.checked; nvSlices.drawScene()
+  nvSlices.opts.show3Dcrosshair = this.checked
+  nvSlices.setCrosshairWidth(this.checked ? defaultCrosshairWidth : 0)
+  nvSlices.drawScene()
 })
 
 // ── metric selector ───────────────────────────────────────────────────────────
