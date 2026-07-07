@@ -172,6 +172,11 @@ canvas.nv-canvas { display: block; width: 100% !important; height: 100% !importa
   </select></label>
   <div class="sep"></div>
 
+  <label>LH surf <select id="lhSurfSel"></select></label>
+  <label>RH surf <select id="rhSurfSel"></select></label>
+  <label>Asym surf <select id="asymSurfSel"></select></label>
+  <div class="sep"></div>
+
   <label><input type="checkbox" id="radioConv" checked> Rad</label>
   <label><input type="checkbox" id="crosshairChk" checked> X-hair</label>
   <label><input type="checkbox" id="surfOnSlicesChk" checked> Surf on slices</label>
@@ -241,6 +246,7 @@ import * as niivue from "__NIIVUE_CDN__"
 // ── injected by Python ────────────────────────────────────────────────────────
 const VOLUMES  = __VOLUMES_JSON__
 const SURFS    = __SURFS_JSON__
+const SURF_TYPES = __SURF_TYPES_JSON__
 const METRICS  = __METRICS_JSON__
 const BASE_URL = "__BASE_URL__"
 const TEMPLATE = "__TEMPLATE__"
@@ -278,6 +284,13 @@ if (firstInfo) {
 const LH_SURF = SURFS.find(s => s.hemi === 'lh') || null
 const RH_SURF = SURFS.find(s => s.hemi === 'rh') || null
 const VOL_URL = VOLUMES.length ? VOLUMES[0].url : null
+
+// Independently-selectable surface geometry per panel (white/pial/inflated/
+// very_inflated/average_white/average_pial) — all share the same ico6_sym
+// topology, so switching only changes vertex coordinates, not data mapping.
+let lhSurfUrl   = LH_SURF?.url ?? null
+let rhSurfUrl   = RH_SURF?.url ?? null
+let asymSurfUrl = LH_SURF?.url ?? null
 
 // ── NiiVue instances ──────────────────────────────────────────────────────────
 const SURF_CFG = { backColor: [0.06, 0.06, 0.06, 1], show3Dcrosshair: false }
@@ -395,17 +408,20 @@ async function loadAllSurfaces(metric, resetCamera = false) {
   }
 
   const proms = []
-  if (LH_SURF) {
-    proms.push(nvLhL.loadMeshes( [{ url: LH_SURF.url, rgba255: LH_SURF.rgba255, layers: layerData('lh') }]))
-    proms.push(nvAsym.loadMeshes([{ url: LH_SURF.url, rgba255: LH_SURF.rgba255, layers: layerAsym() }]))
+  if (LH_SURF && lhSurfUrl) {
+    proms.push(nvLhL.loadMeshes( [{ url: lhSurfUrl, rgba255: LH_SURF.rgba255, layers: layerData('lh') }]))
   }
-  if (RH_SURF)
-    proms.push(nvRhL.loadMeshes([{ url: RH_SURF.url, rgba255: RH_SURF.rgba255, layers: layerData('rh') }]))
+  if (LH_SURF && asymSurfUrl) {
+    proms.push(nvAsym.loadMeshes([{ url: asymSurfUrl, rgba255: LH_SURF.rgba255, layers: layerAsym() }]))
+  }
+  if (RH_SURF && rhSurfUrl)
+    proms.push(nvRhL.loadMeshes([{ url: rhSurfUrl, rgba255: RH_SURF.rgba255, layers: layerData('rh') }]))
 
-  // Orthoslice contours (geometry only, no scalar overlay)
+  // Orthoslice contours (geometry only, no scalar overlay) — follow whatever
+  // surface type the LH/RH panels currently show
   const sliceMeshes = []
-  if (LH_SURF) sliceMeshes.push({ url: LH_SURF.url, rgba255: LH_SURF.rgba255 })
-  if (RH_SURF) sliceMeshes.push({ url: RH_SURF.url, rgba255: RH_SURF.rgba255 })
+  if (LH_SURF && lhSurfUrl) sliceMeshes.push({ url: lhSurfUrl, rgba255: LH_SURF.rgba255 })
+  if (RH_SURF && rhSurfUrl) sliceMeshes.push({ url: rhSurfUrl, rgba255: RH_SURF.rgba255 })
   if (sliceMeshes.length)
     proms.push(nvSlices.loadMeshes([...sliceMeshes]))
 
@@ -652,6 +668,35 @@ document.getElementById('surfOnSlicesChk').addEventListener('change', function()
 // ── shader selector ───────────────────────────────────────────────────────────
 document.getElementById('shaderSel').addEventListener('change', e => {
   currentShader = e.target.value; applyCurrentShader()
+})
+
+// ── per-panel surface-type selectors (white/pial/inflated/...) ──────────────
+function populateSurfSel(selEl, hemi) {
+  const types = Object.keys(SURF_TYPES).filter(t => SURF_TYPES[t][hemi])
+  selEl.innerHTML = types.map(t => `<option value="${t}">${t}</option>`).join('')
+  if (types.includes('white')) selEl.value = 'white'
+}
+populateSurfSel(document.getElementById('lhSurfSel'),   'lh')
+populateSurfSel(document.getElementById('rhSurfSel'),   'rh')
+populateSurfSel(document.getElementById('asymSurfSel'), 'lh')
+
+async function onSurfTypeChanged() {
+  await loadAllSurfaces(currentMetric)
+  if (currentVertex !== null) await selectVertex(currentVertex, nvLhL)
+}
+document.getElementById('lhSurfSel').addEventListener('change', async e => {
+  lhSurfUrl = SURF_TYPES[e.target.value]?.lh ?? lhSurfUrl
+  lhVertexAreas = null   // geometry changed — per-vertex area must be recomputed
+  await onSurfTypeChanged()
+})
+document.getElementById('rhSurfSel').addEventListener('change', async e => {
+  rhSurfUrl = SURF_TYPES[e.target.value]?.rh ?? rhSurfUrl
+  rhVertexAreas = null
+  await onSurfTypeChanged()
+})
+document.getElementById('asymSurfSel').addEventListener('change', async e => {
+  asymSurfUrl = SURF_TYPES[e.target.value]?.lh ?? asymSurfUrl
+  await onSurfTypeChanged()
 })
 
 // ── radiological / crosshair ──────────────────────────────────────────────────
@@ -1178,6 +1223,43 @@ def find_files(subj_dir, template=TEMPLATE):
     return vol_path, surf(f'lh_white_{template}.surf.gii'), surf(f'rh_white_{template}.surf.gii')
 
 
+SURF_TYPE_FILENAMES = {
+    'white':         lambda hemi, t: f'{hemi}_white_{t}.surf.gii',
+    'pial':          lambda hemi, t: f'{hemi}_pial_{t}.surf.gii',
+    'inflated':      lambda hemi, t: f'{hemi}_white_{t}_inflated.surf.gii',
+    'very_inflated': lambda hemi, t: f'{hemi}_white_{t}_veryInflated.surf.gii',
+}
+SURF_TYPE_ORDER = ['white', 'pial', 'inflated', 'very_inflated', 'average_white', 'average_pial']
+
+
+def find_surface_types(subjects_dir, subj_dir, template=TEMPLATE):
+    """Discover available surface-type files for lh/rh, mirroring the MATLAB
+    viewer's getSurfPath(): per-subject white/pial/inflated/very_inflated,
+    plus fsaverage-style average_white/average_pial templates shared across
+    subjects. Returns {surf_type: {'lh': path, 'rh': path}}, only including
+    entries whose file actually exists."""
+    surf_dir      = os.path.join(subj_dir, 'surf')
+    templates_dir = os.path.join(subjects_dir, 'templates', 'surf')
+    result = {}
+    for surf_type, fname_fn in SURF_TYPE_FILENAMES.items():
+        entry = {}
+        for hemi in ('lh', 'rh'):
+            p = os.path.join(surf_dir, fname_fn(hemi, template))
+            if os.path.isfile(p):
+                entry[hemi] = p
+        if entry:
+            result[surf_type] = entry
+    for surf_type, prefix in (('average_white', 'white'), ('average_pial', 'pial')):
+        entry = {}
+        for hemi in ('lh', 'rh'):
+            p = os.path.join(templates_dir, f'{hemi}_{prefix}.{template}.surf.gii')
+            if os.path.isfile(p):
+                entry[hemi] = p
+        if entry:
+            result[surf_type] = entry
+    return result
+
+
 def find_tsf_metrics(subj_dir, template=TEMPLATE):
     dwi_dir = os.path.join(subj_dir, 'dwi')
     metrics = {}
@@ -1277,7 +1359,7 @@ def materialize_overlay(metric, lh_M, rh_M, out_dir, template=TEMPLATE):
 
 # ── HTML generation ───────────────────────────────────────────────────────────
 
-def make_html(subj_id, vol_path, lh_path, rh_path, overlay_info, port, template=TEMPLATE):
+def make_html(subj_id, vol_path, lh_path, rh_path, overlay_info, port, surf_types=None, template=TEMPLATE):
     base = f'http://localhost:{port}/data'
 
     volumes = []
@@ -1291,6 +1373,11 @@ def make_html(subj_id, vol_path, lh_path, rh_path, overlay_info, port, template=
     if rh_path:
         surfs.append({'url': f'{base}/{os.path.basename(rh_path)}',
                       'rgba255': [255, 150, 100, 255], 'hemi': 'rh'})
+
+    surf_types_urls = {
+        surf_type: {hemi: f'{base}/{os.path.basename(p)}' for hemi, p in hemis.items()}
+        for surf_type, hemis in (surf_types or {}).items()
+    }
 
     metric_opts = '\n'.join(
         f'      <option value="{m}">{m}</option>' for m in overlay_info
@@ -1308,6 +1395,7 @@ def make_html(subj_id, vol_path, lh_path, rh_path, overlay_info, port, template=
         ('__CHARTJS_ANN_CDN__', CHARTJS_ANN_CDN),
         ('__VOLUMES_JSON__',   json.dumps(volumes)),
         ('__SURFS_JSON__',     json.dumps(surfs)),
+        ('__SURF_TYPES_JSON__', json.dumps(surf_types_urls)),
         ('__METRICS_JSON__',   json.dumps(overlay_info)),
         ('__BASE_URL__',       base),
         ('__TEMPLATE__',       template),
@@ -1388,12 +1476,14 @@ def main():
 
     vol_path, lh_path, rh_path = find_files(subj_dir)
     tsf_metrics = find_tsf_metrics(subj_dir)
+    surf_types  = find_surface_types(args.subjects_dir, subj_dir)
 
     print(f'Subject  : {args.subj_id}')
     print(f'Volume   : {vol_path  or "NOT FOUND"}')
     print(f'LH surf  : {lh_path   or "NOT FOUND"}')
     print(f'RH surf  : {rh_path   or "NOT FOUND"}')
     print(f'Metrics  : {list(tsf_metrics) or "none"}')
+    print(f'Surf types: {list(surf_types) or "none"}')
 
     out_dir = tempfile.mkdtemp(prefix='cortical_browser_')
     print(f'\nScanning {len(tsf_metrics)} metric(s) (stats only, no conversion yet)…')
@@ -1407,6 +1497,9 @@ def main():
     for p in (vol_path, lh_path, rh_path):
         if p:
             file_map[f'/data/{os.path.basename(p)}'] = p
+    for hemis in surf_types.values():
+        for p in hemis.values():
+            file_map[f'/data/{os.path.basename(p)}'] = p
 
     materialized = set()
     first_metric = next(iter(tsf_metrics), None)
@@ -1419,7 +1512,7 @@ def main():
 
     html_bytes = make_html(
         args.subj_id, vol_path, lh_path, rh_path,
-        overlay_info, args.port
+        overlay_info, args.port, surf_types
     ).encode('utf-8')
 
     server = HTTPServer(('localhost', args.port),
