@@ -60,6 +60,9 @@ input[type=number] {
 }
 input[type=number]::-webkit-inner-spin-button,
 input[type=number]::-webkit-outer-spin-button { display: none; }
+#vtxInput {
+  background: #f5c842; color: #1a1a1a; border: 1px solid #f5c842; font-weight: bold;
+}
 button.cbtn {
   background: #3a3a3a; color: #ddd; border: 1px solid #555555;
   border-radius: 3px; padding: 1px 6px; font-size: 10px; cursor: pointer;
@@ -68,8 +71,8 @@ button.cbtn:hover { background: #484848; }
 #depth-label { color: #d1d1d1; min-width: 40px; }
 #pos-display  { color: #999999; font-size: 10px; white-space: nowrap; overflow: hidden; max-width: 200px; }
 #vtx-display  {
-  color: #f5c842; font-size: 11px; font-family: monospace; font-weight: bold;
-  background: #262626; border: 1px solid #f5c842; border-radius: 3px;
+  color: #ccc; font-size: 11px; font-family: monospace; font-weight: bold;
+  background: #262626; border: 1px solid #555555; border-radius: 3px;
   padding: 1px 7px; margin-left: auto; white-space: nowrap; min-width: 76px;
   text-align: center;
 }
@@ -176,7 +179,7 @@ canvas.nv-canvas { display: block; width: 100% !important; height: 100% !importa
   <label>Vertex <input type="number" id="vtxInput" min="0" step="1" title="Jump to vertex ID"></label>
   <label>Rings <input type="number" id="ringsInput" min="0" step="1" value="0" title="Neighbor rings to average around the selected vertex"></label>
   <span id="pos-display"></span>
-  <span id="vtx-display">v — —</span>
+  <span id="vtx-display">—, —, — mm</span>
 </header>
 
 <div id="grid">
@@ -668,7 +671,7 @@ document.getElementById('metricSel').addEventListener('change', async e => {
 
   await Promise.all([loadAllSurfaces(currentMetric), loadMatrices(currentMetric)])
   setDepth(currentDepth)
-  document.getElementById('vtx-display').textContent = 'v — —'
+  document.getElementById('vtx-display').textContent = '—, —, — mm'
   document.getElementById('pos-display').textContent = ''
   currentVertex = null
   for (const chart of [chartLH, chartRH, chartAsym]) {
@@ -969,9 +972,8 @@ async function selectVertex(vertIdx, nvInst) {
   const rhArea = ringArea('rh', ringSet)
 
   setProfiles(meanStd(rowsOf(lhMat)), meanStd(rowsOf(rhMat)), meanStd(rowsOf(asymMat)), ringSet.length, lhArea, rhArea)
-  document.getElementById('vtx-display').textContent = `v${vertIdx}`
+  document.getElementById('vtx-display').textContent = `${vx.toFixed(1)}, ${vy.toFixed(1)}, ${vz.toFixed(1)} mm`
   document.getElementById('vtxInput').value = vertIdx
-  document.getElementById('pos-display').textContent = `${vx.toFixed(1)}, ${vy.toFixed(1)}, ${vz.toFixed(1)} mm`
 }
 
 async function pickOnSurface(canvas, mouseX, mouseY, nvInst) {
