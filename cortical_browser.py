@@ -407,6 +407,7 @@ async function loadAllSurfaces(metric, resetCamera = false) {
 
   await Promise.all(proms)
   applyCurrentShader()
+  applyShader(nvSlices, 'Crosscut')   // clean plane-intersection contour instead of a thick slab
   applySliceMeshVisibility()
   if (resetCamera) {
     setCam(nvLhL,   90, 15)   // LH lateral
