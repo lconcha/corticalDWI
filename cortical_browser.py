@@ -177,6 +177,8 @@ canvas.nv-canvas { display: block; width: 100% !important; height: 100% !importa
   <label><input type="checkbox" id="surfOnSlicesChk" checked> Surf on slices</label>
   <label>Vertex <input type="number" id="vtxInput" min="0" step="1" title="Jump to vertex ID"></label>
   <label>Rings <input type="number" id="ringsInput" min="0" step="1" value="0" title="Neighbor rings to average around the selected vertex"></label>
+  <label><input type="checkbox" id="pivotAtVertexChk"> Pivot@vertex</label>
+  <button class="cbtn" id="resetPivotBtn" title="Reset 3D view rotation pivot to the whole-brain center">Reset pivot</button>
   <span id="pos-display"></span>
   <span id="vtx-display">—, —, — mm</span>
 </header>
@@ -258,6 +260,7 @@ let currentAsymMin = -1, currentAsymMax = 1
 let showSurfOnSlices = true
 let nRings = 0
 let currentVertex = null
+let pivotAtVertex = false
 const markerMeshes = new Map()   // nv instance -> its vertex-marker connectome mesh
 const neighborMeshes = new Map() // nv instance -> its neighbor-rings connectome mesh
 
@@ -345,6 +348,29 @@ function applyCurrentShader() {
 // ── camera helper ─────────────────────────────────────────────────────────────
 function setCam(nv, az, el) {
   nv.scene.renderAzimuth = az; nv.scene.renderElevation = el; nv.drawScene()
+}
+
+// draw3D() calls nv.setPivot3D() at the start of every single frame, which
+// recomputes pivot3D from the scene's bounding box — so a one-off assignment
+// to nv.pivot3D gets silently overwritten on the very next redraw. Overriding
+// the method itself keeps our chosen pivot authoritative on every frame, while
+// still running the original logic first so furthestFromPivot/extents (zoom)
+// stay correct.
+function setCustomPivot(nv, point) {
+  if (!nv._origSetPivot3D) nv._origSetPivot3D = nv.setPivot3D.bind(nv)
+  nv.setPivot3D = function() {
+    nv._origSetPivot3D()
+    nv.pivot3D = point
+  }
+  nv.drawScene()
+}
+
+function resetPivot(nv) {
+  if (nv._origSetPivot3D) {
+    nv.setPivot3D = nv._origSetPivot3D
+    delete nv._origSetPivot3D
+  }
+  nv.drawScene()
 }
 
 // ── surface loading ───────────────────────────────────────────────────────────
@@ -656,6 +682,7 @@ document.getElementById('metricSel').addEventListener('change', async e => {
   document.getElementById('vtx-display').textContent = '—, —, — mm'
   document.getElementById('pos-display').textContent = ''
   currentVertex = null
+  resetPivot(nvLhL); resetPivot(nvRhL); resetPivot(nvAsym)
   for (const chart of [chartLH, chartRH, chartAsym]) {
     chart.data.datasets[0].label = chart.baseLabel
     chart.data.datasets[0].data = []
@@ -927,12 +954,20 @@ async function selectVertex(vertIdx, nvInst) {
     const lhNbrPts = neighborIdx.map(vi => [lhMesh.pts[vi*3], lhMesh.pts[vi*3+1], lhMesh.pts[vi*3+2]])
     syncNeighborMarkers(nvLhL,  lhNbrPts, seedR * 0.3)
     syncNeighborMarkers(nvAsym, lhNbrPts, seedR * 0.3)   // same LH geometry/scale as nvLhL
+
+    // Pivot the 3D orbit camera around the selected vertex instead of the
+    // whole-brain center, if enabled via the "Pivot@vertex" checkbox
+    if (pivotAtVertex) {
+      setCustomPivot(nvLhL,  [lx, ly, lz])
+      setCustomPivot(nvAsym, [lx, ly, lz])
+    }
   }
   if (rhMesh?.pts) {
     const rx=rhMesh.pts[vertIdx*3], ry=rhMesh.pts[vertIdx*3+1], rz=rhMesh.pts[vertIdx*3+2]
     const seedRr = placeMarker(nvRhL, rx, ry, rz)
     const rhNbrPts = neighborIdx.map(vi => [rhMesh.pts[vi*3], rhMesh.pts[vi*3+1], rhMesh.pts[vi*3+2]])
     syncNeighborMarkers(nvRhL, rhNbrPts, seedRr * 0.3)
+    if (pivotAtVertex) setCustomPivot(nvRhL, [rx, ry, rz])
   }
 
   currentVertex = vertIdx
@@ -1005,6 +1040,19 @@ document.getElementById('ringsInput').addEventListener('change', e => {
   e.target.value = r
   nRings = r
   if (currentVertex !== null) selectVertex(currentVertex, nvLhL)
+})
+
+// ── pivot@vertex toggle + reset 3D orbit pivot back to the whole-brain center ─
+document.getElementById('pivotAtVertexChk').addEventListener('change', function() {
+  pivotAtVertex = this.checked
+  if (!pivotAtVertex) {
+    resetPivot(nvLhL); resetPivot(nvRhL); resetPivot(nvAsym)
+  } else if (currentVertex !== null) {
+    selectVertex(currentVertex, nvLhL)   // re-apply pivot for the current selection
+  }
+})
+document.getElementById('resetPivotBtn').addEventListener('click', () => {
+  resetPivot(nvLhL); resetPivot(nvRhL); resetPivot(nvAsym)
 })
 
 // ── orthoslice zoom (Ctrl + scroll) ──────────────────────────────────────────
