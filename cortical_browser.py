@@ -9,9 +9,10 @@ CLim and colormap controls for both data and asymmetry surfaces.
 Usage:
     python cortical_browser.py [subjects_dir] [subj_id] [--port PORT]
 """
-import os, sys, glob, json, time, threading, webbrowser, argparse, tempfile, re
+import os, sys, glob, json, time, threading, webbrowser, argparse, tempfile, re, warnings
 import numpy as np
 import nibabel as nib
+import h5py
 
 sys.path.insert(0, os.path.dirname(__file__))
 from cortical_io import read_mrtrix_tsf, pad_to_matrix
@@ -247,6 +248,7 @@ import * as niivue from "__NIIVUE_CDN__"
 const VOLUMES  = __VOLUMES_JSON__
 const SURFS    = __SURFS_JSON__
 const SURF_TYPES = __SURF_TYPES_JSON__
+const NORMATIVE = __NORMATIVE_JSON__
 const METRICS  = __METRICS_JSON__
 const BASE_URL = "__BASE_URL__"
 const TEMPLATE = "__TEMPLATE__"
@@ -457,6 +459,41 @@ async function ensureMatrix(hemi, metric) {
   const r = await fetch(`${BASE_URL}/${hemi}_${TEMPLATE}_${metric}_matrix.f32`)
   matCache[key] = new Float32Array(await r.arrayBuffer())
   return matCache[key]
+}
+
+// ── normative (cohort) matrix cache ──────────────────────────────────────────
+const normCache = {}
+
+async function ensureNormativeMatrix(kind, metric, stat) {
+  const key = `${kind}_${metric}_${stat}`
+  if (normCache[key]) return normCache[key]
+  const r = await fetch(`${BASE_URL}/normative_${kind}_${metric}_${stat}.f32`)
+  normCache[key] = new Float32Array(await r.arrayBuffer())
+  return normCache[key]
+}
+
+async function normativeRingStat(kind, metric, ringSet) {
+  const info = NORMATIVE[metric]?.[kind]
+  if (!info) return null
+  const nd = info.n_depths
+  const [meanMat, stdMat] = await Promise.all([
+    ensureNormativeMatrix(kind, metric, 'mean'),
+    ensureNormativeMatrix(kind, metric, 'std'),
+  ])
+  // Ring-average the precomputed per-vertex cohort mean; combine per-vertex
+  // SDs by averaging variances (a "pooled SD" approximation — the true
+  // per-ring SD would need the raw per-subject stack, not just mean/std).
+  const mean = new Array(nd).fill(0)
+  const variance = new Array(nd).fill(0)
+  for (const vi of ringSet) {
+    for (let d = 0; d < nd; d++) {
+      mean[d]     += meanMat[vi*nd+d]
+      variance[d] += stdMat[vi*nd+d] ** 2
+    }
+  }
+  const n = ringSet.length
+  for (let d = 0; d < nd; d++) { mean[d] /= n; variance[d] /= n }
+  return { mean, sd: variance.map(Math.sqrt), n: NORMATIVE[metric].n_subjects }
 }
 
 async function loadMatrices(metric) {
@@ -730,9 +767,7 @@ document.getElementById('metricSel').addEventListener('change', async e => {
   resetPivot(nvLhL); resetPivot(nvRhL); resetPivot(nvAsym)
   for (const chart of [chartLH, chartRH, chartAsym]) {
     chart.data.datasets[0].label = chart.baseLabel
-    chart.data.datasets[0].data = []
-    chart.data.datasets[1].data = []
-    chart.data.datasets[2].data = []
+    for (const i of [0, 1, 2, 3, 4, 5]) chart.data.datasets[i].data = []
     chart.update('none')
   }
 })
@@ -1033,7 +1068,17 @@ async function selectVertex(vertIdx, nvInst) {
   const lhArea = ringArea('lh', ringSet)
   const rhArea = ringArea('rh', ringSet)
 
-  setProfiles(meanStd(rowsOf(lhMat)), meanStd(rowsOf(rhMat)), meanStd(rowsOf(asymMat)), ringSet.length, lhArea, rhArea)
+  let normStat = null
+  if (NORMATIVE[currentMetric]) {
+    const [normLh, normRh, normAsym] = await Promise.all([
+      normativeRingStat('lh',   currentMetric, ringSet),
+      normativeRingStat('rh',   currentMetric, ringSet),
+      normativeRingStat('asym', currentMetric, ringSet),
+    ])
+    normStat = { lh: normLh, rh: normRh, asym: normAsym }
+  }
+
+  setProfiles(meanStd(rowsOf(lhMat)), meanStd(rowsOf(rhMat)), meanStd(rowsOf(asymMat)), ringSet.length, lhArea, rhArea, normStat)
   document.getElementById('vtx-display').textContent = `${vx.toFixed(1)}, ${vy.toFixed(1)}, ${vz.toFixed(1)} mm`
   document.getElementById('vtxInput').value = vertIdx
 }
@@ -1127,6 +1172,18 @@ function makeChart(id, color, label, fill = false) {
         data: [], borderColor: color, borderDash: [5,4], borderWidth: 1,
         pointRadius: 0, tension: 0.3, fill: false, parsing: false, _isSd: true
       },
+      { // normative (cohort) mean — always white, hidden until data exists
+        label: 'Normative', data: [], borderColor: '#ffffff',
+        pointRadius: 0, tension: 0.3, fill: false, parsing: false, borderWidth: 1.5
+      },
+      { // normative +SD band
+        data: [], borderColor: '#ffffff', borderDash: [5,4], borderWidth: 1,
+        pointRadius: 0, tension: 0.3, fill: false, parsing: false, _isSd: true
+      },
+      { // normative -SD band
+        data: [], borderColor: '#ffffff', borderDash: [5,4], borderWidth: 1,
+        pointRadius: 0, tension: 0.3, fill: false, parsing: false, _isSd: true
+      },
     ]},
     options: {
       responsive: true, maintainAspectRatio: false, animation: false,
@@ -1174,14 +1231,14 @@ function updateDepthMarker(mm) {
   }
 }
 
-function setProfiles(lhStat, rhStat, asymStat, count, lhArea, rhArea) {
+function setProfiles(lhStat, rhStat, asymStat, count, lhArea, rhArea, normStat) {
   const toXY = vals => vals.map((v,i) => ({x: i*STEP_MM, y: v}))
   const entries = [
-    [chartLH,   lhStat,   lhArea],
-    [chartRH,   rhStat,   rhArea],
-    [chartAsym, asymStat, null],
+    [chartLH,   lhStat,   lhArea,  normStat?.lh],
+    [chartRH,   rhStat,   rhArea,  normStat?.rh],
+    [chartAsym, asymStat, null,    normStat?.asym],
   ]
-  for (const [chart, stat, area] of entries) {
+  for (const [chart, stat, area, norm] of entries) {
     let label = chart.baseLabel
     if (count > 1) label += ` (n=${count})`
     if (area != null) label += ` [${area.toFixed(1)} mm²]`
@@ -1193,6 +1250,17 @@ function setProfiles(lhStat, rhStat, asymStat, count, lhArea, rhArea) {
     } else {
       chart.data.datasets[1].data = []
       chart.data.datasets[2].data = []
+    }
+
+    if (norm) {
+      chart.data.datasets[3].label = `Normative (N=${norm.n})`
+      chart.data.datasets[3].data  = toXY(norm.mean)
+      chart.data.datasets[4].data  = toXY(norm.mean.map((m,i) => m + norm.sd[i]))
+      chart.data.datasets[5].data  = toXY(norm.mean.map((m,i) => m - norm.sd[i]))
+    } else {
+      chart.data.datasets[3].data = []
+      chart.data.datasets[4].data = []
+      chart.data.datasets[5].data = []
     }
   }
   chartLH.update('none'); chartRH.update('none'); chartAsym.update('none')
@@ -1357,9 +1425,75 @@ def materialize_overlay(metric, lh_M, rh_M, out_dir, template=TEMPLATE):
     return [(f'/data/{os.path.basename(p)}', p) for p in paths]
 
 
+# ── normative (cohort) data ────────────────────────────────────────────────────
+# Reads the HDF5 file produced by cortical_create_normative_data_from_tsf.py
+# (per-vertex, per-depth, per-subject, per-metric raw values for lh/rh) and
+# reduces it to per-vertex mean/std across the cohort — the "univariate"
+# normative comparison. This is independent of the current subject's own
+# per-metric materialization, so it can run for every metric the cohort has,
+# regardless of which of the subject's own overlays have been materialized.
+
+def compute_normative_stats(subjects_dir, available_metrics, out_dir, template=TEMPLATE):
+    """If a precomputed cohort file exists, compute per-vertex lh/rh/asym
+    mean+std across the cohort for every metric present in both the cohort
+    file and `available_metrics`. Writes flat float32 (nVerts*nDepths) files
+    using the same layout as the per-subject _matrix.f32 files.
+    Returns (info, file_map_entries) — info[metric] = {'lh': {'n_depths': int},
+    'rh': {...}, 'asym': {...}, 'n_subjects': int}; ({}, []) if no cohort file."""
+    h5_path = os.path.join(subjects_dir, 'templates', 'normative', f'{template}_multivariate.h5')
+    if not os.path.isfile(h5_path):
+        return {}, []
+
+    info = {}
+    file_entries = []
+    with h5py.File(h5_path, 'r') as h5f:
+        cohort_metrics = list(h5f['metrics'].asstr()[:])
+        n_subjects = h5f['subjects'].shape[0]
+        lh_M_ds = h5f['lh_M']
+        rh_M_ds = h5f['rh_M']
+
+        for metric in available_metrics:
+            if metric not in cohort_metrics:
+                continue
+            idx = cohort_metrics.index(metric)
+            print(f'  normative {metric} (N={n_subjects}) …')
+            lh_stack = lh_M_ds[:, :, :, idx]   # (nVerts, nDepthsL, nSubjects)
+            rh_stack = rh_M_ds[:, :, :, idx]   # (nVerts, nDepthsR, nSubjects)
+
+            # Some ragged tail depths have zero subjects contributing (no
+            # streamline reaches that deep anywhere) — nanmean/nanstd warn on
+            # those all-NaN slices, which is expected and harmless here.
+            with np.errstate(invalid='ignore'), warnings.catch_warnings():
+                warnings.simplefilter('ignore', category=RuntimeWarning)
+                lh_mean = np.nanmean(lh_stack, axis=2).astype(np.float32)
+                lh_std  = np.nanstd(lh_stack,  axis=2).astype(np.float32)
+                rh_mean = np.nanmean(rh_stack, axis=2).astype(np.float32)
+                rh_std  = np.nanstd(rh_stack,  axis=2).astype(np.float32)
+
+                # Per-subject asymmetry (elementwise, so this works fine on the
+                # 3D subject-stacked arrays directly), then averaged over subjects
+                common_d = min(lh_stack.shape[1], rh_stack.shape[1])
+                asym_stack = compute_asym_matrix(lh_stack[:, :common_d, :], rh_stack[:, :common_d, :])
+                asym_mean = np.nanmean(asym_stack, axis=2).astype(np.float32)
+                asym_std  = np.nanstd(asym_stack,  axis=2).astype(np.float32)
+
+            arrays = {'lh': (lh_mean, lh_std), 'rh': (rh_mean, rh_std), 'asym': (asym_mean, asym_std)}
+            info[metric] = {'n_subjects': int(n_subjects)}
+            for kind, (mean_arr, std_arr) in arrays.items():
+                mean_path = os.path.join(out_dir, f'normative_{kind}_{metric}_mean.f32')
+                std_path  = os.path.join(out_dir, f'normative_{kind}_{metric}_std.f32')
+                mean_arr.tofile(mean_path)
+                std_arr.tofile(std_path)
+                file_entries.append((f'/data/{os.path.basename(mean_path)}', mean_path))
+                file_entries.append((f'/data/{os.path.basename(std_path)}',  std_path))
+                info[metric][kind] = {'n_depths': int(mean_arr.shape[1])}
+
+    return info, file_entries
+
+
 # ── HTML generation ───────────────────────────────────────────────────────────
 
-def make_html(subj_id, vol_path, lh_path, rh_path, overlay_info, port, surf_types=None, template=TEMPLATE):
+def make_html(subj_id, vol_path, lh_path, rh_path, overlay_info, port, surf_types=None, normative_info=None, template=TEMPLATE):
     base = f'http://localhost:{port}/data'
 
     volumes = []
@@ -1396,6 +1530,7 @@ def make_html(subj_id, vol_path, lh_path, rh_path, overlay_info, port, surf_type
         ('__VOLUMES_JSON__',   json.dumps(volumes)),
         ('__SURFS_JSON__',     json.dumps(surfs)),
         ('__SURF_TYPES_JSON__', json.dumps(surf_types_urls)),
+        ('__NORMATIVE_JSON__', json.dumps(normative_info or {})),
         ('__METRICS_JSON__',   json.dumps(overlay_info)),
         ('__BASE_URL__',       base),
         ('__TEMPLATE__',       template),
@@ -1510,9 +1645,15 @@ def main():
             file_map[url] = fpath
         materialized.add(first_metric)
 
+    print('\nChecking for cohort normative data…')
+    normative_info, normative_files = compute_normative_stats(args.subjects_dir, tsf_metrics.keys(), out_dir)
+    for url, fpath in normative_files:
+        file_map[url] = fpath
+    print(f'Normative metrics: {list(normative_info) or "none"}')
+
     html_bytes = make_html(
         args.subj_id, vol_path, lh_path, rh_path,
-        overlay_info, args.port, surf_types
+        overlay_info, args.port, surf_types, normative_info
     ).encode('utf-8')
 
     server = HTTPServer(('localhost', args.port),
