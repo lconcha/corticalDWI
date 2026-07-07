@@ -94,6 +94,10 @@ canvas.nv-canvas { display: block; width: 100% !important; height: 100% !importa
 .cbar {
   position: absolute; bottom: 5px; left: 10px; right: 10px; z-index: 10; pointer-events: none;
 }
+.cbar-title {
+  display: block; text-align: center;
+  font-size: 9px; color: #999999; margin-bottom: 2px; font-family: monospace;
+}
 .cbar-g {
   height: 8px; border-radius: 2px; border: 1px solid rgba(255,255,255,0.08);
 }
@@ -181,6 +185,7 @@ canvas.nv-canvas { display: block; width: 100% !important; height: 100% !importa
     <canvas id="gl-lh" class="nv-canvas"></canvas>
     <span class="clabel">LH lateral</span>
     <div class="cbar">
+      <span class="cbar-title" id="cbtitle-lh"></span>
       <div class="cbar-g" id="cbgrad-lh"></div>
       <div class="cbar-ll"><span id="cblbl-lh-min">0</span><span id="cblbl-lh-max">1</span></div>
     </div>
@@ -189,6 +194,7 @@ canvas.nv-canvas { display: block; width: 100% !important; height: 100% !importa
     <canvas id="gl-rh" class="nv-canvas"></canvas>
     <span class="clabel">RH lateral</span>
     <div class="cbar">
+      <span class="cbar-title" id="cbtitle-rh"></span>
       <div class="cbar-g" id="cbgrad-rh"></div>
       <div class="cbar-ll"><span id="cblbl-rh-min">0</span><span id="cblbl-rh-max">1</span></div>
     </div>
@@ -197,6 +203,7 @@ canvas.nv-canvas { display: block; width: 100% !important; height: 100% !importa
     <canvas id="gl-asym" class="nv-canvas"></canvas>
     <span class="clabel">Asymmetry index (LH geom)</span>
     <div class="cbar">
+      <span class="cbar-title" id="cbtitle-asym"></span>
       <div class="cbar-g" id="cbgrad-asym"></div>
       <div class="cbar-ll"><span id="cblbl-asym-min">-1</span><span id="cblbl-asym-max">1</span></div>
     </div>
@@ -547,17 +554,19 @@ function cmapCss(name, invert) {
 function refreshColorbars() {
   const fmt = v => parseFloat(v).toPrecision(4)
   const pairs = [
-    ['lh',   currentCmap,     dataInvert, currentClimMin, currentClimMax],
-    ['rh',   currentCmap,     dataInvert, currentClimMin, currentClimMax],
-    ['asym', currentCmapAsym, asymInvert, currentAsymMin, currentAsymMax],
+    ['lh',   currentCmap,     dataInvert, currentClimMin, currentClimMax, currentMetric],
+    ['rh',   currentCmap,     dataInvert, currentClimMin, currentClimMax, currentMetric],
+    ['asym', currentCmapAsym, asymInvert, currentAsymMin, currentAsymMax, `${currentMetric} asymmetry`],
   ]
-  for (const [id, cmap, inv, mn, mx] of pairs) {
+  for (const [id, cmap, inv, mn, mx, title] of pairs) {
     const g = document.getElementById(`cbgrad-${id}`)
     const l = document.getElementById(`cblbl-${id}-min`)
     const r = document.getElementById(`cblbl-${id}-max`)
+    const t = document.getElementById(`cbtitle-${id}`)
     if (g) g.style.background = cmapCss(cmap, inv)
     if (l) l.textContent = fmt(mn)
     if (r) r.textContent = fmt(mx)
+    if (t) t.textContent = title || ''
   }
 }
 
