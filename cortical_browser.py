@@ -1117,6 +1117,22 @@ setupSurfacePicker('gl-lh',   nvLhL)
 setupSurfacePicker('gl-rh',   nvRhL)
 setupSurfacePicker('gl-asym', nvAsym)
 
+// ── 3D surface zoom (scroll) — niivue's own default wheel-zoom clamps to a
+// narrow range; override it here with a much wider one ────────────────────
+function setupSurfaceZoom(canvasId, nvInst) {
+  const canvas = document.getElementById(canvasId)
+  canvas.addEventListener('wheel', e => {
+    e.preventDefault(); e.stopImmediatePropagation()
+    const factor  = e.deltaY < 0 ? 1.1 : 1/1.1
+    const current = nvInst.scene.volScaleMultiplier || 1
+    nvInst.scene.volScaleMultiplier = Math.max(0.05, Math.min(100, current * factor))
+    nvInst.drawScene()
+  }, {capture:true, passive:false})
+}
+setupSurfaceZoom('gl-lh',   nvLhL)
+setupSurfaceZoom('gl-rh',   nvRhL)
+setupSurfaceZoom('gl-asym', nvAsym)
+
 // ── vertex ID text entry ──────────────────────────────────────────────────────
 document.getElementById('vtxInput').addEventListener('keydown', e => {
   if (e.key !== 'Enter') return
