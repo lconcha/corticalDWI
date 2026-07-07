@@ -9,7 +9,7 @@ CLim and colormap controls for both data and asymmetry surfaces.
 Usage:
     python cortical_browser.py [subjects_dir] [subj_id] [--port PORT]
 """
-import os, sys, glob, json, time, threading, webbrowser, argparse, tempfile
+import os, sys, glob, json, time, threading, webbrowser, argparse, tempfile, re
 import numpy as np
 import nibabel as nib
 
@@ -138,7 +138,7 @@ canvas.nv-canvas { display: block; width: 100% !important; height: 100% !importa
     <option value="jet">jet</option>
   </select>
   <label><input type="checkbox" id="cmapInv"> Inv</label>
-  <label>Ov <input type="range" id="ovOp" min="0" max="100" value="80"></label>
+  <label>Ov <input type="range" id="ovOp" min="0" max="100" value="100"></label>
   <div class="sep"></div>
 
   <span class="glab">Asym</span>
@@ -170,6 +170,7 @@ canvas.nv-canvas { display: block; width: 100% !important; height: 100% !importa
   <label><input type="checkbox" id="crosshairChk" checked> X-hair</label>
   <label><input type="checkbox" id="surfOnSlicesChk" checked> Surf on slices</label>
   <label>Vertex <input type="number" id="vtxInput" min="0" step="1" title="Jump to vertex ID"></label>
+  <label>Rings <input type="number" id="ringsInput" min="0" step="1" value="0" title="Neighbor rings to average around the selected vertex"></label>
   <span id="pos-display"></span>
   <span id="vtx-display">v — —</span>
 </header>
@@ -246,7 +247,10 @@ let currentDepth   = 0
 let currentClimMin = 0, currentClimMax = 1
 let currentAsymMin = -1, currentAsymMax = 1
 let showSurfOnSlices = true
+let nRings = 0
+let currentVertex = null
 const markerMeshes = new Map()   // nv instance -> its vertex-marker connectome mesh
+const neighborMeshes = new Map() // nv instance -> its neighbor-rings connectome mesh
 
 // Hoisted so updateDepthMarker is safe to call before makeChart runs
 var chartLH, chartRH, chartAsym
@@ -358,6 +362,7 @@ function setCam(nv, az, el) {
 // ── surface loading ───────────────────────────────────────────────────────────
 async function loadAllSurfaces(metric, resetCamera = false) {
   markerMeshes.clear()   // loadMeshes() below replaces each instance's mesh list, wiping any marker sphere
+  neighborMeshes.clear()
   const info = metric ? METRICS[metric] : null
 
   function layerData(hemi) {
@@ -656,14 +661,108 @@ document.getElementById('metricSel').addEventListener('change', async e => {
   setDepth(currentDepth)
   document.getElementById('vtx-display').textContent = 'v — —'
   document.getElementById('pos-display').textContent = ''
+  currentVertex = null
   for (const chart of [chartLH, chartRH, chartAsym]) {
-    chart.data.datasets[0].data = []; chart.update('none')
+    chart.data.datasets[0].label = chart.baseLabel
+    chart.data.datasets[0].data = []
+    chart.data.datasets[1].data = []
+    chart.data.datasets[2].data = []
+    chart.update('none')
   }
 })
 
 // ── initial depth + colorbars ─────────────────────────────────────────────────
 setDepth(currentDepth)
 refreshColorbars()
+
+// ── neighbor-ring expansion (mirrors getNeighborRings in cortical_browser_2.m) ─
+// Built lazily from the LH mesh topology and reused for RH/Asym since all three
+// share the same ico6_sym triangulation — only vertex coordinates differ.
+let vertexAdjacency = null
+
+function buildAdjacency(tris, nVerts) {
+  const adj = Array.from({length: nVerts}, () => new Set())
+  for (let t = 0; t < tris.length; t += 3) {
+    const a = tris[t], b = tris[t+1], c = tris[t+2]
+    adj[a].add(b); adj[a].add(c)
+    adj[b].add(a); adj[b].add(c)
+    adj[c].add(a); adj[c].add(b)
+  }
+  return adj
+}
+
+function ensureAdjacency() {
+  if (vertexAdjacency) return vertexAdjacency
+  const mesh = nvLhL.meshes[0]
+  if (!mesh?.tris || !mesh?.pts) return null
+  vertexAdjacency = buildAdjacency(mesh.tris, mesh.pts.length / 3)
+  return vertexAdjacency
+}
+
+function neighborRings(v, rings) {
+  const adj = ensureAdjacency()
+  if (!adj || rings <= 0) return [v]
+  const visited = new Set([v])
+  let frontier = [v]
+  for (let r = 0; r < rings && frontier.length; r++) {
+    const next = []
+    for (const vi of frontier) {
+      for (const nb of adj[vi]) {
+        if (!visited.has(nb)) { visited.add(nb); next.push(nb) }
+      }
+    }
+    frontier = next
+  }
+  return Array.from(visited)
+}
+
+// ── per-vertex surface area (mirrors FreeSurfer's ?h.area: each triangle's
+// area is split into thirds, one third credited to each of its 3 vertices) ──
+let lhVertexAreas = null, rhVertexAreas = null
+
+function buildVertexAreas(pts, tris) {
+  const areas = new Float64Array(pts.length / 3)
+  for (let t = 0; t < tris.length; t += 3) {
+    const i0 = tris[t], i1 = tris[t+1], i2 = tris[t+2]
+    const ux = pts[i1*3]   - pts[i0*3],   uy = pts[i1*3+1] - pts[i0*3+1], uz = pts[i1*3+2] - pts[i0*3+2]
+    const vx = pts[i2*3]   - pts[i0*3],   vy = pts[i2*3+1] - pts[i0*3+1], vz = pts[i2*3+2] - pts[i0*3+2]
+    const crx = uy*vz - uz*vy, cry = uz*vx - ux*vz, crz = ux*vy - uy*vx
+    const third = 0.5 * Math.sqrt(crx*crx + cry*cry + crz*crz) / 3
+    areas[i0] += third; areas[i1] += third; areas[i2] += third
+  }
+  return areas
+}
+
+function ensureVertexAreas(hemi) {
+  const nv = hemi === 'lh' ? nvLhL : nvRhL
+  if (hemi === 'lh' && lhVertexAreas) return lhVertexAreas
+  if (hemi === 'rh' && rhVertexAreas) return rhVertexAreas
+  const mesh = nv.meshes[0]
+  if (!mesh?.tris || !mesh?.pts) return null
+  const areas = buildVertexAreas(mesh.pts, mesh.tris)
+  if (hemi === 'lh') lhVertexAreas = areas; else rhVertexAreas = areas
+  return areas
+}
+
+function ringArea(hemi, ringSet) {
+  const areas = ensureVertexAreas(hemi)
+  if (!areas) return null
+  let sum = 0
+  for (const v of ringSet) sum += areas[v]
+  return sum
+}
+
+function meanStd(rows) {
+  const n = rows.length, nd = rows[0].length
+  const mean = new Array(nd).fill(0)
+  for (const row of rows) for (let d = 0; d < nd; d++) mean[d] += row[d]
+  for (let d = 0; d < nd; d++) mean[d] /= n
+  if (n <= 1) return { mean, sd: null }
+  const sd = new Array(nd).fill(0)
+  for (const row of rows) for (let d = 0; d < nd; d++) { const diff = row[d] - mean[d]; sd[d] += diff*diff }
+  for (let d = 0; d < nd; d++) sd[d] = Math.sqrt(sd[d] / (n - 1))
+  return { mean, sd }
+}
 
 // ── surface vertex picking ────────────────────────────────────────────────────
 // Mirrors NiiVue's own SceneRenderer.calculateMvpMatrix exactly (orthographic
@@ -738,6 +837,7 @@ function markerConnectomeJSON(x, y, z, size) {
     nodeMinColor: 0, nodeMaxColor: 1, nodeScale: 1,
     edgeColormap: 'warm', edgeColormapNegative: 'winter',
     edgeMin: 0, edgeMax: 1, edgeScale: 1,
+    showLegend: false,   // suppress the floating "vertex" text label over the sphere
     nodes: { names: ['vertex'], X: [x], Y: [y], Z: [z], Color: [1], Size: [size] },
     edges: []
   }
@@ -759,6 +859,50 @@ function placeMarker(nvInst, x, y, z) {
     markerMeshes.set(nvInst, marker)
   }
   nvInst.drawScene()
+  return radius
+}
+
+// ── neighbor-ring markers (white spheres, 30% of the seed's radius) ─────────
+function neighborConnectomeJSON(node0, size) {
+  return {
+    name: 'vertex-neighbors',
+    nodeColormap: 'gray', nodeColormapNegative: 'gray',
+    nodeMinColor: 0, nodeMaxColor: 1, nodeScale: 1,
+    edgeColormap: 'gray', edgeColormapNegative: 'gray',
+    edgeMin: 0, edgeMax: 1, edgeScale: 1,
+    showLegend: false,   // suppress the floating "nbrN" text labels over each sphere
+    nodes: { names: [node0.name], X: [node0.x], Y: [node0.y], Z: [node0.z], Color: [1], Size: [size] },
+    edges: []
+  }
+}
+
+function syncNeighborMarkers(nvInst, points, size) {
+  const mesh = neighborMeshes.get(nvInst)
+  if (!points.length) {
+    // Fully remove the mesh rather than emptying/shrinking its node array —
+    // mutating a connectome's node count/sizes in place was corrupting the
+    // scene's rendering. removeMesh() is the same officially supported path
+    // used to drop any mesh/connectome, so it's re-created fresh next time.
+    if (mesh) {
+      nvInst.removeMesh(mesh)
+      neighborMeshes.delete(nvInst)
+      nvInst.drawScene()
+    }
+    return
+  }
+  const nodes = points.map((p, i) => ({ name: `nbr${i}`, x: p[0], y: p[1], z: p[2], colorValue: 1, sizeValue: size }))
+  if (!mesh) {
+    const newMesh = nvInst.loadConnectomeAsMesh(neighborConnectomeJSON(nodes[0], size))
+    nvInst.addMesh(newMesh)
+    neighborMeshes.set(nvInst, newMesh)
+    newMesh.nodes = nodes
+    newMesh.updateConnectome(nvInst.gl)
+    nvInst.drawScene()
+    return
+  }
+  mesh.nodes = nodes
+  mesh.updateConnectome(nvInst.gl)
+  nvInst.drawScene()
 }
 
 async function selectVertex(vertIdx, nvInst) {
@@ -775,20 +919,31 @@ async function selectVertex(vertIdx, nvInst) {
     if (frac) { nvSlices.scene.crosshairPos=[...frac]; nvSlices.drawScene() }
   }
 
-  // Drop a marker sphere on this vertex in every surface panel
+  const ringSet     = neighborRings(vertIdx, nRings)
+  const neighborIdx = ringSet.filter(v => v !== vertIdx)
+
+  // Drop a marker sphere on this vertex (plus smaller white spheres on its
+  // neighbor-ring vertices) in every surface panel
   const lhMesh = nvLhL.meshes[0]
   const rhMesh = nvRhL.meshes[0]
   if (lhMesh?.pts) {
     const lx=lhMesh.pts[vertIdx*3], ly=lhMesh.pts[vertIdx*3+1], lz=lhMesh.pts[vertIdx*3+2]
-    placeMarker(nvLhL,  lx, ly, lz)
+    const seedR = placeMarker(nvLhL,  lx, ly, lz)
     placeMarker(nvAsym, lx, ly, lz)
+    const lhNbrPts = neighborIdx.map(vi => [lhMesh.pts[vi*3], lhMesh.pts[vi*3+1], lhMesh.pts[vi*3+2]])
+    syncNeighborMarkers(nvLhL,  lhNbrPts, seedR * 0.3)
+    syncNeighborMarkers(nvAsym, lhNbrPts, seedR * 0.3)   // same LH geometry/scale as nvLhL
   }
   if (rhMesh?.pts) {
     const rx=rhMesh.pts[vertIdx*3], ry=rhMesh.pts[vertIdx*3+1], rz=rhMesh.pts[vertIdx*3+2]
-    placeMarker(nvRhL, rx, ry, rz)
+    const seedRr = placeMarker(nvRhL, rx, ry, rz)
+    const rhNbrPts = neighborIdx.map(vi => [rhMesh.pts[vi*3], rhMesh.pts[vi*3+1], rhMesh.pts[vi*3+2]])
+    syncNeighborMarkers(nvRhL, rhNbrPts, seedRr * 0.3)
   }
 
-  // Read depth profiles from binary matrices
+  currentVertex = vertIdx
+
+  // Read depth profiles from binary matrices, averaged over the neighbor-ring set
   const info = METRICS[currentMetric]
   const nd   = info.n_depths
   const [lhMat, rhMat, asymMat] = await Promise.all([
@@ -796,11 +951,15 @@ async function selectVertex(vertIdx, nvInst) {
     ensureMatrix('rh',   currentMetric),
     ensureMatrix('asym', currentMetric),
   ])
-  const lhP   = Array.from({length:nd}, (_,d) => lhMat[vertIdx*nd+d])
-  const rhP   = Array.from({length:nd}, (_,d) => rhMat[vertIdx*nd+d])
-  const asymP = Array.from({length:nd}, (_,d) => asymMat[vertIdx*nd+d])
+  const rowsOf = mat => ringSet.map(vi => {
+    const row = new Array(nd)
+    for (let d = 0; d < nd; d++) row[d] = mat[vi*nd+d]
+    return row
+  })
+  const lhArea = ringArea('lh', ringSet)
+  const rhArea = ringArea('rh', ringSet)
 
-  setProfiles(lhP, rhP, asymP, nd)
+  setProfiles(meanStd(rowsOf(lhMat)), meanStd(rowsOf(rhMat)), meanStd(rowsOf(asymMat)), ringSet.length, lhArea, rhArea)
   document.getElementById('vtx-display').textContent = `v${vertIdx}`
   document.getElementById('vtxInput').value = vertIdx
   document.getElementById('pos-display').textContent = `${vx.toFixed(1)}, ${vy.toFixed(1)}, ${vz.toFixed(1)} mm`
@@ -847,6 +1006,14 @@ document.getElementById('vtxInput').addEventListener('keydown', e => {
   if (!Number.isNaN(id)) selectVertex(id, nvLhL)
 })
 
+// ── neighbor-ring count ───────────────────────────────────────────────────────
+document.getElementById('ringsInput').addEventListener('change', e => {
+  const r = Math.max(0, parseInt(e.target.value, 10) || 0)
+  e.target.value = r
+  nRings = r
+  if (currentVertex !== null) selectVertex(currentVertex, nvLhL)
+})
+
 // ── orthoslice zoom (Ctrl + scroll) ──────────────────────────────────────────
 let sliceZoom = 1
 document.getElementById('gl-slices').addEventListener('wheel', e => {
@@ -858,18 +1025,29 @@ document.getElementById('gl-slices').addEventListener('wheel', e => {
 
 // ── depth-profile charts ──────────────────────────────────────────────────────
 function makeChart(id, color, label, fill = false) {
-  return new Chart(document.getElementById(id), {
+  const chart = new Chart(document.getElementById(id), {
     type: 'line',
-    data: { datasets: [{
-      label, data: [],
-      borderColor: color, backgroundColor: color+'28',
-      pointRadius: 2, tension: 0.3, fill, parsing: false
-    }]},
+    data: { datasets: [
+      {
+        label, data: [],
+        borderColor: color, backgroundColor: color+'28',
+        pointRadius: 2, tension: 0.3, fill, parsing: false
+      },
+      { // +SD band — hidden from legend, only shown when >1 vertex selected
+        data: [], borderColor: color, borderDash: [5,4], borderWidth: 1,
+        pointRadius: 0, tension: 0.3, fill: false, parsing: false, _isSd: true
+      },
+      { // -SD band
+        data: [], borderColor: color, borderDash: [5,4], borderWidth: 1,
+        pointRadius: 0, tension: 0.3, fill: false, parsing: false, _isSd: true
+      },
+    ]},
     options: {
       responsive: true, maintainAspectRatio: false, animation: false,
       onClick: (evt, elements, chart) => setDepthFromChart(chart, evt.x),
       plugins: {
-        legend: { display: true, labels: { color: '#888', boxWidth: 10, font: {size:10} } },
+        legend: { display: true, labels: { color: '#dddddd', boxWidth: 10, font: {size:10},
+          filter: (item, data) => !data.datasets[item.datasetIndex]?._isSd } },
         annotation: { annotations: { depthLine: {
           type: 'line', xMin: 0, xMax: 0,
           borderColor: '#f5c842', borderWidth: 1.5, borderDash: [4,3]
@@ -877,13 +1055,15 @@ function makeChart(id, color, label, fill = false) {
       },
       scales: {
         x: { type:'linear',
-             title: { display:true, text:'Depth (mm)', color:'#667' },
-             ticks: { color:'#667', maxTicksLimit:8, callback: v => v.toFixed(1) },
-             grid:  { color:'#1a1a3a' } },
-        y: { ticks: { color:'#667' }, grid: { color:'#1a1a3a' } }
+             title: { display:true, text:'Depth (mm)', color:'#dddddd' },
+             ticks: { color:'#dddddd', maxTicksLimit:8, callback: v => v.toFixed(1) },
+             grid:  { color:'#303030' } },
+        y: { ticks: { color:'#dddddd', maxTicksLimit:5 }, grid: { color:'#303030' } }
       }
     }
   })
+  chart.baseLabel = label
+  return chart
 }
 
 function setDepthFromChart(chart, pixelX) {
@@ -908,11 +1088,27 @@ function updateDepthMarker(mm) {
   }
 }
 
-function setProfiles(lhVals, rhVals, asymVals, nd) {
+function setProfiles(lhStat, rhStat, asymStat, count, lhArea, rhArea) {
   const toXY = vals => vals.map((v,i) => ({x: i*STEP_MM, y: v}))
-  chartLH.data.datasets[0].data   = toXY(lhVals)
-  chartRH.data.datasets[0].data   = toXY(rhVals)
-  chartAsym.data.datasets[0].data = toXY(asymVals)
+  const entries = [
+    [chartLH,   lhStat,   lhArea],
+    [chartRH,   rhStat,   rhArea],
+    [chartAsym, asymStat, null],
+  ]
+  for (const [chart, stat, area] of entries) {
+    let label = chart.baseLabel
+    if (count > 1) label += ` (n=${count})`
+    if (area != null) label += ` [${area.toFixed(1)} mm²]`
+    chart.data.datasets[0].label = label
+    chart.data.datasets[0].data  = toXY(stat.mean)
+    if (count > 1 && stat.sd) {
+      chart.data.datasets[1].data = toXY(stat.mean.map((m,i) => m + stat.sd[i]))
+      chart.data.datasets[2].data = toXY(stat.mean.map((m,i) => m - stat.sd[i]))
+    } else {
+      chart.data.datasets[1].data = []
+      chart.data.datasets[2].data = []
+    }
+  }
   chartLH.update('none'); chartRH.update('none'); chartAsym.update('none')
   updateDepthMarker(currentDepth * STEP_MM)
 }
@@ -954,79 +1150,88 @@ def find_tsf_metrics(subj_dir, template=TEMPLATE):
 
 
 # ── TSF → func.gii conversion ─────────────────────────────────────────────────
+# Split into a cheap in-memory "stats" pass (needed up front for every metric,
+# so the dropdown/depth-slider/CLim inputs work before its overlay exists) and
+# an expensive "materialize" pass (write the actual .func.gii + .f32 files),
+# which only runs for a metric once it's actually requested.
 
-def tsf_to_func_gii(tsf_path, out_path, mat_path=None):
-    """Read TSF, write multi-frame func.gii + optional float32 matrix. Returns (n_depths, M)."""
+def read_tsf_matrix(tsf_path):
+    """Read a TSF file into a padded (n_vertices, n_depths) float32 matrix."""
     _, tracks = read_mrtrix_tsf(tsf_path)
     M = pad_to_matrix(tracks).astype(np.float32)
+    return np.nan_to_num(M, nan=0.0)
+
+
+def matrix_cal_range(M):
     finite = M[np.isfinite(M) & (M > 0)]
     cal_min = float(np.percentile(finite,  2)) if finite.size else 0.0
     cal_max = float(np.percentile(finite, 98)) if finite.size else 1.0
-    M = np.nan_to_num(M, nan=0.0)
-    n_depths = M.shape[1]
-    intent   = nib.nifti1.intent_codes['NIFTI_INTENT_NONE']
-    darrays  = [nib.gifti.GiftiDataArray(M[:, d], intent=intent, datatype='NIFTI_TYPE_FLOAT32')
-                for d in range(n_depths)]
-    nib.save(nib.gifti.GiftiImage(darrays=darrays), out_path)
-    if mat_path:
-        M.tofile(mat_path)
-    return n_depths, round(cal_min, 4), round(cal_max, 4), M
+    return round(cal_min, 4), round(cal_max, 4)
 
 
-def mat_to_asym_func_gii(lh_M, rh_M, out_path, mat_path=None):
-    """Compute asymmetry index (LH-RH)/mean(LH,RH), save func.gii + matrix."""
+def compute_asym_matrix(lh_M, rh_M):
+    """Compute asymmetry index (LH-RH)/mean(LH,RH)."""
     LH = lh_M.astype(np.float64)
     RH = rh_M.astype(np.float64)
     denom = (LH + RH) / 2.0
     with np.errstate(divide='ignore', invalid='ignore'):
         A = np.where(denom != 0.0, (LH - RH) / denom, 0.0).astype(np.float32)
-    A = np.nan_to_num(A, nan=0.0, posinf=0.0, neginf=0.0)
+    return np.nan_to_num(A, nan=0.0, posinf=0.0, neginf=0.0)
 
+
+def asym_cal_range(A):
     flat = np.abs(A.ravel())
     flat = flat[flat > 0]
     amax = float(np.percentile(flat, 98)) if flat.size else 1.0
-
-    n_depths = A.shape[1]
-    intent   = nib.nifti1.intent_codes['NIFTI_INTENT_NONE']
-    darrays  = [nib.gifti.GiftiDataArray(A[:, d], intent=intent, datatype='NIFTI_TYPE_FLOAT32')
-                for d in range(n_depths)]
-    nib.save(nib.gifti.GiftiImage(darrays=darrays), out_path)
-    if mat_path:
-        A.tofile(mat_path)
     return round(-amax, 4), round(amax, 4)
 
 
-def precompute_overlays(tsf_metrics, out_dir, template=TEMPLATE):
-    """Convert all TSF pairs to func.gii + binary matrices, including asymmetry."""
+def write_func_gii(M, out_path):
+    intent  = nib.nifti1.intent_codes['NIFTI_INTENT_NONE']
+    darrays = [nib.gifti.GiftiDataArray(M[:, d], intent=intent, datatype='NIFTI_TYPE_FLOAT32')
+               for d in range(M.shape[1])]
+    nib.save(nib.gifti.GiftiImage(darrays=darrays), out_path)
+
+
+def scan_overlay_stats(tsf_metrics):
+    """Read every metric's TSF data and compute its stats, without writing any
+    files. Returns (info, arrays) where arrays[metric] = (lh_M, rh_M)."""
     info = {}
+    arrays = {}
     for metric, hemis in tsf_metrics.items():
-        lh_gii  = os.path.join(out_dir, f'lh_{template}_{metric}.func.gii')
-        rh_gii  = os.path.join(out_dir, f'rh_{template}_{metric}.func.gii')
-        asym_gii = os.path.join(out_dir, f'asym_{template}_{metric}.func.gii')
-        lh_mat   = os.path.join(out_dir, f'lh_{template}_{metric}_matrix.f32')
-        rh_mat   = os.path.join(out_dir, f'rh_{template}_{metric}_matrix.f32')
-        asym_mat = os.path.join(out_dir, f'asym_{template}_{metric}_matrix.f32')
-
-        print(f'  lh_{metric} … ', end='', flush=True)
-        nd, cmin, cmax, lh_M = tsf_to_func_gii(hemis['lh'], lh_gii, lh_mat)
-        print(f'{nd} depths  [{cmin:.3f}, {cmax:.3f}]')
-
-        print(f'  rh_{metric} … ', end='', flush=True)
-        _, _, _, rh_M = tsf_to_func_gii(hemis['rh'], rh_gii, rh_mat)
-        print('ok')
-
-        print(f'  asym_{metric} … ', end='', flush=True)
-        amin, amax = mat_to_asym_func_gii(lh_M, rh_M, asym_gii, asym_mat)
-        print(f'[{amin:.3f}, {amax:.3f}]')
-
+        lh_M = read_tsf_matrix(hemis['lh'])
+        rh_M = read_tsf_matrix(hemis['rh'])
+        cmin, cmax = matrix_cal_range(lh_M)
+        amin, amax = asym_cal_range(compute_asym_matrix(lh_M, rh_M))
         info[metric] = {
-            'n_depths':    nd,
-            'cal_min':     cmin,
-            'cal_max':     cmax,
+            'n_depths':     lh_M.shape[1],
+            'cal_min':      cmin,
+            'cal_max':      cmax,
             'cal_min_asym': amin,
             'cal_max_asym': amax,
         }
-    return info
+        arrays[metric] = (lh_M, rh_M)
+        print(f'  {metric}: {lh_M.shape[1]} depths  [{cmin:.3f}, {cmax:.3f}]  asym [{amin:.3f}, {amax:.3f}]')
+    return info, arrays
+
+
+def materialize_overlay(metric, lh_M, rh_M, out_dir, template=TEMPLATE):
+    """Write the func.gii + binary matrix files for one metric.
+    Returns a list of (url_path, file_path) pairs to merge into file_map."""
+    lh_gii   = os.path.join(out_dir, f'lh_{template}_{metric}.func.gii')
+    rh_gii   = os.path.join(out_dir, f'rh_{template}_{metric}.func.gii')
+    asym_gii = os.path.join(out_dir, f'asym_{template}_{metric}.func.gii')
+    lh_mat   = os.path.join(out_dir, f'lh_{template}_{metric}_matrix.f32')
+    rh_mat   = os.path.join(out_dir, f'rh_{template}_{metric}_matrix.f32')
+    asym_mat = os.path.join(out_dir, f'asym_{template}_{metric}_matrix.f32')
+
+    write_func_gii(lh_M, lh_gii);  lh_M.tofile(lh_mat)
+    write_func_gii(rh_M, rh_gii);  rh_M.tofile(rh_mat)
+    A = compute_asym_matrix(lh_M, rh_M)
+    write_func_gii(A, asym_gii);   A.tofile(asym_mat)
+
+    paths = (lh_gii, rh_gii, asym_gii, lh_mat, rh_mat, asym_mat)
+    return [(f'/data/{os.path.basename(p)}', p) for p in paths]
 
 
 # ── HTML generation ───────────────────────────────────────────────────────────
@@ -1077,17 +1282,41 @@ def make_html(subj_id, vol_path, lh_path, rh_path, overlay_info, port, template=
 
 # ── HTTP server ───────────────────────────────────────────────────────────────
 
-def make_handler(html_bytes, file_map):
+def make_handler(html_bytes, file_map, overlay_arrays, materialized, out_dir, template=TEMPLATE):
+    # Matches lh_<template>_<metric>.func.gii, rh_..., asym_..., and the
+    # corresponding _matrix.f32 files, isolating <metric>.
+    overlay_re = re.compile(
+        r'^(?:lh|rh|asym)_' + re.escape(template) + r'_(.+?)(?:\.func\.gii|_matrix\.f32)$'
+    )
+
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self):
             path = self.path.split('?')[0]
             if path in ('/', '/index.html'):
                 self._reply(200, 'text/html; charset=utf-8', html_bytes)
-            elif path in file_map:
+                return
+            if path not in file_map:
+                self._materialize_if_needed(path)
+            if path in file_map:
                 with open(file_map[path], 'rb') as fh:
                     self._reply(200, 'application/octet-stream', fh.read())
             else:
                 self._reply(404, 'text/plain', b'Not found\n')
+
+        def _materialize_if_needed(self, path):
+            """First request for a not-yet-generated metric's overlay triggers
+            on-demand conversion; subsequent requests just hit file_map."""
+            fname = path.rsplit('/', 1)[-1]
+            m = overlay_re.match(fname)
+            if not m:
+                return
+            metric = m.group(1)
+            if metric in materialized or metric not in overlay_arrays:
+                return
+            lh_M, rh_M = overlay_arrays[metric]
+            for url, fpath in materialize_overlay(metric, lh_M, rh_M, out_dir, template):
+                file_map[url] = fpath
+            materialized.add(metric)
 
         def _reply(self, code, ctype, data):
             self.send_response(code)
@@ -1126,29 +1355,34 @@ def main():
     print(f'Metrics  : {list(tsf_metrics) or "none"}')
 
     out_dir = tempfile.mkdtemp(prefix='cortical_browser_')
-    print(f'\nConverting overlays → {out_dir}')
-    overlay_info = precompute_overlays(tsf_metrics, out_dir)
+    print(f'\nScanning {len(tsf_metrics)} metric(s) (stats only, no conversion yet)…')
+    overlay_info, overlay_arrays = scan_overlay_stats(tsf_metrics)
 
-    # Build file map: surfaces, volume, and all overlay/matrix files
+    # Build file map: surfaces and volume are ready immediately; overlays are
+    # materialized lazily by the request handler as each metric is selected —
+    # except the default (first) metric, which we prepare now so the initial
+    # page load has something to show right away.
     file_map = {}
     for p in (vol_path, lh_path, rh_path):
         if p:
             file_map[f'/data/{os.path.basename(p)}'] = p
 
-    for metric in tsf_metrics:
-        for prefix in ('lh', 'rh', 'asym'):
-            for suffix in ('.func.gii', '_matrix.f32'):
-                fname = f'{prefix}_{TEMPLATE}_{metric}{suffix}'
-                fpath = os.path.join(out_dir, fname)
-                if os.path.isfile(fpath):
-                    file_map[f'/data/{fname}'] = fpath
+    materialized = set()
+    first_metric = next(iter(tsf_metrics), None)
+    if first_metric:
+        print(f'Materializing default metric: {first_metric}')
+        lh_M, rh_M = overlay_arrays[first_metric]
+        for url, fpath in materialize_overlay(first_metric, lh_M, rh_M, out_dir):
+            file_map[url] = fpath
+        materialized.add(first_metric)
 
     html_bytes = make_html(
         args.subj_id, vol_path, lh_path, rh_path,
         overlay_info, args.port
     ).encode('utf-8')
 
-    server = HTTPServer(('localhost', args.port), make_handler(html_bytes, file_map))
+    server = HTTPServer(('localhost', args.port),
+        make_handler(html_bytes, file_map, overlay_arrays, materialized, out_dir))
     url    = f'http://localhost:{args.port}/'
     print(f'\nBrowser  : {url}')
     print('Ctrl+C to quit.\n')
