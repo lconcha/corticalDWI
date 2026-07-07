@@ -33,64 +33,64 @@ _HTML = r"""<!DOCTYPE html>
 <style>
 * { box-sizing: border-box; margin: 0; padding: 0; }
 body {
-  background: #08081a; color: #ccc;
+  background: #1f1f1f; color: #ccc;
   font: 11px/1.4 -apple-system, "Segoe UI", Arial, sans-serif;
   display: flex; flex-direction: column; height: 100vh; overflow: hidden;
 }
 header {
-  background: #11112a; border-bottom: 1px solid #222248;
+  background: #2b2b2b; border-bottom: 1px solid #444444;
   padding: 3px 8px; display: flex; align-items: center;
   gap: 6px; flex-shrink: 0; flex-wrap: wrap;
 }
-.subj { font-weight: bold; color: #6ab0f5; font-size: 12px; white-space: nowrap; }
-.glab { color: #6688aa; font-size: 10px; white-space: nowrap; }
+.subj { font-weight: bold; color: #f0f0f0; font-size: 12px; white-space: nowrap; }
+.glab { color: #d1d1d1; font-size: 10px; white-space: nowrap; }
 label { display: flex; align-items: center; gap: 3px; white-space: nowrap; color: #999; }
 select {
-  background: #1a1a3a; color: #ddd; border: 1px solid #333366;
+  background: #d9d9d9; color: #1a1a1a; border: 1px solid #4d4d4d;
   border-radius: 3px; padding: 1px 3px; font-size: 10px;
 }
 input[type=range] {
-  width: 60px; cursor: pointer; accent-color: #6ab0f5;
+  width: 60px; cursor: pointer; accent-color: #8a8a8a;
 }
-input[type=checkbox] { cursor: pointer; accent-color: #6ab0f5; }
+input[type=checkbox] { cursor: pointer; accent-color: #8a8a8a; }
 input[type=number] {
-  background: #1a1a3a; color: #ddd; border: 1px solid #333366;
+  background: #d9d9d9; color: #1a1a1a; border: 1px solid #4d4d4d;
   border-radius: 3px; padding: 1px 4px; font-size: 10px; width: 58px;
   -moz-appearance: textfield;
 }
 input[type=number]::-webkit-inner-spin-button,
 input[type=number]::-webkit-outer-spin-button { display: none; }
 button.cbtn {
-  background: #1e1e40; color: #aaa; border: 1px solid #333366;
+  background: #3a3a3a; color: #ddd; border: 1px solid #555555;
   border-radius: 3px; padding: 1px 6px; font-size: 10px; cursor: pointer;
 }
-button.cbtn:hover { background: #28285a; }
-#depth-label { color: #6ab0f5; min-width: 40px; }
-#pos-display  { color: #668; font-size: 10px; white-space: nowrap; overflow: hidden; max-width: 200px; }
+button.cbtn:hover { background: #484848; }
+#depth-label { color: #d1d1d1; min-width: 40px; }
+#pos-display  { color: #999999; font-size: 10px; white-space: nowrap; overflow: hidden; max-width: 200px; }
 #vtx-display  {
   color: #f5c842; font-size: 11px; font-family: monospace; font-weight: bold;
-  background: #1a1a3a; border: 1px solid #f5c842; border-radius: 3px;
+  background: #262626; border: 1px solid #f5c842; border-radius: 3px;
   padding: 1px 7px; margin-left: auto; white-space: nowrap; min-width: 76px;
   text-align: center;
 }
-.sep { border-left: 1px solid #222248; height: 14px; flex-shrink: 0; }
+.sep { border-left: 1px solid #444444; height: 14px; flex-shrink: 0; }
 #grid {
   display: grid;
   grid-template-columns: 1fr 1fr 1fr;
   grid-template-rows: 1fr 1fr 1fr;
-  flex: 1; gap: 2px; background: #060612; overflow: hidden;
+  flex: 1; gap: 2px; background: #0a0a0a; overflow: hidden;
 }
-.cell { position: relative; overflow: hidden; background: #090918; }
+.cell { position: relative; overflow: hidden; background: #141414; }
 canvas.nv-canvas { display: block; width: 100% !important; height: 100% !important; }
 .clabel {
   position: absolute; top: 4px; left: 6px; z-index: 10;
   font-size: 9px; letter-spacing: 0.4px; text-transform: uppercase;
-  color: #446688; background: rgba(0,0,0,0.55);
+  color: #999999; background: rgba(0,0,0,0.55);
   padding: 1px 5px; border-radius: 3px; pointer-events: none;
 }
 .cell-span3 { grid-column: 1 / -1; }
 .plot-cell { display: flex; flex-direction: column; padding: 20px 5px 4px; }
-.chart-wrap { position: relative; flex: 1; min-height: 0; }
+.chart-wrap { position: relative; flex: 1; min-height: 0; background: #242424; }
 .cbar {
   position: absolute; bottom: 5px; left: 10px; right: 10px; z-index: 10; pointer-events: none;
 }
@@ -99,7 +99,7 @@ canvas.nv-canvas { display: block; width: 100% !important; height: 100% !importa
 }
 .cbar-ll {
   display: flex; justify-content: space-between;
-  font-size: 9px; color: #557; margin-top: 2px; font-family: monospace;
+  font-size: 9px; color: #999999; margin-top: 2px; font-family: monospace;
 }
 </style>
 </head>
@@ -118,14 +118,14 @@ canvas.nv-canvas { display: block; width: 100% !important; height: 100% !importa
 
   <span class="glab">Data</span>
   <input type="number" id="climMin" step="0.001" title="Color min">
-  <span style="color:#556">–</span>
+  <span style="color:#999999">–</span>
   <input type="number" id="climMax" step="0.001" title="Color max">
   <button class="cbtn" id="climAuto">Auto</button>
   <select id="cmapSel">
+    <option value="viridis">viridis</option>
     <option value="hot">hot</option>
     <option value="inferno">inferno</option>
     <option value="plasma">plasma</option>
-    <option value="viridis">viridis</option>
     <option value="magma">magma</option>
     <option value="cividis">cividis</option>
     <option value="thermal">thermal</option>
@@ -143,7 +143,7 @@ canvas.nv-canvas { display: block; width: 100% !important; height: 100% !importa
 
   <span class="glab">Asym</span>
   <input type="number" id="asymMin" step="0.001" title="Asym color min">
-  <span style="color:#556">–</span>
+  <span style="color:#999999">–</span>
   <input type="number" id="asymMax" step="0.001" title="Asym color max">
   <button class="cbtn" id="asymAuto">Auto</button>
   <select id="cmapAsymSel">
@@ -164,13 +164,12 @@ canvas.nv-canvas { display: block; width: 100% !important; height: 100% !importa
     <option value="Hemi">Hemi</option>
     <option value="Phong">Phong</option>
   </select></label>
-  <label>LH  <input type="range" id="lhOp"  min="0" max="100" value="100"></label>
-  <label>RH  <input type="range" id="rhOp"  min="0" max="100" value="100"></label>
-  <label>Vol <input type="range" id="volOp" min="0" max="100" value="100"></label>
   <div class="sep"></div>
 
-  <label><input type="checkbox" id="radioConv"> Rad</label>
+  <label><input type="checkbox" id="radioConv" checked> Rad</label>
   <label><input type="checkbox" id="crosshairChk" checked> X-hair</label>
+  <label><input type="checkbox" id="surfOnSlicesChk" checked> Surf on slices</label>
+  <label>Vertex <input type="number" id="vtxInput" min="0" step="1" title="Jump to vertex ID"></label>
   <span id="pos-display"></span>
   <span id="vtx-display">v — —</span>
 </header>
@@ -237,15 +236,17 @@ const STEP_MM  = __STEP_MM__
 
 // ── app state ─────────────────────────────────────────────────────────────────
 let currentMetric  = Object.keys(METRICS)[0] || null
-let currentCmap    = 'hot'
+let currentCmap    = 'viridis'
 let currentCmapAsym = 'bwr'
 let dataInvert     = false
 let asymInvert     = false
-let layerOpacity   = 0.80
+let layerOpacity   = 1.0
 let currentShader  = 'Bright Matte'
 let currentDepth   = 0
 let currentClimMin = 0, currentClimMax = 1
 let currentAsymMin = -1, currentAsymMax = 1
+let showSurfOnSlices = true
+const markerMeshes = new Map()   // nv instance -> its vertex-marker connectome mesh
 
 // Hoisted so updateDepthMarker is safe to call before makeChart runs
 var chartLH, chartRH, chartAsym
@@ -263,9 +264,9 @@ const RH_SURF = SURFS.find(s => s.hemi === 'rh') || null
 const VOL_URL = VOLUMES.length ? VOLUMES[0].url : null
 
 // ── NiiVue instances ──────────────────────────────────────────────────────────
-const SURF_CFG = { backColor: [0.06, 0.06, 0.14, 1], show3Dcrosshair: false }
+const SURF_CFG = { backColor: [0.06, 0.06, 0.06, 1], show3Dcrosshair: false }
 const SLIC_CFG = {
-  backColor: [0.04, 0.04, 0.10, 1], show3Dcrosshair: true,
+  backColor: [0.04, 0.04, 0.04, 1], show3Dcrosshair: true,
   meshThicknessOn2D: 2, multiplanarLayout: 'row'
 }
 
@@ -355,7 +356,8 @@ function setCam(nv, az, el) {
 }
 
 // ── surface loading ───────────────────────────────────────────────────────────
-async function loadAllSurfaces(metric) {
+async function loadAllSurfaces(metric, resetCamera = false) {
+  markerMeshes.clear()   // loadMeshes() below replaces each instance's mesh list, wiping any marker sphere
   const info = metric ? METRICS[metric] : null
 
   function layerData(hemi) {
@@ -390,9 +392,12 @@ async function loadAllSurfaces(metric) {
 
   await Promise.all(proms)
   applyCurrentShader()
-  setCam(nvLhL,  270, 15)   // LH lateral
-  setCam(nvRhL,   90, 15)   // RH lateral
-  setCam(nvAsym, 270, 15)   // Asymmetry (LH geometry, lateral view)
+  applySliceMeshVisibility()
+  if (resetCamera) {
+    setCam(nvLhL,   90, 15)   // LH lateral
+    setCam(nvRhL,  270, 15)   // RH lateral
+    setCam(nvAsym,  90, 15)   // Asymmetry (LH geometry, lateral view)
+  }
 
   // Diagnostic: confirm what NiiVue actually loaded on the asym surface
   const _am = nvAsym.meshes[0]
@@ -431,7 +436,7 @@ await Promise.all([
   VOL_URL
     ? nvSlices.loadVolumes([{ url: VOL_URL, colormap: 'gray', opacity: 1 }])
     : Promise.resolve(),
-  currentMetric ? loadAllSurfaces(currentMetric) : Promise.resolve(),
+  currentMetric ? loadAllSurfaces(currentMetric, true) : Promise.resolve(),
   currentMetric ? loadMatrices(currentMetric)    : Promise.resolve(),
 ])
 
@@ -440,7 +445,7 @@ nvSlices.opts.onLocationChange = d => {
   document.getElementById('pos-display').textContent = d.string
 }
 nvSlices.setSliceType(nvSlices.sliceTypeMultiplanar)
-nvSlices.setRadiologicalConvention(false)
+nvSlices.setRadiologicalConvention(true)
 
 // ── depth control ─────────────────────────────────────────────────────────────
 function setDepth(d) {
@@ -609,14 +614,18 @@ document.getElementById('cmapAsymSel').addEventListener('change', e =>
 document.getElementById('cmapAsymInv').addEventListener('change', e =>
   setAsymCmap(currentCmapAsym, e.target.checked))
 
-// ── overlay / surface opacity sliders ────────────────────────────────────────
+// ── overlay opacity slider ────────────────────────────────────────────────────
 document.getElementById('ovOp').oninput  = e => setLayerOpacity(+e.target.value / 100)
-document.getElementById('lhOp').oninput  = e => { nvLhL.setMeshProperty(nvLhL.meshes[0]?.id,  'opacity', +e.target.value/100); nvLhL.drawScene()  }
-document.getElementById('rhOp').oninput  = e => { nvRhL.setMeshProperty(nvRhL.meshes[0]?.id,  'opacity', +e.target.value/100); nvRhL.drawScene()  }
-document.getElementById('volOp').oninput = e => {
-  const op = +e.target.value / 100
-  if (nvSlices.volumes.length) nvSlices.setOpacity(0, op)
+
+// ── surface-on-orthoslice overlay toggle ─────────────────────────────────────
+function applySliceMeshVisibility() {
+  for (const m of nvSlices.meshes) nvSlices.setMeshProperty(m.id, 'opacity', showSurfOnSlices ? 1 : 0)
+  nvSlices.drawScene()
 }
+document.getElementById('surfOnSlicesChk').addEventListener('change', function() {
+  showSurfOnSlices = this.checked
+  applySliceMeshVisibility()
+})
 
 // ── shader selector ───────────────────────────────────────────────────────────
 document.getElementById('shaderSel').addEventListener('change', e => {
@@ -656,10 +665,12 @@ document.getElementById('metricSel').addEventListener('change', async e => {
 setDepth(currentDepth)
 refreshColorbars()
 
-// ── raycasting vertex pick ────────────────────────────────────────────────────
-function v3norm(v) { const l=Math.sqrt(v[0]*v[0]+v[1]*v[1]+v[2]*v[2]); return l>0?[v[0]/l,v[1]/l,v[2]/l]:[0,0,1] }
-function v3cross(a,b) { return [a[1]*b[2]-a[2]*b[1], a[2]*b[0]-a[0]*b[2], a[0]*b[1]-a[1]*b[0]] }
-
+// ── surface vertex picking ────────────────────────────────────────────────────
+// Mirrors NiiVue's own SceneRenderer.calculateMvpMatrix exactly (orthographic
+// projection): modelMatrix = MirrorX * Rx(270-elevation) * Rz(azimuth-180) *
+// T(-pivot3D). Rather than re-deriving a camera position/FOV, every triangle is
+// pushed through that same transform and rasterized in software (point-in-
+// triangle + depth compare), matching what the GPU's own depth buffer would do.
 function meshBounds(pts) {
   const n=pts.length/3; let cx=0,cy=0,cz=0
   for(let i=0;i<n;i++){cx+=pts[i*3];cy+=pts[i*3+1];cz+=pts[i*3+2]}
@@ -668,54 +679,113 @@ function meshBounds(pts) {
   return {center:c, radius:Math.sqrt(r)}
 }
 
-function nearestVertexToRay(pts, orig, dir) {
-  const n=pts.length/3; let bestD2=Infinity,bestIdx=0
-  for(let i=0;i<n;i++){
-    const vx=pts[i*3]-orig[0],vy=pts[i*3+1]-orig[1],vz=pts[i*3+2]-orig[2]
-    const cx=vy*dir[2]-vz*dir[1],cy=vz*dir[0]-vx*dir[2],cz=vx*dir[1]-vy*dir[0]
-    const d2=cx*cx+cy*cy+cz*cz
-    if(d2<bestD2){bestD2=d2;bestIdx=i}
+// Software rasterization pick: project every triangle to screen space, keep
+// only those whose 2D shape actually contains the click, and among those
+// take the one nearest the camera via barycentric-interpolated depth — this
+// is the same test a GPU depth buffer performs, so it respects occlusion
+// (a vertex on the far side of the head can no longer "win" just because it
+// projects near the click point).
+function pickTriangle(mesh, origin, azimuthDeg, elevationDeg, scale, whratio, ndcX, ndcY) {
+  const thetaZ = (azimuthDeg - 180) * Math.PI / 180
+  const thetaX = (270 - elevationDeg) * Math.PI / 180
+  const cz = Math.cos(thetaZ), sz = Math.sin(thetaZ)
+  const cx = Math.cos(thetaX), sx = Math.sin(thetaX)
+  const pts = mesh.pts
+  const n = pts.length / 3
+
+  const sxArr = new Float32Array(n), syArr = new Float32Array(n), szArr = new Float32Array(n)
+  for (let i = 0; i < n; i++) {
+    const x0 = pts[i*3]   - origin[0]
+    const y0 = pts[i*3+1] - origin[1]
+    const z0 = pts[i*3+2] - origin[2]
+    const x1 = x0*cz - y0*sz
+    const y1 = x0*sz + y0*cz
+    const y2 = y1*cx - z0*sx
+    const z2 = y1*sx + z0*cx   // view-space depth: larger = nearer the camera
+    const mx = -x1             // mirror X
+    sxArr[i] = whratio < 1 ? mx / scale          : mx / (scale * whratio)
+    syArr[i] = whratio < 1 ? y2 * whratio / scale : y2 / scale
+    szArr[i] = z2
   }
-  return bestIdx
+
+  const tris = mesh.tris
+  let bestDepth = Infinity, bestVert = -1
+  for (let t = 0; t < tris.length; t += 3) {
+    const i0 = tris[t], i1 = tris[t+1], i2 = tris[t+2]
+    const x0 = sxArr[i0], y0 = syArr[i0]
+    const x1 = sxArr[i1], y1 = syArr[i1]
+    const x2 = sxArr[i2], y2v = syArr[i2]
+    const denom = (y1 - y2v) * (x0 - x2) + (x2 - x1) * (y0 - y2v)
+    if (Math.abs(denom) < 1e-12) continue
+    const w0 = ((y1 - y2v) * (ndcX - x2) + (x2 - x1) * (ndcY - y2v)) / denom
+    const w1 = ((y2v - y0) * (ndcX - x2) + (x0 - x2) * (ndcY - y2v)) / denom
+    const w2 = 1 - w0 - w1
+    if (w0 < -1e-6 || w1 < -1e-6 || w2 < -1e-6) continue   // click falls outside this triangle
+    const depth = w0*szArr[i0] + w1*szArr[i1] + w2*szArr[i2]
+    if (depth < bestDepth) {
+      bestDepth = depth
+      bestVert = (w0 >= w1 && w0 >= w2) ? i0 : (w1 >= w2 ? i1 : i2)
+    }
+  }
+  return bestVert   // -1 if the click missed the mesh's silhouette entirely
 }
 
-async function pickOnSurface(canvas, mouseX, mouseY, nvInst) {
+// ── vertex marker (connectome sphere) ────────────────────────────────────────
+function markerConnectomeJSON(x, y, z, size) {
+  return {
+    name: 'vertex-marker',
+    nodeColormap: 'warm', nodeColormapNegative: 'winter',
+    nodeMinColor: 0, nodeMaxColor: 1, nodeScale: 1,
+    edgeColormap: 'warm', edgeColormapNegative: 'winter',
+    edgeMin: 0, edgeMax: 1, edgeScale: 1,
+    nodes: { names: ['vertex'], X: [x], Y: [y], Z: [z], Color: [1], Size: [size] },
+    edges: []
+  }
+}
+
+function placeMarker(nvInst, x, y, z) {
+  const surf = nvInst.meshes[0]   // the loaded brain surface, always added before any marker
+  const radius = surf?.pts ? meshBounds(surf.pts).radius * 0.015 : 2
+
+  let marker = markerMeshes.get(nvInst)
+  if (marker) {
+    const node = marker.nodes[0]
+    marker.updateConnectomeNodeByIndex(0, { ...node, x, y, z, sizeValue: radius })
+  } else {
+    // loadConnectome() wipes nv.meshes before adding — use the lower-level
+    // loadConnectomeAsMesh()+addMesh() instead so the surface mesh survives.
+    marker = nvInst.loadConnectomeAsMesh(markerConnectomeJSON(x, y, z, radius))
+    nvInst.addMesh(marker)
+    markerMeshes.set(nvInst, marker)
+  }
+  nvInst.drawScene()
+}
+
+async function selectVertex(vertIdx, nvInst) {
   if (!currentMetric) return
   const mesh = nvInst.meshes[0]
   if (!mesh?.pts) return
-
-  const {center, radius} = meshBounds(mesh.pts)
-  const az  = (nvInst.scene.renderAzimuth   ?? 270) * Math.PI / 180
-  const el  = (nvInst.scene.renderElevation ??  15) * Math.PI / 180
-  const dist = radius * 3.0
-  const camPos = [
-    center[0] + dist * Math.cos(el) * Math.sin(az),
-    center[1] + dist * Math.sin(el),
-    center[2] + dist * Math.cos(el) * Math.cos(az),
-  ]
-  const fwd = v3norm([center[0]-camPos[0], center[1]-camPos[1], center[2]-camPos[2]])
-  const wup = Math.abs(fwd[1]) < 0.99 ? [0,1,0] : [1,0,0]
-  const rgt = v3norm(v3cross(fwd, wup))
-  const up  = v3norm(v3cross(rgt, fwd))
-
-  const rect = canvas.getBoundingClientRect()
-  const ndcX =  (mouseX - rect.left) / rect.width  * 2 - 1
-  const ndcY = -((mouseY - rect.top) / rect.height * 2 - 1)
-  const tanH = Math.tan(22.5 * Math.PI / 180)
-  const asp  = canvas.clientWidth / canvas.clientHeight
-  const dir  = v3norm([
-    fwd[0]+ndcX*asp*tanH*rgt[0]+ndcY*tanH*up[0],
-    fwd[1]+ndcX*asp*tanH*rgt[1]+ndcY*tanH*up[1],
-    fwd[2]+ndcX*asp*tanH*rgt[2]+ndcY*tanH*up[2],
-  ])
-
-  const vertIdx = nearestVertexToRay(mesh.pts, camPos, dir)
+  const nVerts = mesh.pts.length / 3
+  if (vertIdx < 0 || vertIdx >= nVerts) return
 
   // Snap orthoslice crosshairs to vertex world position
   const vx=mesh.pts[vertIdx*3], vy=mesh.pts[vertIdx*3+1], vz=mesh.pts[vertIdx*3+2]
   if (nvSlices.volumes.length && typeof nvSlices.mm2frac === 'function') {
     const frac = nvSlices.mm2frac([vx, vy, vz])
     if (frac) { nvSlices.scene.crosshairPos=[...frac]; nvSlices.drawScene() }
+  }
+
+  // Drop a marker sphere on this vertex in every surface panel
+  const lhMesh = nvLhL.meshes[0]
+  const rhMesh = nvRhL.meshes[0]
+  if (lhMesh?.pts) {
+    const lx=lhMesh.pts[vertIdx*3], ly=lhMesh.pts[vertIdx*3+1], lz=lhMesh.pts[vertIdx*3+2]
+    placeMarker(nvLhL,  lx, ly, lz)
+    placeMarker(nvAsym, lx, ly, lz)
+  }
+  if (rhMesh?.pts) {
+    const rx=rhMesh.pts[vertIdx*3], ry=rhMesh.pts[vertIdx*3+1], rz=rhMesh.pts[vertIdx*3+2]
+    placeMarker(nvRhL, rx, ry, rz)
   }
 
   // Read depth profiles from binary matrices
@@ -732,7 +802,28 @@ async function pickOnSurface(canvas, mouseX, mouseY, nvInst) {
 
   setProfiles(lhP, rhP, asymP, nd)
   document.getElementById('vtx-display').textContent = `v${vertIdx}`
+  document.getElementById('vtxInput').value = vertIdx
   document.getElementById('pos-display').textContent = `${vx.toFixed(1)}, ${vy.toFixed(1)}, ${vz.toFixed(1)} mm`
+}
+
+async function pickOnSurface(canvas, mouseX, mouseY, nvInst) {
+  if (!currentMetric) return
+  const mesh = nvInst.meshes[0]
+  if (!mesh?.pts || !mesh?.tris) return
+
+  const rect = canvas.getBoundingClientRect()
+  const ndcX =  (mouseX - rect.left) / rect.width  * 2 - 1
+  const ndcY = -((mouseY - rect.top) / rect.height * 2 - 1)
+
+  const origin  = nvInst.pivot3D
+  const scale   = (0.8 * nvInst.furthestFromPivot) / (nvInst.scene.volScaleMultiplier || 1)
+  const whratio = canvas.clientWidth / canvas.clientHeight
+  const az = nvInst.scene.renderAzimuth   ?? 270
+  const el = nvInst.scene.renderElevation ??  15
+
+  const vertIdx = pickTriangle(mesh, origin, az, el, scale, whratio, ndcX, ndcY)
+  if (vertIdx < 0) return   // click missed the mesh silhouette
+  await selectVertex(vertIdx, nvInst)
 }
 
 function setupSurfacePicker(canvasId, nvInst) {
@@ -749,6 +840,13 @@ setupSurfacePicker('gl-lh',   nvLhL)
 setupSurfacePicker('gl-rh',   nvRhL)
 setupSurfacePicker('gl-asym', nvAsym)
 
+// ── vertex ID text entry ──────────────────────────────────────────────────────
+document.getElementById('vtxInput').addEventListener('keydown', e => {
+  if (e.key !== 'Enter') return
+  const id = parseInt(e.target.value, 10)
+  if (!Number.isNaN(id)) selectVertex(id, nvLhL)
+})
+
 // ── orthoslice zoom (Ctrl + scroll) ──────────────────────────────────────────
 let sliceZoom = 1
 document.getElementById('gl-slices').addEventListener('wheel', e => {
@@ -759,16 +857,17 @@ document.getElementById('gl-slices').addEventListener('wheel', e => {
 }, {capture:true, passive:false})
 
 // ── depth-profile charts ──────────────────────────────────────────────────────
-function makeChart(id, color, label) {
+function makeChart(id, color, label, fill = false) {
   return new Chart(document.getElementById(id), {
     type: 'line',
     data: { datasets: [{
       label, data: [],
       borderColor: color, backgroundColor: color+'28',
-      pointRadius: 2, tension: 0.3, fill: true, parsing: false
+      pointRadius: 2, tension: 0.3, fill, parsing: false
     }]},
     options: {
       responsive: true, maintainAspectRatio: false, animation: false,
+      onClick: (evt, elements, chart) => setDepthFromChart(chart, evt.x),
       plugins: {
         legend: { display: true, labels: { color: '#888', boxWidth: 10, font: {size:10} } },
         annotation: { annotations: { depthLine: {
@@ -787,9 +886,17 @@ function makeChart(id, color, label) {
   })
 }
 
+function setDepthFromChart(chart, pixelX) {
+  const mm  = chart.scales.x.getValueForPixel(pixelX)
+  const sl  = document.getElementById('depthSlider')
+  const d   = Math.max(0, Math.min(+sl.max, Math.round(mm / STEP_MM)))
+  sl.value  = d
+  setDepth(d)
+}
+
 chartLH   = makeChart('chart-lh',   '#6ab0f5', 'LH')
 chartRH   = makeChart('chart-rh',   '#f5a66a', 'RH')
-chartAsym = makeChart('chart-asym', '#8af5a6', 'Asymmetry')
+chartAsym = makeChart('chart-asym', '#8af5a6', 'Asymmetry', true)
 
 function updateDepthMarker(mm) {
   if (!chartLH) return
@@ -1000,8 +1107,8 @@ def make_handler(html_bytes, file_map):
 def main():
     ap = argparse.ArgumentParser(description='NiiVue cortical browser (production)')
     ap.add_argument('subjects_dir', nargs='?',
-                    default='/misc/lauterbur2/lconcha/Edmonton/fs_edmonton')
-    ap.add_argument('subj_id',      nargs='?', default='sub-Mcd00202')
+                    default='/home/lconcha/fs-edmonton')
+    ap.add_argument('subj_id',      nargs='?', default='sub-Mcd005')
     ap.add_argument('--port', type=int, default=8787)
     args = ap.parse_args()
 
