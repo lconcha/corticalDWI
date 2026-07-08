@@ -185,6 +185,7 @@ canvas.nv-canvas { display: block; width: 100% !important; height: 100% !importa
   <label>Rings <input type="number" id="ringsInput" min="0" step="1" value="0" title="Neighbor rings to average around the selected vertex"></label>
   <label><input type="checkbox" id="pivotAtVertexChk"> Pivot@vertex</label>
   <button class="cbtn" id="resetPivotBtn" title="Reset 3D view rotation pivot to the whole-brain center">Reset pivot</button>
+  <label><input type="checkbox" id="showNormativeChk" title="Fetch and overlay cohort normative mean ± SD (computed lazily on first use)"> Show normative</label>
   <span id="pos-display"></span>
   <span id="vtx-display">—, —, — mm</span>
 </header>
@@ -269,6 +270,7 @@ let showSurfOnSlices = true
 let nRings = 0
 let currentVertex = null
 let pivotAtVertex = false
+let showNormative = false
 const markerMeshes = new Map()   // nv instance -> its vertex-marker connectome mesh
 const neighborMeshes = new Map() // nv instance -> its neighbor-rings connectome mesh
 
@@ -1069,7 +1071,7 @@ async function selectVertex(vertIdx, nvInst) {
   const rhArea = ringArea('rh', ringSet)
 
   let normStat = null
-  if (NORMATIVE[currentMetric]) {
+  if (showNormative && NORMATIVE[currentMetric]) {
     const [normLh, normRh, normAsym] = await Promise.all([
       normativeRingStat('lh',   currentMetric, ringSet),
       normativeRingStat('rh',   currentMetric, ringSet),
@@ -1159,6 +1161,19 @@ document.getElementById('pivotAtVertexChk').addEventListener('change', function(
 })
 document.getElementById('resetPivotBtn').addEventListener('click', () => {
   resetPivot(nvLhL); resetPivot(nvRhL); resetPivot(nvAsym)
+})
+
+// ── show/hide normative (cohort) comparison ──────────────────────────────────
+document.getElementById('showNormativeChk').addEventListener('change', async function() {
+  showNormative = this.checked
+  if (showNormative) {
+    if (currentVertex !== null) await selectVertex(currentVertex, nvLhL)
+  } else {
+    for (const chart of [chartLH, chartRH, chartAsym]) {
+      for (const i of [3, 4, 5]) chart.data.datasets[i].data = []
+      chart.update('none')
+    }
+  }
 })
 
 // ── orthoslice zoom (Ctrl + scroll) ──────────────────────────────────────────
@@ -1448,63 +1463,84 @@ def materialize_overlay(metric, lh_M, rh_M, out_dir, template=TEMPLATE):
 # normative comparison. This is independent of the current subject's own
 # per-metric materialization, so it can run for every metric the cohort has,
 # regardless of which of the subject's own overlays have been materialized.
+#
+# Split into a cheap metadata-only scan (used at startup, so a large cohort
+# file doesn't slow down server launch) and a per-metric materialize step
+# that actually computes mean/std — run lazily, only once the client asks
+# for that metric's normative data (mirroring materialize_overlay's lazy
+# per-metric conversion), triggered by the "Show normative" toggle rather
+# than happening unconditionally for every metric on every launch.
 
-def compute_normative_stats(subjects_dir, available_metrics, out_dir, template=TEMPLATE):
-    """If a precomputed cohort file exists, compute per-vertex lh/rh/asym
-    mean+std across the cohort for every metric present in both the cohort
-    file and `available_metrics`. Writes flat float32 (nVerts*nDepths) files
-    using the same layout as the per-subject _matrix.f32 files.
-    Returns (info, file_map_entries) — info[metric] = {'lh': {'n_depths': int},
-    'rh': {...}, 'asym': {...}, 'n_subjects': int}; ({}, []) if no cohort file."""
+def scan_normative_info(subjects_dir, available_metrics, template=TEMPLATE):
+    """Cheap: report which metrics have cohort normative data available and
+    their depth-axis sizes, without computing any mean/std. Returns
+    info[metric] = {'n_subjects': int, 'lh': {'n_depths': int}, 'rh': {...},
+    'asym': {...}}; {} if no cohort file is present."""
     h5_path = os.path.join(subjects_dir, 'templates', 'normative', f'{template}_multivariate.h5')
     if not os.path.isfile(h5_path):
-        return {}, []
+        return {}
 
     info = {}
+    with h5py.File(h5_path, 'r') as h5f:
+        cohort_metrics = list(h5f['metrics'].asstr()[:])
+        n_subjects = int(h5f['subjects'].shape[0])
+        lh_depths  = h5f['lh_M'].shape[1]
+        rh_depths  = h5f['rh_M'].shape[1]
+        asym_depths = min(lh_depths, rh_depths)
+        for metric in available_metrics:
+            if metric not in cohort_metrics:
+                continue
+            info[metric] = {
+                'n_subjects': n_subjects,
+                'lh':   {'n_depths': int(lh_depths)},
+                'rh':   {'n_depths': int(rh_depths)},
+                'asym': {'n_depths': int(asym_depths)},
+            }
+    return info
+
+
+def materialize_normative(subjects_dir, metric, out_dir, template=TEMPLATE):
+    """Compute per-vertex lh/rh/asym mean+std across the cohort for ONE
+    metric and write flat float32 (nVerts*nDepths) files, using the same
+    layout as the per-subject _matrix.f32 files. Returns a list of
+    (url_path, file_path) pairs to merge into file_map."""
+    h5_path = os.path.join(subjects_dir, 'templates', 'normative', f'{template}_multivariate.h5')
     file_entries = []
     with h5py.File(h5_path, 'r') as h5f:
         cohort_metrics = list(h5f['metrics'].asstr()[:])
         n_subjects = h5f['subjects'].shape[0]
-        lh_M_ds = h5f['lh_M']
-        rh_M_ds = h5f['rh_M']
+        idx = cohort_metrics.index(metric)
+        print(f'  normative {metric} (N={n_subjects}) …')
+        lh_stack = h5f['lh_M'][:, :, :, idx]   # (nVerts, nDepthsL, nSubjects)
+        rh_stack = h5f['rh_M'][:, :, :, idx]   # (nVerts, nDepthsR, nSubjects)
 
-        for metric in available_metrics:
-            if metric not in cohort_metrics:
-                continue
-            idx = cohort_metrics.index(metric)
-            print(f'  normative {metric} (N={n_subjects}) …')
-            lh_stack = lh_M_ds[:, :, :, idx]   # (nVerts, nDepthsL, nSubjects)
-            rh_stack = rh_M_ds[:, :, :, idx]   # (nVerts, nDepthsR, nSubjects)
+        # Some ragged tail depths have zero subjects contributing (no
+        # streamline reaches that deep anywhere) — nanmean/nanstd warn on
+        # those all-NaN slices, which is expected and harmless here.
+        with np.errstate(invalid='ignore'), warnings.catch_warnings():
+            warnings.simplefilter('ignore', category=RuntimeWarning)
+            lh_mean = np.nanmean(lh_stack, axis=2).astype(np.float32)
+            lh_std  = np.nanstd(lh_stack,  axis=2).astype(np.float32)
+            rh_mean = np.nanmean(rh_stack, axis=2).astype(np.float32)
+            rh_std  = np.nanstd(rh_stack,  axis=2).astype(np.float32)
 
-            # Some ragged tail depths have zero subjects contributing (no
-            # streamline reaches that deep anywhere) — nanmean/nanstd warn on
-            # those all-NaN slices, which is expected and harmless here.
-            with np.errstate(invalid='ignore'), warnings.catch_warnings():
-                warnings.simplefilter('ignore', category=RuntimeWarning)
-                lh_mean = np.nanmean(lh_stack, axis=2).astype(np.float32)
-                lh_std  = np.nanstd(lh_stack,  axis=2).astype(np.float32)
-                rh_mean = np.nanmean(rh_stack, axis=2).astype(np.float32)
-                rh_std  = np.nanstd(rh_stack,  axis=2).astype(np.float32)
+            # Per-subject asymmetry (elementwise, so this works fine on the
+            # 3D subject-stacked arrays directly), then averaged over subjects
+            common_d = min(lh_stack.shape[1], rh_stack.shape[1])
+            asym_stack = compute_asym_matrix(lh_stack[:, :common_d, :], rh_stack[:, :common_d, :])
+            asym_mean = np.nanmean(asym_stack, axis=2).astype(np.float32)
+            asym_std  = np.nanstd(asym_stack,  axis=2).astype(np.float32)
 
-                # Per-subject asymmetry (elementwise, so this works fine on the
-                # 3D subject-stacked arrays directly), then averaged over subjects
-                common_d = min(lh_stack.shape[1], rh_stack.shape[1])
-                asym_stack = compute_asym_matrix(lh_stack[:, :common_d, :], rh_stack[:, :common_d, :])
-                asym_mean = np.nanmean(asym_stack, axis=2).astype(np.float32)
-                asym_std  = np.nanstd(asym_stack,  axis=2).astype(np.float32)
+        arrays = {'lh': (lh_mean, lh_std), 'rh': (rh_mean, rh_std), 'asym': (asym_mean, asym_std)}
+        for kind, (mean_arr, std_arr) in arrays.items():
+            mean_path = os.path.join(out_dir, f'normative_{kind}_{metric}_mean.f32')
+            std_path  = os.path.join(out_dir, f'normative_{kind}_{metric}_std.f32')
+            mean_arr.tofile(mean_path)
+            std_arr.tofile(std_path)
+            file_entries.append((f'/data/{os.path.basename(mean_path)}', mean_path))
+            file_entries.append((f'/data/{os.path.basename(std_path)}',  std_path))
 
-            arrays = {'lh': (lh_mean, lh_std), 'rh': (rh_mean, rh_std), 'asym': (asym_mean, asym_std)}
-            info[metric] = {'n_subjects': int(n_subjects)}
-            for kind, (mean_arr, std_arr) in arrays.items():
-                mean_path = os.path.join(out_dir, f'normative_{kind}_{metric}_mean.f32')
-                std_path  = os.path.join(out_dir, f'normative_{kind}_{metric}_std.f32')
-                mean_arr.tofile(mean_path)
-                std_arr.tofile(std_path)
-                file_entries.append((f'/data/{os.path.basename(mean_path)}', mean_path))
-                file_entries.append((f'/data/{os.path.basename(std_path)}',  std_path))
-                info[metric][kind] = {'n_depths': int(mean_arr.shape[1])}
-
-    return info, file_entries
+    return file_entries
 
 
 # ── HTML generation ───────────────────────────────────────────────────────────
@@ -1562,12 +1598,17 @@ def make_html(subj_id, vol_path, lh_path, rh_path, overlay_info, port, surf_type
 
 # ── HTTP server ───────────────────────────────────────────────────────────────
 
-def make_handler(html_bytes, file_map, overlay_arrays, materialized, out_dir, template=TEMPLATE):
+def make_handler(html_bytes, file_map, overlay_arrays, materialized, out_dir,
+                  subjects_dir=None, normative_materialized=None, template=TEMPLATE):
     # Matches lh_<template>_<metric>.func.gii, rh_..., asym_..., and the
     # corresponding _matrix.f32 files, isolating <metric>.
     overlay_re = re.compile(
         r'^(?:lh|rh|asym)_' + re.escape(template) + r'_(.+?)(?:\.func\.gii|_matrix\.f32)$'
     )
+    # Matches normative_<lh|rh|asym>_<metric>_<mean|std>.f32, isolating <metric>.
+    normative_re = re.compile(r'^normative_(?:lh|rh|asym)_(.+?)_(?:mean|std)\.f32$')
+    if normative_materialized is None:
+        normative_materialized = set()
 
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self):
@@ -1584,19 +1625,30 @@ def make_handler(html_bytes, file_map, overlay_arrays, materialized, out_dir, te
                 self._reply(404, 'text/plain', b'Not found\n')
 
         def _materialize_if_needed(self, path):
-            """First request for a not-yet-generated metric's overlay triggers
-            on-demand conversion; subsequent requests just hit file_map."""
+            """First request for a not-yet-generated metric's overlay (or
+            normative comparison) triggers on-demand conversion; subsequent
+            requests just hit file_map."""
             fname = path.rsplit('/', 1)[-1]
+
             m = overlay_re.match(fname)
-            if not m:
+            if m:
+                metric = m.group(1)
+                if metric in materialized or metric not in overlay_arrays:
+                    return
+                lh_M, rh_M = overlay_arrays[metric]
+                for url, fpath in materialize_overlay(metric, lh_M, rh_M, out_dir, template):
+                    file_map[url] = fpath
+                materialized.add(metric)
                 return
-            metric = m.group(1)
-            if metric in materialized or metric not in overlay_arrays:
-                return
-            lh_M, rh_M = overlay_arrays[metric]
-            for url, fpath in materialize_overlay(metric, lh_M, rh_M, out_dir, template):
-                file_map[url] = fpath
-            materialized.add(metric)
+
+            m = normative_re.match(fname)
+            if m and subjects_dir:
+                metric = m.group(1)
+                if metric in normative_materialized:
+                    return
+                for url, fpath in materialize_normative(subjects_dir, metric, out_dir, template):
+                    file_map[url] = fpath
+                normative_materialized.add(metric)
 
         def _reply(self, code, ctype, data):
             self.send_response(code)
@@ -1661,11 +1713,10 @@ def main():
             file_map[url] = fpath
         materialized.add(first_metric)
 
-    print('\nChecking for cohort normative data…')
-    normative_info, normative_files = compute_normative_stats(args.subjects_dir, tsf_metrics.keys(), out_dir)
-    for url, fpath in normative_files:
-        file_map[url] = fpath
+    print('\nChecking for cohort normative data (metadata only — computed lazily on request)…')
+    normative_info = scan_normative_info(args.subjects_dir, tsf_metrics.keys())
     print(f'Normative metrics: {list(normative_info) or "none"}')
+    normative_materialized = set()
 
     html_bytes = make_html(
         args.subj_id, vol_path, lh_path, rh_path,
@@ -1673,7 +1724,8 @@ def main():
     ).encode('utf-8')
 
     server = HTTPServer(('localhost', args.port),
-        make_handler(html_bytes, file_map, overlay_arrays, materialized, out_dir))
+        make_handler(html_bytes, file_map, overlay_arrays, materialized, out_dir,
+                      args.subjects_dir, normative_materialized))
     url    = f'http://localhost:{args.port}/'
     print(f'\nBrowser  : {url}')
     print('Ctrl+C to quit.\n')
