@@ -32,6 +32,7 @@ _HTML = r"""<!DOCTYPE html>
 <meta charset="utf-8">
 <title>Cortical Browser — __SUBJ_ID__</title>
 <style>
+:root { --accent-yellow: #F5C842; }   /* selected-vertex accent, shared by box/crosshair/plot line */
 * { box-sizing: border-box; margin: 0; padding: 0; }
 body {
   background: #1f1f1f; color: #ccc;
@@ -43,6 +44,7 @@ header {
   padding: 3px 8px; display: flex; align-items: center;
   gap: 6px; flex-shrink: 0; flex-wrap: wrap;
 }
+.apptitle { font-weight: bold; color: var(--accent-yellow); font-size: 12px; letter-spacing: 0.5px; white-space: nowrap; }
 .subj { font-weight: bold; color: #f0f0f0; font-size: 12px; white-space: nowrap; }
 .glab { color: #d1d1d1; font-size: 10px; white-space: nowrap; }
 label { display: flex; align-items: center; gap: 3px; white-space: nowrap; color: #999; }
@@ -61,8 +63,14 @@ input[type=number] {
 }
 input[type=number]::-webkit-inner-spin-button,
 input[type=number]::-webkit-outer-spin-button { display: none; }
+/* Re-enable up/down spinners for the Rings field only */
+#ringsInput { -moz-appearance: number-input; width: 52px; }
+#ringsInput::-webkit-inner-spin-button,
+#ringsInput::-webkit-outer-spin-button {
+  display: inline-block; -webkit-appearance: inner-spin-button; opacity: 1;
+}
 #vtxInput {
-  background: #f5c842; color: #1a1a1a; border: 1px solid #f5c842; font-weight: bold;
+  background: var(--accent-yellow); color: #1a1a1a; border: 1px solid var(--accent-yellow); font-weight: bold;
 }
 button.cbtn {
   background: #3a3a3a; color: #ddd; border: 1px solid #555555;
@@ -114,6 +122,7 @@ canvas.nv-canvas { display: block; width: 100% !important; height: 100% !importa
 <body>
 
 <header>
+  <span class="apptitle">CORTICAL BROWSER</span>
   <span class="subj">__SUBJ_ID__</span>
   <div class="sep"></div>
 
@@ -169,7 +178,7 @@ canvas.nv-canvas { display: block; width: 100% !important; height: 100% !importa
   <label>Shader <select id="shaderSel">
     <option value="Matte">Matte</option>
     <option value="Phong">Phong</option>
-    <option value="Diffuse">Diffuse</option>
+    <option value="Diffuse" selected>Diffuse</option>
   </select></label>
   <div class="sep"></div>
 
@@ -180,7 +189,8 @@ canvas.nv-canvas { display: block; width: 100% !important; height: 100% !importa
 
   <label><input type="checkbox" id="radioConv" checked> Rad</label>
   <label><input type="checkbox" id="crosshairChk" checked> X-hair</label>
-  <label><input type="checkbox" id="surfOnSlicesChk" checked> Surf on slices</label>
+  <label title="Overlay white-matter surface outline on the orthoslices (loaded on first use)"><input type="checkbox" id="contourWmChk"> WM</label>
+  <label title="Overlay pial surface outline on the orthoslices (loaded on first use)"><input type="checkbox" id="contourPialChk"> pial</label>
   <label>Vertex <input type="number" id="vtxInput" min="0" step="1" title="Jump to vertex ID"></label>
   <label>Rings <input type="number" id="ringsInput" min="0" step="1" value="0" title="Neighbor rings to average around the selected vertex"></label>
   <label><input type="checkbox" id="pivotAtVertexChk"> Pivot@vertex</label>
@@ -255,6 +265,11 @@ const BASE_URL = "__BASE_URL__"
 const TEMPLATE = "__TEMPLATE__"
 const STEP_MM  = __STEP_MM__
 
+// Selected-vertex accent color, shared across the vertex box (CSS --accent-yellow),
+// the orthoslice crosshair, and the plots' depth reference line.
+const ACCENT_YELLOW = '#F5C842'
+const ACCENT_YELLOW_RGBA = [0xF5/255, 0xC8/255, 0x42/255, 1]
+
 // ── app state ─────────────────────────────────────────────────────────────────
 let currentMetric  = Object.keys(METRICS)[0] || null
 let currentCmap    = 'viridis'
@@ -262,11 +277,11 @@ let currentCmapAsym = 'bwr'
 let dataInvert     = false
 let asymInvert     = false
 let layerOpacity   = 1.0
-let currentShader  = 'Matte'
+let currentShader  = 'Diffuse'
 let currentDepth   = 0
 let currentClimMin = 0, currentClimMax = 1
 let currentAsymMin = -1, currentAsymMax = 1
-let showSurfOnSlices = true
+// Orthoslice surface contours are off by default and lazily loaded per kind.
 let nRings = 0
 let currentVertex = null
 let pivotAtVertex = false
@@ -289,6 +304,14 @@ const LH_SURF = SURFS.find(s => s.hemi === 'lh') || null
 const RH_SURF = SURFS.find(s => s.hemi === 'rh') || null
 const VOL_URL = VOLUMES.length ? VOLUMES[0].url : null
 
+// Per-hemisphere accent colors: single source of truth is each surface's
+// rgba255 (set in Python); the LH/RH plot lines reuse the same hue so the
+// surfaces and their depth-profile plots always match.
+const rgba255ToHex = ([r, g, b]) =>
+  '#' + [r, g, b].map(v => v.toString(16).padStart(2, '0')).join('')
+const LH_COLOR = LH_SURF ? rgba255ToHex(LH_SURF.rgba255) : '#66B3FF'
+const RH_COLOR = RH_SURF ? rgba255ToHex(RH_SURF.rgba255) : '#FF854D'
+
 // Independently-selectable surface geometry per panel (white/pial/inflated/
 // very_inflated/average_white/average_pial) — all share the same ico6_sym
 // topology, so switching only changes vertex coordinates, not data mapping.
@@ -296,10 +319,14 @@ let lhSurfUrl   = LH_SURF?.url ?? null
 let rhSurfUrl   = RH_SURF?.url ?? null
 let asymSurfUrl = LH_SURF?.url ?? null
 
-// Orthoslice contour meshes, tracked individually (not via loadMeshes, which
-// replaces nvSlices' whole mesh list) so an LH-only or RH-only surface-type
-// change only re-parses/re-uploads the one hemisphere that actually changed.
-let lhContourMesh = null, rhContourMesh = null
+// Orthoslice contour meshes, lazily loaded per surface kind ('wm' = white,
+// 'pial') and kept in memory once loaded so toggling visibility is instant.
+// Only white/pial are ever overlaid; the LH/RH panel surface-type selectors
+// (inflated, very_inflated, ...) never touch these. Each loaded entry holds
+// both hemispheres: { lh: NVMesh, rh: NVMesh }.
+const SLICE_CONTOUR_SURF = { wm: 'white', pial: 'pial' }
+const sliceContours = { wm: null, pial: null }
+const sliceContourVisible = { wm: false, pial: false }
 
 // ── NiiVue instances ──────────────────────────────────────────────────────────
 const SURF_CFG = { backColor: [0.06, 0.06, 0.06, 1], show3Dcrosshair: false }
@@ -370,6 +397,14 @@ function applyCurrentShader() {
 // ── camera helper ─────────────────────────────────────────────────────────────
 function setCam(nv, az, el) {
   nv.scene.renderAzimuth = az; nv.scene.renderElevation = el; nv.drawScene()
+}
+
+// Initial 3D camera framing per panel, reused by the first load and the "r"
+// reset shortcut so both stay in sync.
+function applyInitialCameras() {
+  setCam(nvLhL,   90, 15)   // LH lateral
+  setCam(nvRhL,  270, 15)   // RH lateral
+  setCam(nvAsym,  90, 15)   // Asymmetry (LH geometry, lateral view)
 }
 
 // draw3D() calls nv.setPivot3D() at the start of every single frame, which
@@ -453,36 +488,39 @@ async function loadAsymPanel(metric) {
   }
 }
 
-// Orthoslice contours (geometry only, no scalar overlay) — follow whatever
-// surface type the LH/RH panels currently show. Loaded via addMesh/removeMesh
-// (not loadMeshes, which replaces nvSlices' whole mesh list) so updating one
-// hemisphere's contour doesn't force a re-parse/re-upload of the other's.
-async function loadLhSliceContour() {
-  if (!LH_SURF || !lhSurfUrl) return
-  console.time('loadLhSliceContour')
-  if (lhContourMesh) nvSlices.removeMesh(lhContourMesh)
-  lhContourMesh = await niivue.NVMesh.loadFromUrl({ url: lhSurfUrl, gl: nvSlices.gl, rgba255: LH_SURF.rgba255 })
-  nvSlices.addMesh(lhContourMesh)
-  console.timeEnd('loadLhSliceContour')
-}
-
-async function loadRhSliceContour() {
-  if (!RH_SURF || !rhSurfUrl) return
-  console.time('loadRhSliceContour')
-  if (rhContourMesh) nvSlices.removeMesh(rhContourMesh)
-  rhContourMesh = await niivue.NVMesh.loadFromUrl({ url: rhSurfUrl, gl: nvSlices.gl, rgba255: RH_SURF.rgba255 })
-  nvSlices.addMesh(rhContourMesh)
-  console.timeEnd('loadRhSliceContour')
-}
-
-function finishSliceContourUpdate() {
+// Orthoslice contours (geometry only, no scalar overlay). Loaded on demand the
+// first time their WM/pial toggle is switched on, then kept in nvSlices' mesh
+// list so on/off is just an opacity change — no re-parse/re-upload. Added via
+// addMesh (not loadMeshes, which would replace nvSlices' whole mesh list).
+async function ensureSliceContour(kind) {
+  if (sliceContours[kind]) return sliceContours[kind]
+  const surfType = SLICE_CONTOUR_SURF[kind]
+  const lhUrl = SURF_TYPES[surfType]?.lh
+  const rhUrl = SURF_TYPES[surfType]?.rh
+  console.time(`ensureSliceContour:${kind}`)
+  const [lhMesh, rhMesh] = await Promise.all([
+    lhUrl ? niivue.NVMesh.loadFromUrl({ url: lhUrl, gl: nvSlices.gl, rgba255: LH_SURF.rgba255 }) : null,
+    rhUrl ? niivue.NVMesh.loadFromUrl({ url: rhUrl, gl: nvSlices.gl, rgba255: RH_SURF.rgba255 }) : null,
+  ])
+  for (const m of [lhMesh, rhMesh]) if (m) nvSlices.addMesh(m)
+  sliceContours[kind] = { lh: lhMesh, rh: rhMesh }
   applyShader(nvSlices, 'Crosscut')   // clean plane-intersection contour instead of a thick slab
-  applySliceMeshVisibility()
+  console.timeEnd(`ensureSliceContour:${kind}`)
+  return sliceContours[kind]
 }
 
-async function loadSliceContours() {
-  await Promise.all([loadLhSliceContour(), loadRhSliceContour()])
-  finishSliceContourUpdate()
+function applySliceContourVisibility(kind) {
+  const c = sliceContours[kind]
+  if (!c) return
+  const op = sliceContourVisible[kind] ? 1 : 0
+  for (const m of [c.lh, c.rh]) if (m) nvSlices.setMeshProperty(m.id, 'opacity', op)
+  nvSlices.drawScene()
+}
+
+async function toggleSliceContour(kind, on) {
+  sliceContourVisible[kind] = on
+  if (on) await ensureSliceContour(kind)
+  applySliceContourVisibility(kind)
 }
 
 async function loadAllSurfaces(metric, resetCamera = false) {
@@ -490,12 +528,9 @@ async function loadAllSurfaces(metric, resetCamera = false) {
     loadLhPanel(metric),
     loadRhPanel(metric),
     loadAsymPanel(metric),
-    loadSliceContours(),
   ])
   if (resetCamera) {
-    setCam(nvLhL,   90, 15)   // LH lateral
-    setCam(nvRhL,  270, 15)   // RH lateral
-    setCam(nvAsym,  90, 15)   // Asymmetry (LH geometry, lateral view)
+    applyInitialCameras()
   }
 }
 
@@ -562,12 +597,22 @@ await Promise.all([
   currentMetric ? loadMatrices(currentMetric)    : Promise.resolve(),
 ])
 
+// Remember the volume's default grayscale window so "r" can restore it after
+// the user drag-adjusts orthoslice contrast.
+let defaultVolCalMin = null, defaultVolCalMax = null
+if (nvSlices.volumes.length) {
+  defaultVolCalMin = nvSlices.volumes[0].cal_min
+  defaultVolCalMax = nvSlices.volumes[0].cal_max
+}
+
 // ── slice setup (single multiplanar instance) ─────────────────────────────────
 nvSlices.opts.onLocationChange = d => {
   document.getElementById('pos-display').textContent = d.string
 }
 nvSlices.setSliceType(nvSlices.sliceTypeMultiplanar)
 nvSlices.setRadiologicalConvention(true)
+nvSlices.setCrosshairColor(ACCENT_YELLOW_RGBA)   // match selected-vertex color
+nvSlices.setCrosshairWidth(0.5)                   // thinner than the default 1px
 
 // ── depth control ─────────────────────────────────────────────────────────────
 function setDepth(d) {
@@ -582,6 +627,17 @@ function setDepth(d) {
 
 document.getElementById('depthSlider').oninput = e => setDepth(+e.target.value)
 
+// Step cortical depth by ±1, clamped to the current metric's range, keeping the
+// slider in sync. Used by the +/- keyboard shortcuts.
+function stepDepth(delta) {
+  if (!currentMetric) return
+  const nd = METRICS[currentMetric].n_depths
+  const d = Math.max(0, Math.min(nd - 1, currentDepth + delta))
+  if (d === currentDepth) return
+  document.getElementById('depthSlider').value = d
+  setDepth(d)
+}
+
 // ── CLim helpers ──────────────────────────────────────────────────────────────
 function setDataCLim(mn, mx) {
   currentClimMin = mn; currentClimMax = mx
@@ -594,6 +650,15 @@ function setDataCLim(mn, mx) {
   refreshColorbars()
 }
 
+// Pin the Asymmetry plot's y-axis to the asym colormap limits so the plot and
+// the surface color scale share the same range.
+function applyAsymYLimits() {
+  if (!chartAsym) return
+  chartAsym.options.scales.y.min = currentAsymMin
+  chartAsym.options.scales.y.max = currentAsymMax
+  chartAsym.update('none')
+}
+
 function setAsymCLim(mn, mx) {
   currentAsymMin = mn; currentAsymMax = mx
   for (const mesh of nvAsym.meshes)
@@ -601,6 +666,7 @@ function setAsymCLim(mn, mx) {
       nvAsym.setMeshLayerProperty(mesh.id, 0, 'cal_min', mn)
       nvAsym.setMeshLayerProperty(mesh.id, 0, 'cal_max', mx)
     }
+  applyAsymYLimits()
   refreshColorbars()
 }
 
@@ -693,6 +759,7 @@ function initClimInputs(info) {
   asymMaxEl.value = info.cal_max_asym.toFixed(4)
   currentClimMin = info.cal_min; currentClimMax = info.cal_max
   currentAsymMin = info.cal_min_asym; currentAsymMax = info.cal_max_asym
+  applyAsymYLimits()
   refreshColorbars()
 }
 
@@ -741,14 +808,12 @@ document.getElementById('cmapAsymInv').addEventListener('change', e =>
 // ── overlay opacity slider ────────────────────────────────────────────────────
 document.getElementById('ovOp').oninput  = e => setLayerOpacity(+e.target.value / 100)
 
-// ── surface-on-orthoslice overlay toggle ─────────────────────────────────────
-function applySliceMeshVisibility() {
-  for (const m of nvSlices.meshes) nvSlices.setMeshProperty(m.id, 'opacity', showSurfOnSlices ? 1 : 0)
-  nvSlices.drawScene()
-}
-document.getElementById('surfOnSlicesChk').addEventListener('change', function() {
-  showSurfOnSlices = this.checked
-  applySliceMeshVisibility()
+// ── WM / pial contour overlays on the orthoslices (lazy-loaded) ──────────────
+document.getElementById('contourWmChk').addEventListener('change', function() {
+  toggleSliceContour('wm', this.checked)
+})
+document.getElementById('contourPialChk').addEventListener('change', function() {
+  toggleSliceContour('pial', this.checked)
 })
 
 // ── shader selector ───────────────────────────────────────────────────────────
@@ -775,17 +840,15 @@ async function reselectAfterSurfChange() {
 document.getElementById('lhSurfSel').addEventListener('change', async e => {
   lhSurfUrl = SURF_TYPES[e.target.value]?.lh ?? lhSurfUrl
   lhVertexAreas = null   // geometry changed — per-vertex area must be recomputed
-  // TEMP DIAGNOSTIC: contour reload disabled to isolate loadLhPanel's own
-  // timing from any GPU contention with the concurrent contour reload.
+  // Orthoslice contours are independent WM/pial overlays, so the panel's
+  // surface-type change only reloads the LH 3-D panel.
   await loadLhPanel(currentMetric)
-  // await loadLhSliceContour(); finishSliceContourUpdate()
   await reselectAfterSurfChange()
 })
 document.getElementById('rhSurfSel').addEventListener('change', async e => {
   rhSurfUrl = SURF_TYPES[e.target.value]?.rh ?? rhSurfUrl
   rhVertexAreas = null
-  await Promise.all([loadRhPanel(currentMetric), loadRhSliceContour()])
-  finishSliceContourUpdate()
+  await loadRhPanel(currentMetric)
   await reselectAfterSurfChange()
 })
 document.getElementById('asymSurfSel').addEventListener('change', async e => {
@@ -820,14 +883,19 @@ document.getElementById('metricSel').addEventListener('change', async e => {
 
   await Promise.all([loadAllSurfaces(currentMetric), loadMatrices(currentMetric)])
   setDepth(currentDepth)
-  document.getElementById('vtx-display').textContent = '—, —, — mm'
-  document.getElementById('pos-display').textContent = ''
-  currentVertex = null
-  resetPivot(nvLhL); resetPivot(nvRhL); resetPivot(nvAsym)
-  for (const chart of [chartLH, chartRH, chartAsym]) {
-    chart.data.datasets[0].label = chart.baseLabel
-    for (const i of [0, 1, 2, 3, 4, 5]) chart.data.datasets[i].data = []
-    chart.update('none')
+  if (currentVertex !== null) {
+    // Keep the selected vertex; re-select to redraw its markers and replot the
+    // three depth profiles against the newly-loaded metric.
+    await selectVertex(currentVertex, nvLhL)
+  } else {
+    document.getElementById('vtx-display').textContent = '—, —, — mm'
+    document.getElementById('pos-display').textContent = ''
+    resetPivot(nvLhL); resetPivot(nvRhL); resetPivot(nvAsym)
+    for (const chart of [chartLH, chartRH, chartAsym]) {
+      chart.data.datasets[0].label = chart.baseLabel
+      for (const i of [0, 1, 2, 3, 4, 5]) chart.data.datasets[i].data = []
+      chart.update('none')
+    }
   }
 })
 
@@ -1235,6 +1303,18 @@ document.getElementById('showNormativeChk').addEventListener('change', async fun
   }
 })
 
+// Disable the toggle when the server found no cohort normative data, so it's
+// clearly unavailable rather than silently doing nothing.
+{
+  const chk = document.getElementById('showNormativeChk')
+  if (Object.keys(NORMATIVE).length === 0) {
+    chk.disabled = true
+    chk.checked = false
+    chk.parentElement.style.opacity = 0.4
+    chk.parentElement.title = 'No cohort normative data available for this dataset'
+  }
+}
+
 // ── orthoslice zoom (Ctrl + scroll) ──────────────────────────────────────────
 let sliceZoom = 1
 document.getElementById('gl-slices').addEventListener('wheel', e => {
@@ -1243,6 +1323,90 @@ document.getElementById('gl-slices').addEventListener('wheel', e => {
   sliceZoom = Math.max(0.3, Math.min(8, sliceZoom * (e.deltaY < 0 ? 1.1 : 1/1.1)))
   nvSlices.scene.pan2Dxyzmm[3] = sliceZoom; nvSlices.drawScene()
 }, {capture:true, passive:false})
+
+// Reset the orthoslices: viewport (zoom + pan) and the grayscale contrast.
+function resetSliceView() {
+  sliceZoom = 1
+  nvSlices.scene.pan2Dxyzmm = [0, 0, 0, 1]
+  if (nvSlices.volumes.length && defaultVolCalMin !== null) {
+    nvSlices.volumes[0].cal_min = defaultVolCalMin
+    nvSlices.volumes[0].cal_max = defaultVolCalMax
+    nvSlices.updateGLVolume()
+  }
+  nvSlices.drawScene()
+}
+
+// Reset the 3D surface panels to their initial framing: camera angles, zoom,
+// and rotation pivot.
+function reset3DSurfaceView() {
+  applyInitialCameras()
+  for (const nv of [nvLhL, nvRhL, nvAsym]) {
+    nv.scene.volScaleMultiplier = 1
+    resetPivot(nv)   // also redraws
+  }
+}
+
+// ── keyboard shortcuts ────────────────────────────────────────────────────────
+// Step the orthoslice crosshair by whole voxels along L-R (x), P-A (y), I-S (z).
+function stepCrosshair(dx, dy, dz) {
+  if (!nvSlices.volumes.length) return
+  nvSlices.moveCrosshairInVox(dx, dy, dz)
+}
+
+// Step the neighbor-ring count via its input so the field (and its spinners)
+// stay in sync and the existing change handler does the clamp + replot.
+function stepRings(delta) {
+  const el = document.getElementById('ringsInput')
+  el.value = Math.max(0, (parseInt(el.value, 10) || 0) + delta)
+  el.dispatchEvent(new Event('change'))
+}
+
+// Global handler; ignores keys typed into form fields so vertex/number inputs
+// still work normally. More shortcuts get added to the switch below.
+document.addEventListener('keydown', e => {
+  const t = e.target
+  if (t && (t.tagName === 'INPUT' || t.tagName === 'SELECT' ||
+            t.tagName === 'TEXTAREA' || t.isContentEditable)) return
+  if (e.ctrlKey || e.metaKey || e.altKey) return
+  // Numpad +/- adjust the ring count (distinct from the main-keyboard +/-,
+  // which change depth); keyed off e.code since e.key is identical for both.
+  if (e.code === 'NumpadAdd')      { stepRings( 1); e.preventDefault(); return }
+  if (e.code === 'NumpadSubtract') { stepRings(-1); e.preventDefault(); return }
+  switch (e.key.toLowerCase()) {
+    case 'r':
+      resetSliceView()
+      reset3DSurfaceView()
+      e.preventDefault()
+      break
+    case 'x': {   // toggle the crosshair via its checkbox so the UI stays in sync
+      const chk = document.getElementById('crosshairChk')
+      chk.checked = !chk.checked
+      chk.dispatchEvent(new Event('change'))
+      e.preventDefault()
+      break
+    }
+    case 'p': {   // toggle Pivot@vertex via its checkbox so the UI stays in sync
+      const chk = document.getElementById('pivotAtVertexChk')
+      chk.checked = !chk.checked
+      chk.dispatchEvent(new Event('change'))
+      e.preventDefault()
+      break
+    }
+    // Orthoslice navigation: arrows/PgUp/PgDn step through the three planes.
+    case 'arrowup':    stepCrosshair(0, 0,  1); e.preventDefault(); break  // axial → superior
+    case 'arrowdown':  stepCrosshair(0, 0, -1); e.preventDefault(); break  // axial → inferior
+    case 'arrowright': stepCrosshair( 1, 0, 0); e.preventDefault(); break  // sagittal → right
+    case 'arrowleft':  stepCrosshair(-1, 0, 0); e.preventDefault(); break  // sagittal → left
+    case 'pageup':     stepCrosshair(0,  1, 0); e.preventDefault(); break  // coronal → anterior
+    case 'pagedown':   stepCrosshair(0, -1, 0); e.preventDefault(); break  // coronal → posterior
+    // Cortical depth: +/Home go deeper, -/End go shallower ('=' is unshifted '+').
+    case '+':
+    case '=':
+    case 'home':       stepDepth( 1); e.preventDefault(); break
+    case '-':
+    case 'end':        stepDepth(-1); e.preventDefault(); break
+  }
+})
 
 // ── depth-profile charts ──────────────────────────────────────────────────────
 function makeChart(id, color, label, fill = false) {
@@ -1283,7 +1447,7 @@ function makeChart(id, color, label, fill = false) {
           filter: (item, data) => !data.datasets[item.datasetIndex]?._isSd } },
         annotation: { annotations: { depthLine: {
           type: 'line', xMin: 0, xMax: 0,
-          borderColor: '#f5c842', borderWidth: 1.5, borderDash: [4,3]
+          borderColor: ACCENT_YELLOW, borderWidth: 1.5, borderDash: [4,3]
         }}}
       },
       scales: {
@@ -1307,9 +1471,10 @@ function setDepthFromChart(chart, pixelX) {
   setDepth(d)
 }
 
-chartLH   = makeChart('chart-lh',   '#6ab0f5', 'LH')
-chartRH   = makeChart('chart-rh',   '#f5a66a', 'RH')
+chartLH   = makeChart('chart-lh',   LH_COLOR, 'LH')
+chartRH   = makeChart('chart-rh',   RH_COLOR, 'RH')
 chartAsym = makeChart('chart-asym', '#8af5a6', 'Asymmetry', true)
+applyAsymYLimits()
 
 function updateDepthMarker(mm) {
   if (!chartLH) return
@@ -1460,11 +1625,10 @@ def compute_asym_matrix(lh_M, rh_M):
     return np.nan_to_num(A, nan=0.0, posinf=0.0, neginf=0.0)
 
 
-def asym_cal_range(A):
-    flat = np.abs(A.ravel())
-    flat = flat[flat > 0]
-    amax = float(np.percentile(flat, 98)) if flat.size else 1.0
-    return round(-amax, 4), round(amax, 4)
+def asym_cal_range():
+    # Fixed symmetric range for the asymmetry index; the front-end uses this for
+    # both the surface color limits and the asym plot's y-axis.
+    return -1.0, 1.0
 
 
 def write_func_gii(M, out_path):
@@ -1483,7 +1647,7 @@ def scan_overlay_stats(tsf_metrics):
         lh_M = read_tsf_matrix(hemis['lh'])
         rh_M = read_tsf_matrix(hemis['rh'])
         cmin, cmax = matrix_cal_range(lh_M)
-        amin, amax = asym_cal_range(compute_asym_matrix(lh_M, rh_M))
+        amin, amax = asym_cal_range()
         info[metric] = {
             'n_depths':     lh_M.shape[1],
             'cal_min':      cmin,
@@ -1611,13 +1775,15 @@ def make_html(subj_id, vol_path, lh_path, rh_path, overlay_info, port, surf_type
     if vol_path:
         volumes.append({'url': f'{base}/{os.path.basename(vol_path)}',
                         'colormap': 'gray', 'opacity': 1})
+    # Per-hemisphere accent colors; the front-end derives the LH/RH plot line
+    # colors from these same rgba255 values so surfaces and plots stay in sync.
     surfs = []
     if lh_path:
         surfs.append({'url': f'{base}/{os.path.basename(lh_path)}',
-                      'rgba255': [100, 180, 255, 255], 'hemi': 'lh'})
+                      'rgba255': [102, 179, 255, 255], 'hemi': 'lh'})   # #66B3FF
     if rh_path:
         surfs.append({'url': f'{base}/{os.path.basename(rh_path)}',
-                      'rgba255': [255, 150, 100, 255], 'hemi': 'rh'})
+                      'rgba255': [255, 133, 77, 255], 'hemi': 'rh'})    # #FF854D
 
     surf_types_urls = {
         surf_type: {hemi: f'{base}/{os.path.basename(p)}' for hemi, p in hemis.items()}
