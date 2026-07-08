@@ -296,6 +296,11 @@ let lhSurfUrl   = LH_SURF?.url ?? null
 let rhSurfUrl   = RH_SURF?.url ?? null
 let asymSurfUrl = LH_SURF?.url ?? null
 
+// Orthoslice contour meshes, tracked individually (not via loadMeshes, which
+// replaces nvSlices' whole mesh list) so an LH-only or RH-only surface-type
+// change only re-parses/re-uploads the one hemisphere that actually changed.
+let lhContourMesh = null, rhContourMesh = null
+
 // ── NiiVue instances ──────────────────────────────────────────────────────────
 const SURF_CFG = { backColor: [0.06, 0.06, 0.06, 1], show3Dcrosshair: false }
 const SLIC_CFG = {
@@ -391,53 +396,49 @@ function resetPivot(nv) {
 }
 
 // ── surface loading ───────────────────────────────────────────────────────────
-async function loadAllSurfaces(metric, resetCamera = false) {
-  markerMeshes.clear()   // loadMeshes() below replaces each instance's mesh list, wiping any marker sphere
-  neighborMeshes.clear()
+// Split into one loader per panel + one for the orthoslice contours, so a
+// single surface-type dropdown change only reloads what actually changed
+// instead of re-fetching/re-parsing/re-uploading all three mesh panels.
+function layerDataFor(hemi, metric) {
   const info = metric ? METRICS[metric] : null
+  if (!info) return []
+  return [{ url: `${BASE_URL}/${hemi}_${TEMPLATE}_${metric}.func.gii`,
+            colormap: currentCmap, colormapInvert: dataInvert,
+            opacity: layerOpacity, cal_min: currentClimMin, cal_max: currentClimMax }]
+}
+function layerAsymFor(metric) {
+  const info = metric ? METRICS[metric] : null
+  if (!info) return []
+  return [{ url: `${BASE_URL}/asym_${TEMPLATE}_${metric}.func.gii`,
+            colormap: currentCmapAsym, colormapInvert: asymInvert,
+            opacity: layerOpacity, cal_min: currentAsymMin, cal_max: currentAsymMax }]
+}
 
-  function layerData(hemi) {
-    if (!info) return []
-    return [{ url: `${BASE_URL}/${hemi}_${TEMPLATE}_${metric}.func.gii`,
-              colormap: currentCmap, colormapInvert: dataInvert,
-              opacity: layerOpacity, cal_min: currentClimMin, cal_max: currentClimMax }]
-  }
-  function layerAsym() {
-    if (!info) return []
-    const layer = { url: `${BASE_URL}/asym_${TEMPLATE}_${metric}.func.gii`,
-                    colormap: currentCmapAsym, colormapInvert: asymInvert,
-                    opacity: layerOpacity, cal_min: currentAsymMin, cal_max: currentAsymMax }
-    console.log('[layerAsym] loading:', JSON.stringify(layer))
-    return [layer]
-  }
+async function loadLhPanel(metric) {
+  if (!LH_SURF || !lhSurfUrl) return
+  console.time('loadLhPanel')
+  markerMeshes.delete(nvLhL); neighborMeshes.delete(nvLhL)
+  await nvLhL.loadMeshes([{ url: lhSurfUrl, rgba255: LH_SURF.rgba255, layers: layerDataFor('lh', metric) }])
+  applyShader(nvLhL, currentShader)
+  console.timeEnd('loadLhPanel')
+}
 
-  const proms = []
-  if (LH_SURF && lhSurfUrl) {
-    proms.push(nvLhL.loadMeshes( [{ url: lhSurfUrl, rgba255: LH_SURF.rgba255, layers: layerData('lh') }]))
-  }
-  if (LH_SURF && asymSurfUrl) {
-    proms.push(nvAsym.loadMeshes([{ url: asymSurfUrl, rgba255: LH_SURF.rgba255, layers: layerAsym() }]))
-  }
-  if (RH_SURF && rhSurfUrl)
-    proms.push(nvRhL.loadMeshes([{ url: rhSurfUrl, rgba255: RH_SURF.rgba255, layers: layerData('rh') }]))
+async function loadRhPanel(metric) {
+  if (!RH_SURF || !rhSurfUrl) return
+  console.time('loadRhPanel')
+  markerMeshes.delete(nvRhL); neighborMeshes.delete(nvRhL)
+  await nvRhL.loadMeshes([{ url: rhSurfUrl, rgba255: RH_SURF.rgba255, layers: layerDataFor('rh', metric) }])
+  applyShader(nvRhL, currentShader)
+  console.timeEnd('loadRhPanel')
+}
 
-  // Orthoslice contours (geometry only, no scalar overlay) — follow whatever
-  // surface type the LH/RH panels currently show
-  const sliceMeshes = []
-  if (LH_SURF && lhSurfUrl) sliceMeshes.push({ url: lhSurfUrl, rgba255: LH_SURF.rgba255 })
-  if (RH_SURF && rhSurfUrl) sliceMeshes.push({ url: rhSurfUrl, rgba255: RH_SURF.rgba255 })
-  if (sliceMeshes.length)
-    proms.push(nvSlices.loadMeshes([...sliceMeshes]))
-
-  await Promise.all(proms)
-  applyCurrentShader()
-  applyShader(nvSlices, 'Crosscut')   // clean plane-intersection contour instead of a thick slab
-  applySliceMeshVisibility()
-  if (resetCamera) {
-    setCam(nvLhL,   90, 15)   // LH lateral
-    setCam(nvRhL,  270, 15)   // RH lateral
-    setCam(nvAsym,  90, 15)   // Asymmetry (LH geometry, lateral view)
-  }
+async function loadAsymPanel(metric) {
+  if (!LH_SURF || !asymSurfUrl) return
+  console.time('loadAsymPanel')
+  markerMeshes.delete(nvAsym); neighborMeshes.delete(nvAsym)
+  await nvAsym.loadMeshes([{ url: asymSurfUrl, rgba255: LH_SURF.rgba255, layers: layerAsymFor(metric) }])
+  applyShader(nvAsym, currentShader)
+  console.timeEnd('loadAsymPanel')
 
   // Diagnostic: confirm what NiiVue actually loaded on the asym surface
   const _am = nvAsym.meshes[0]
@@ -449,6 +450,52 @@ async function loadAllSurfaces(metric, resetCamera = false) {
                 '| url:', _l?.url)
   } else {
     console.warn('[nvAsym] no meshes loaded')
+  }
+}
+
+// Orthoslice contours (geometry only, no scalar overlay) — follow whatever
+// surface type the LH/RH panels currently show. Loaded via addMesh/removeMesh
+// (not loadMeshes, which replaces nvSlices' whole mesh list) so updating one
+// hemisphere's contour doesn't force a re-parse/re-upload of the other's.
+async function loadLhSliceContour() {
+  if (!LH_SURF || !lhSurfUrl) return
+  console.time('loadLhSliceContour')
+  if (lhContourMesh) nvSlices.removeMesh(lhContourMesh)
+  lhContourMesh = await niivue.NVMesh.loadFromUrl({ url: lhSurfUrl, gl: nvSlices.gl, rgba255: LH_SURF.rgba255 })
+  nvSlices.addMesh(lhContourMesh)
+  console.timeEnd('loadLhSliceContour')
+}
+
+async function loadRhSliceContour() {
+  if (!RH_SURF || !rhSurfUrl) return
+  console.time('loadRhSliceContour')
+  if (rhContourMesh) nvSlices.removeMesh(rhContourMesh)
+  rhContourMesh = await niivue.NVMesh.loadFromUrl({ url: rhSurfUrl, gl: nvSlices.gl, rgba255: RH_SURF.rgba255 })
+  nvSlices.addMesh(rhContourMesh)
+  console.timeEnd('loadRhSliceContour')
+}
+
+function finishSliceContourUpdate() {
+  applyShader(nvSlices, 'Crosscut')   // clean plane-intersection contour instead of a thick slab
+  applySliceMeshVisibility()
+}
+
+async function loadSliceContours() {
+  await Promise.all([loadLhSliceContour(), loadRhSliceContour()])
+  finishSliceContourUpdate()
+}
+
+async function loadAllSurfaces(metric, resetCamera = false) {
+  await Promise.all([
+    loadLhPanel(metric),
+    loadRhPanel(metric),
+    loadAsymPanel(metric),
+    loadSliceContours(),
+  ])
+  if (resetCamera) {
+    setCam(nvLhL,   90, 15)   // LH lateral
+    setCam(nvRhL,  270, 15)   // RH lateral
+    setCam(nvAsym,  90, 15)   // Asymmetry (LH geometry, lateral view)
   }
 }
 
@@ -719,23 +766,33 @@ populateSurfSel(document.getElementById('lhSurfSel'),   'lh')
 populateSurfSel(document.getElementById('rhSurfSel'),   'rh')
 populateSurfSel(document.getElementById('asymSurfSel'), 'lh')
 
-async function onSurfTypeChanged() {
-  await loadAllSurfaces(currentMetric)
-  if (currentVertex !== null) await selectVertex(currentVertex, nvLhL)
+async function reselectAfterSurfChange() {
+  if (currentVertex === null) return
+  console.time('reselectAfterSurfChange')
+  await selectVertex(currentVertex, nvLhL)
+  console.timeEnd('reselectAfterSurfChange')
 }
 document.getElementById('lhSurfSel').addEventListener('change', async e => {
   lhSurfUrl = SURF_TYPES[e.target.value]?.lh ?? lhSurfUrl
   lhVertexAreas = null   // geometry changed — per-vertex area must be recomputed
-  await onSurfTypeChanged()
+  // TEMP DIAGNOSTIC: contour reload disabled to isolate loadLhPanel's own
+  // timing from any GPU contention with the concurrent contour reload.
+  await loadLhPanel(currentMetric)
+  // await loadLhSliceContour(); finishSliceContourUpdate()
+  await reselectAfterSurfChange()
 })
 document.getElementById('rhSurfSel').addEventListener('change', async e => {
   rhSurfUrl = SURF_TYPES[e.target.value]?.rh ?? rhSurfUrl
   rhVertexAreas = null
-  await onSurfTypeChanged()
+  await Promise.all([loadRhPanel(currentMetric), loadRhSliceContour()])
+  finishSliceContourUpdate()
+  await reselectAfterSurfChange()
 })
 document.getElementById('asymSurfSel').addEventListener('change', async e => {
   asymSurfUrl = SURF_TYPES[e.target.value]?.lh ?? asymSurfUrl
-  await onSurfTypeChanged()
+  // Asym's geometry doesn't feed the slice contours or the LH/RH panels.
+  await loadAsymPanel(currentMetric)
+  await reselectAfterSurfChange()
 })
 
 // ── radiological / crosshair ──────────────────────────────────────────────────
@@ -842,7 +899,9 @@ function ensureVertexAreas(hemi) {
   if (hemi === 'rh' && rhVertexAreas) return rhVertexAreas
   const mesh = nv.meshes[0]
   if (!mesh?.tris || !mesh?.pts) return null
+  console.time(`buildVertexAreas(${hemi})`)
   const areas = buildVertexAreas(mesh.pts, mesh.tris)
+  console.timeEnd(`buildVertexAreas(${hemi})`)
   if (hemi === 'lh') lhVertexAreas = areas; else rhVertexAreas = areas
   return areas
 }
@@ -1620,7 +1679,12 @@ def make_handler(html_bytes, file_map, overlay_arrays, materialized, out_dir,
                 self._materialize_if_needed(path)
             if path in file_map:
                 with open(file_map[path], 'rb') as fh:
-                    self._reply(200, 'application/octet-stream', fh.read())
+                    # Every /data/ file is content-addressed by hemi/template/
+                    # metric/surf-type and never changes once written, so the
+                    # browser can cache it forever — this matters a lot when
+                    # switching surface type, since the other panels' meshes
+                    # get reloaded from the same URLs without re-fetching.
+                    self._reply(200, 'application/octet-stream', fh.read(), cacheable=True)
             else:
                 self._reply(404, 'text/plain', b'Not found\n')
 
@@ -1650,11 +1714,13 @@ def make_handler(html_bytes, file_map, overlay_arrays, materialized, out_dir,
                     file_map[url] = fpath
                 normative_materialized.add(metric)
 
-        def _reply(self, code, ctype, data):
+        def _reply(self, code, ctype, data, cacheable=False):
             self.send_response(code)
             self.send_header('Content-Type',                ctype)
             self.send_header('Content-Length',              str(len(data)))
             self.send_header('Access-Control-Allow-Origin', '*')
+            if cacheable:
+                self.send_header('Cache-Control', 'public, max-age=31536000, immutable')
             self.end_headers()
             self.wfile.write(data)
 
