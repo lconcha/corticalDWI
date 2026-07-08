@@ -17,6 +17,7 @@ import h5py
 sys.path.insert(0, os.path.dirname(__file__))
 from cortical_io import read_mrtrix_tsf, pad_to_matrix
 from http.server import HTTPServer, BaseHTTPRequestHandler
+from urllib.parse import urlparse, parse_qs
 
 TEMPLATE        = 'ico6_sym'
 STEP_MM         = 0.5
@@ -89,7 +90,7 @@ button.cbtn:hover { background: #484848; }
 #grid {
   display: grid;
   grid-template-columns: 1fr 1fr 1fr;
-  grid-template-rows: 1fr 1fr 1fr;
+  grid-template-rows: 1fr 1fr 1fr 1fr;
   flex: 1; gap: 2px; background: #0a0a0a; overflow: hidden;
 }
 .cell { position: relative; overflow: hidden; background: #141414; }
@@ -196,6 +197,8 @@ canvas.nv-canvas { display: block; width: 100% !important; height: 100% !importa
   <label><input type="checkbox" id="pivotAtVertexChk"> Pivot@vertex</label>
   <button class="cbtn" id="resetPivotBtn" title="Reset 3D view rotation pivot to the whole-brain center">Reset pivot</button>
   <label><input type="checkbox" id="showNormativeChk" title="Fetch and overlay cohort normative mean ± SD (computed lazily on first use)"> Show normative</label>
+  <label title="Max |z| shown on the radar and z-score bar panels">|z|≤ <input type="number" id="mvZlimInput" min="0.5" step="0.5" value="3"></label>
+  <label title="Max Mahalanobis distance shown on the multivariate depth panel">Mahal≤ <input type="number" id="mvMahalInput" min="1" step="1" value="10"></label>
   <span id="pos-display"></span>
   <span id="vtx-display">—, —, — mm</span>
 </header>
@@ -248,6 +251,20 @@ canvas.nv-canvas { display: block; width: 100% !important; height: 100% !importa
     <span class="clabel">Asymmetry profile</span>
     <div class="chart-wrap"><canvas id="chart-asym"></canvas></div>
   </div>
+
+  <!-- Row 4: multivariate explorer (Mahalanobis / |z| radar / z-score bars) -->
+  <div class="cell plot-cell">
+    <span class="clabel" id="clabel-mahal">Mahalanobis distance</span>
+    <div class="chart-wrap"><canvas id="chart-mahal"></canvas></div>
+  </div>
+  <div class="cell plot-cell">
+    <span class="clabel" id="clabel-radar">|Z-score| radar</span>
+    <div class="chart-wrap"><canvas id="chart-radar"></canvas></div>
+  </div>
+  <div class="cell plot-cell">
+    <span class="clabel" id="clabel-zbar">Z-scores</span>
+    <div class="chart-wrap"><canvas id="chart-zbar"></canvas></div>
+  </div>
 </div>
 
 <script src="__CHARTJS_CDN__"></script>
@@ -289,8 +306,17 @@ let showNormative = false
 const markerMeshes = new Map()   // nv instance -> its vertex-marker connectome mesh
 const neighborMeshes = new Map() // nv instance -> its neighbor-rings connectome mesh
 
+// ── multivariate (Mahalanobis / z-score) explorer state ──────────────────────
+// Available only when the server found cohort data (same gate as normative).
+const MV_AVAILABLE = Object.keys(NORMATIVE).length > 0
+let mvZlim = 3            // max |z| on radar / z-bar panels (user-editable)
+let mvMahalLim = 10       // max Mahalanobis distance on the depth panel
+const mvCache = {}        // vertex -> parsed /mahal payload
+let mvCurrent = null      // payload for the currently selected vertex
+
 // Hoisted so updateDepthMarker is safe to call before makeChart runs
 var chartLH, chartRH, chartAsym
+var chartMahal, chartRadar, chartZBar
 
 const firstInfo = currentMetric ? METRICS[currentMetric] : null
 if (firstInfo) {
@@ -896,6 +922,7 @@ document.getElementById('metricSel').addEventListener('change', async e => {
       for (const i of [0, 1, 2, 3, 4, 5]) chart.data.datasets[i].data = []
       chart.update('none')
     }
+    clearMultivariate()
   }
 })
 
@@ -1210,6 +1237,10 @@ async function selectVertex(vertIdx, nvInst) {
   setProfiles(meanStd(rowsOf(lhMat)), meanStd(rowsOf(rhMat)), meanStd(rowsOf(asymMat)), ringSet.length, lhArea, rhArea, normStat)
   document.getElementById('vtx-display').textContent = `${vx.toFixed(1)}, ${vy.toFixed(1)}, ${vz.toFixed(1)} mm`
   document.getElementById('vtxInput').value = vertIdx
+
+  // Multivariate panels fetch independently so the profiles above render
+  // immediately rather than waiting on the server-side Mahalanobis compute.
+  updateMultivariate(vertIdx)
 }
 
 async function pickOnSurface(canvas, mouseX, mouseY, nvInst) {
@@ -1312,6 +1343,27 @@ document.getElementById('showNormativeChk').addEventListener('change', async fun
     chk.checked = false
     chk.parentElement.style.opacity = 0.4
     chk.parentElement.title = 'No cohort normative data available for this dataset'
+  }
+}
+
+// ── multivariate panel limits (radar/bar |z| and Mahalanobis depth) ──────────
+document.getElementById('mvZlimInput').addEventListener('change', function() {
+  const v = parseFloat(this.value)
+  if (!isFinite(v) || v <= 0) { this.value = mvZlim; return }
+  mvZlim = v
+  if (mvCurrent) renderRadarBar(mvCurrent, currentDepth)
+})
+document.getElementById('mvMahalInput').addEventListener('change', function() {
+  const v = parseFloat(this.value)
+  if (!isFinite(v) || v <= 0) { this.value = mvMahalLim; return }
+  mvMahalLim = v
+  if (mvCurrent) renderMahalChart(mvCurrent)
+})
+if (!MV_AVAILABLE) {
+  for (const id of ['mvZlimInput','mvMahalInput']) {
+    const el = document.getElementById(id)
+    el.disabled = true
+    el.parentElement.style.opacity = 0.4
   }
 }
 
@@ -1476,14 +1528,157 @@ chartRH   = makeChart('chart-rh',   RH_COLOR, 'RH')
 chartAsym = makeChart('chart-asym', '#8af5a6', 'Asymmetry', true)
 applyAsymYLimits()
 
+// ── multivariate explorer charts (row 4) ─────────────────────────────────────
+const mvTick = { color:'#dddddd', font:{size:10} }
+const mvGrid = { color:'#303030' }
+
+// Mahalanobis distance vs depth — one line per hemisphere, plus the shared
+// yellow depth reference line. Clicking sets the depth, like the profile charts.
+chartMahal = new Chart(document.getElementById('chart-mahal'), {
+  type: 'line',
+  data: { datasets: [
+    { label:'LH', data:[], borderColor:LH_COLOR, backgroundColor:LH_COLOR+'28',
+      pointRadius:2, tension:0.3, fill:false, parsing:false, spanGaps:false },
+    { label:'RH', data:[], borderColor:RH_COLOR, backgroundColor:RH_COLOR+'28',
+      pointRadius:2, tension:0.3, fill:false, parsing:false, spanGaps:false },
+  ]},
+  options: {
+    responsive:true, maintainAspectRatio:false, animation:false,
+    onClick: (evt, els, chart) => setDepthFromChart(chart, evt.x),
+    plugins: {
+      legend: { display:true, labels:{ color:'#dddddd', boxWidth:10, font:{size:10} } },
+      annotation: { annotations: { depthLine: {
+        type:'line', xMin:0, xMax:0, borderColor:ACCENT_YELLOW, borderWidth:1.5, borderDash:[4,3]
+      }}}
+    },
+    scales: {
+      x: { type:'linear', title:{ display:true, text:'Depth (mm)', color:'#dddddd' },
+           ticks:{ ...mvTick, maxTicksLimit:8, callback:v => v.toFixed(1) }, grid:mvGrid },
+      y: { min:0, max:mvMahalLim, title:{ display:true, text:'Mahalanobis distance', color:'#dddddd' },
+           ticks:mvTick, grid:mvGrid }
+    }
+  }
+})
+
+// |z-score| radar — one polygon per hemisphere, one spoke per metric.
+chartRadar = new Chart(document.getElementById('chart-radar'), {
+  type: 'radar',
+  data: { labels: [], datasets: [
+    { label:'LH', data:[], borderColor:LH_COLOR, backgroundColor:LH_COLOR+'33', borderWidth:2, pointRadius:2 },
+    { label:'RH', data:[], borderColor:RH_COLOR, backgroundColor:RH_COLOR+'33', borderWidth:2, pointRadius:2 },
+  ]},
+  options: {
+    responsive:true, maintainAspectRatio:false, animation:false,
+    plugins: { legend: { display:true, labels:{ color:'#dddddd', boxWidth:10, font:{size:10} } } },
+    scales: { r: {
+      min:0, max:mvZlim,
+      ticks:{ color:'#aaaaaa', backdropColor:'transparent', showLabelBackdrop:false, font:{size:8}, stepSize:1 },
+      grid:{ color:'#3a3a3a' }, angleLines:{ color:'#3a3a3a' }, pointLabels:{ color:'#dddddd', font:{size:10} }
+    }}
+  }
+})
+
+// z-score horizontal bars — metrics on the y-axis, signed z on the x-axis.
+chartZBar = new Chart(document.getElementById('chart-zbar'), {
+  type: 'bar',
+  data: { labels: [], datasets: [
+    { label:'LH', data:[], backgroundColor:LH_COLOR+'cc', borderColor:LH_COLOR, borderWidth:0 },
+    { label:'RH', data:[], backgroundColor:RH_COLOR+'cc', borderColor:RH_COLOR, borderWidth:0 },
+  ]},
+  options: {
+    indexAxis:'y', responsive:true, maintainAspectRatio:false, animation:false,
+    plugins: {
+      legend: { display:true, labels:{ color:'#dddddd', boxWidth:10, font:{size:10} } },
+      annotation: { annotations: { zeroLine: {
+        type:'line', xMin:0, xMax:0, borderColor:'#888888', borderWidth:1
+      }}}
+    },
+    scales: {
+      x: { min:-mvZlim, max:mvZlim, title:{ display:true, text:'Z-score', color:'#dddddd' },
+           ticks:mvTick, grid:mvGrid },
+      y: { ticks:{ color:'#dddddd', font:{size:9} }, grid:{ display:false } }
+    }
+  }
+})
+
+// If there's no cohort data, flag the panels so they read as unavailable.
+if (!MV_AVAILABLE) {
+  for (const id of ['clabel-mahal','clabel-radar','clabel-zbar']) {
+    const el = document.getElementById(id)
+    el.textContent += ' — no cohort data'
+    el.parentElement.style.opacity = 0.5
+  }
+}
+
+const mvHasNull = a => !a || a.some(v => v == null)
+
+// Mahalanobis-by-depth lines for the current vertex.
+function renderMahalChart(data) {
+  const toXY = arr => arr.map((v,i) => ({ x: i*data.step_mm, y: v == null ? null : v }))
+  chartMahal.data.datasets[0].data = toXY(data.lh.mahal)
+  chartMahal.data.datasets[1].data = toXY(data.rh.mahal)
+  chartMahal.options.scales.y.max = mvMahalLim
+  const ann = chartMahal.options.plugins.annotation.annotations.depthLine
+  ann.xMin = ann.xMax = currentDepth * STEP_MM
+  chartMahal.update('none')
+}
+
+// Radar (|z|) and horizontal bars (signed z) at one depth. A hemisphere with
+// any missing metric is dropped entirely (matches the MATLAB explorer).
+function renderRadarBar(data, depth) {
+  const d  = Math.max(0, Math.min(data.n_depths - 1, depth))
+  const zl = data.lh.z[d], zr = data.rh.z[d]
+  chartRadar.data.labels = data.metrics
+  chartRadar.data.datasets[0].data = mvHasNull(zl) ? [] : zl.map(Math.abs)
+  chartRadar.data.datasets[1].data = mvHasNull(zr) ? [] : zr.map(Math.abs)
+  chartRadar.options.scales.r.max = mvZlim
+  chartRadar.update('none')
+
+  chartZBar.data.labels = data.metrics
+  chartZBar.data.datasets[0].data = mvHasNull(zl) ? [] : zl
+  chartZBar.data.datasets[1].data = mvHasNull(zr) ? [] : zr
+  chartZBar.options.scales.x.min = -mvZlim
+  chartZBar.options.scales.x.max =  mvZlim
+  chartZBar.update('none')
+}
+
+function clearMultivariate() {
+  mvCurrent = null
+  for (const ch of [chartMahal, chartRadar, chartZBar]) {
+    for (const ds of ch.data.datasets) ds.data = []
+    ch.update('none')
+  }
+}
+
+// Fetch (once per vertex) and render all three multivariate panels.
+async function updateMultivariate(vertIdx) {
+  if (!MV_AVAILABLE) return
+  try {
+    let data = mvCache[vertIdx]
+    if (!data) {
+      const r = await fetch(`/mahal?vertex=${vertIdx}`)
+      if (!r.ok) return
+      data = await r.json()
+      mvCache[vertIdx] = data
+    }
+    mvCurrent = data
+    renderMahalChart(data)
+    renderRadarBar(data, currentDepth)
+  } catch (e) {
+    console.warn('[multivariate] fetch/render failed', e)
+  }
+}
+
 function updateDepthMarker(mm) {
   if (!chartLH) return
-  for (const chart of [chartLH, chartRH, chartAsym]) {
-    const ann = chart.options.plugins?.annotation?.annotations?.depthLine
+  for (const chart of [chartLH, chartRH, chartAsym, chartMahal]) {
+    const ann = chart?.options.plugins?.annotation?.annotations?.depthLine
     if (!ann) continue
     ann.xMin = mm; ann.xMax = mm
     chart.update('none')
   }
+  // The radar/bar panels show a single depth, so they move with the marker too.
+  if (mvCurrent) renderRadarBar(mvCurrent, currentDepth)
 }
 
 function setProfiles(lhStat, rhStat, asymStat, count, lhArea, rhArea, normStat) {
@@ -1766,6 +1961,108 @@ def materialize_normative(subjects_dir, metric, out_dir, template=TEMPLATE):
     return file_entries
 
 
+# ── multivariate (Mahalanobis + z-score) explorer ──────────────────────────────
+# Port of cortical_subject_mahal_by_depth.m: for one vertex, at each depth,
+# compare the subject's per-metric vector against the cohort's multivariate
+# distribution (both hemispheres pooled to better estimate the covariance).
+# Computed on demand per selected vertex, served as JSON to the /mahal endpoint —
+# far too much data to precompute for every vertex (nVerts * nDepths * nMetrics^2).
+
+def _subject_tsf_nan(tsf_path):
+    """One subject metric/hemi as an (nVerts, nDepths) matrix with the -1
+    invalid sentinel and short-track padding both left as NaN — unlike the
+    display path's read_tsf_matrix, which zero-fills them (wrong for stats)."""
+    _, tracks = read_mrtrix_tsf(tsf_path)
+    M = pad_to_matrix(tracks)          # float32, NaN where a track is short
+    M[M == -1] = np.nan                # mask invalid sentinel (as the cohort builder does)
+    return M
+
+
+def _mahal_sq(x, mu, cov, n_valid, n_metrics):
+    """Squared Mahalanobis distance of vector x from a distribution with mean
+    mu and covariance cov (matching MATLAB mahal, which returns the squared
+    distance). NaN (→ None) when the subject vector is incomplete or the
+    cohort can't support a covariance for this many metrics."""
+    if cov is None or n_valid <= n_metrics:
+        return None
+    if np.any(np.isnan(x)) or np.any(np.isnan(mu)):
+        return None
+    d = x - mu
+    try:
+        sol = np.linalg.solve(cov, d)
+    except np.linalg.LinAlgError:
+        sol = np.linalg.pinv(cov) @ d
+    val = float(d @ sol)
+    return val if np.isfinite(val) else None
+
+
+def compute_multivariate(subjects_dir, tsf_metrics, subj_cache, vertex, template=TEMPLATE):
+    """Per-depth squared Mahalanobis distance and per-metric z-scores (LH and
+    RH) for one vertex. Returns a JSON-ready dict, or None if there's no cohort
+    file / no shared metrics / the vertex is out of range."""
+    h5_path = os.path.join(subjects_dir, 'templates', 'normative', f'{template}_multivariate.h5')
+    if not os.path.isfile(h5_path):
+        return None
+    with h5py.File(h5_path, 'r') as h5f:
+        cohort_metrics = list(h5f['metrics'].asstr()[:])
+        n_subjects = int(h5f['subjects'].shape[0])
+        # Metrics the cohort AND this subject both have, ordered by the cohort's
+        # metric axis so the subject vector lines up with lh_M/rh_M column-wise.
+        metrics = [m for m in cohort_metrics if m in tsf_metrics]
+        if not metrics or vertex < 0 or vertex >= h5f['lh_M'].shape[0]:
+            return None
+        midx = [cohort_metrics.index(m) for m in metrics]
+        lh_c = np.asarray(h5f['lh_M'][vertex])[:, :, midx].astype(np.float64)  # (nDepthsL, nSub, nUsed)
+        rh_c = np.asarray(h5f['rh_M'][vertex])[:, :, midx].astype(np.float64)  # (nDepthsR, nSub, nUsed)
+
+    # Subject's own per-metric matrices (NaN-masked), cached for the session.
+    for m in metrics:
+        if m not in subj_cache:
+            subj_cache[m] = (_subject_tsf_nan(tsf_metrics[m]['lh']),
+                             _subject_tsf_nan(tsf_metrics[m]['rh']))
+
+    n_used   = len(metrics)
+    n_depths = min(lh_c.shape[0], rh_c.shape[0])   # combine both hemis per depth
+
+    def subj_vec(hemi_i):
+        out = np.full((n_depths, n_used), np.nan)
+        for j, m in enumerate(metrics):
+            M = subj_cache[m][hemi_i]
+            if vertex >= M.shape[0]:
+                continue
+            row = M[vertex]
+            dd = min(n_depths, row.shape[0])
+            out[:dd, j] = row[:dd]
+        return out
+
+    subj = (subj_vec(0), subj_vec(1))   # (lh, rh)
+    mahal = ([], [])
+    zsc   = ([], [])
+    for d in range(n_depths):
+        cohort_d = np.vstack([lh_c[d], rh_c[d]])            # (2*nSub, nUsed)
+        C = cohort_d[~np.any(np.isnan(cohort_d), axis=1)]   # drop subjects missing any metric
+        nC = C.shape[0]
+        if nC >= 1:
+            mu = C.mean(axis=0)
+            sd = C.std(axis=0, ddof=0)                      # population std, as MATLAB std(...,1)
+        else:
+            mu = np.full(n_used, np.nan); sd = np.full(n_used, np.nan)
+        cov = np.atleast_2d(np.cov(C, rowvar=False, ddof=1)) if nC > 1 else None
+        for h in (0, 1):
+            x = subj[h][d]
+            mahal[h].append(_mahal_sq(x, mu, cov, nC, n_used))
+            with np.errstate(invalid='ignore', divide='ignore'):
+                z = np.where(sd > 0, (x - mu) / sd, np.nan)
+            zsc[h].append([float(v) if np.isfinite(v) else None for v in z])
+
+    return {
+        'vertex': int(vertex), 'metrics': metrics, 'step_mm': STEP_MM,
+        'n_depths': int(n_depths), 'n_subjects': n_subjects,
+        'lh': {'mahal': mahal[0], 'z': zsc[0]},
+        'rh': {'mahal': mahal[1], 'z': zsc[1]},
+    }
+
+
 # ── HTML generation ───────────────────────────────────────────────────────────
 
 def make_html(subj_id, vol_path, lh_path, rh_path, overlay_info, port, surf_types=None, normative_info=None, template=TEMPLATE):
@@ -1824,7 +2121,11 @@ def make_html(subj_id, vol_path, lh_path, rh_path, overlay_info, port, surf_type
 # ── HTTP server ───────────────────────────────────────────────────────────────
 
 def make_handler(html_bytes, file_map, overlay_arrays, materialized, out_dir,
-                  subjects_dir=None, normative_materialized=None, template=TEMPLATE):
+                  subjects_dir=None, normative_materialized=None, template=TEMPLATE,
+                  tsf_metrics=None):
+    # Session cache of the subject's NaN-masked per-metric matrices, populated
+    # lazily on the first /mahal request and reused across vertices.
+    mv_subject_cache = {}
     # Matches lh_<template>_<metric>.func.gii, rh_..., asym_..., and the
     # corresponding _matrix.f32 files, isolating <metric>.
     overlay_re = re.compile(
@@ -1840,6 +2141,9 @@ def make_handler(html_bytes, file_map, overlay_arrays, materialized, out_dir,
             path = self.path.split('?')[0]
             if path in ('/', '/index.html'):
                 self._reply(200, 'text/html; charset=utf-8', html_bytes)
+                return
+            if path == '/mahal':
+                self._serve_mahal()
                 return
             if path not in file_map:
                 self._materialize_if_needed(path)
@@ -1879,6 +2183,28 @@ def make_handler(html_bytes, file_map, overlay_arrays, materialized, out_dir,
                 for url, fpath in materialize_normative(subjects_dir, metric, out_dir, template):
                     file_map[url] = fpath
                 normative_materialized.add(metric)
+
+        def _serve_mahal(self):
+            """On-demand multivariate stats (squared Mahalanobis + z-scores) for
+            one vertex, as JSON — computed fresh from the cohort h5 + subject
+            tsf files (no static file to materialize)."""
+            if not subjects_dir or not tsf_metrics:
+                self._reply(404, 'text/plain', b'no cohort data\n')
+                return
+            try:
+                vtx = int(parse_qs(urlparse(self.path).query).get('vertex', [''])[0])
+            except (ValueError, TypeError):
+                self._reply(400, 'text/plain', b'bad or missing vertex\n')
+                return
+            try:
+                payload = compute_multivariate(subjects_dir, tsf_metrics, mv_subject_cache, vtx, template)
+            except Exception as exc:   # noqa: BLE001 — report, don't crash the server
+                self._reply(500, 'text/plain', f'mahal error: {exc}\n'.encode('utf-8'))
+                return
+            if payload is None:
+                self._reply(404, 'text/plain', b'no multivariate data\n')
+                return
+            self._reply(200, 'application/json', json.dumps(payload).encode('utf-8'))
 
         def _reply(self, code, ctype, data, cacheable=False):
             self.send_response(code)
@@ -1957,7 +2283,7 @@ def main():
 
     server = HTTPServer(('localhost', args.port),
         make_handler(html_bytes, file_map, overlay_arrays, materialized, out_dir,
-                      args.subjects_dir, normative_materialized))
+                      args.subjects_dir, normative_materialized, tsf_metrics=tsf_metrics))
     url    = f'http://localhost:{args.port}/'
     print(f'\nBrowser  : {url}')
     print('Ctrl+C to quit.\n')
