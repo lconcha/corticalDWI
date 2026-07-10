@@ -188,6 +188,10 @@ canvas.nv-canvas { display: block; width: 100% !important; height: 100% !importa
   <label>Asym surf <select id="asymSurfSel"></select></label>
   <div class="sep"></div>
 
+  <label title="Volume shown in the orthoslices">Volume <select id="volSel"></select></label>
+  <input type="file" id="volFile" accept=".nii,.nii.gz,.gz,.mgz,.mgh,.hdr,.img" style="display:none">
+  <div class="sep"></div>
+
   <label><input type="checkbox" id="radioConv" checked> Rad</label>
   <label><input type="checkbox" id="crosshairChk" checked> X-hair</label>
   <label title="Overlay white-matter surface outline on the orthoslices (loaded on first use)"><input type="checkbox" id="contourWmChk"> WM</label>
@@ -653,6 +657,96 @@ nvSlices.setSliceType(nvSlices.sliceTypeMultiplanar)
 nvSlices.setRadiologicalConvention(true)
 nvSlices.setCrosshairColor(ACCENT_YELLOW_RGBA)   // match selected-vertex color
 nvSlices.setCrosshairWidth(0.5)                   // thinner than the default 1px
+
+// ── orthoslice volume selector ────────────────────────────────────────────────
+// The dropdown chooses which volume the orthoslices show. It starts with just
+// the discovered brain volume (already loaded above, served by URL) plus a
+// trailing "other…" entry that opens the browser's file picker; each picked file
+// is appended so volumes can be switched back and forth. Switching preserves the
+// world-space crosshair position where possible.
+const volSel  = document.getElementById('volSel')
+const volFile = document.getElementById('volFile')
+const volumeRegistry = {}          // option value -> { name, url? , file?, blobUrl? }
+let currentVolKey = null
+let volSeq = 0
+
+function addVolumeOption(desc, select) {
+  const key = 'vol' + (volSeq++)
+  volumeRegistry[key] = desc
+  const opt = document.createElement('option')
+  opt.value = key
+  opt.textContent = desc.name
+  volSel.insertBefore(opt, volSel.querySelector('option[value="__other__"]'))
+  if (select) volSel.value = key
+  return key
+}
+
+async function showVolume(key) {
+  const desc = volumeRegistry[key]
+  if (!desc) return
+  // Preserve the current crosshair in world mm so switching volumes keeps the
+  // anatomical focus rather than jumping to the new volume's centre.
+  let mm = null
+  if (nvSlices.volumes.length && typeof nvSlices.frac2mm === 'function') {
+    try { mm = nvSlices.frac2mm([...nvSlices.scene.crosshairPos]) } catch (e) {}
+  }
+  const item = { colormap: 'gray', opacity: 1 }
+  if (desc.url) {
+    item.url = desc.url
+  } else if (desc.file) {
+    if (!desc.blobUrl) desc.blobUrl = URL.createObjectURL(desc.file)
+    item.url  = desc.blobUrl
+    item.name = desc.file.name         // blob URLs carry no extension; let NiiVue infer the format
+  }
+  try {
+    await nvSlices.loadVolumes([item])
+  } catch (e) {
+    console.warn('[volume] failed to load', desc.name, e)
+    alert('Could not load volume: ' + desc.name)
+    return
+  }
+  currentVolKey = key
+  volSel.value = key
+  if (nvSlices.volumes.length) {
+    defaultVolCalMin = nvSlices.volumes[0].cal_min   // refresh the 'r'-reset window
+    defaultVolCalMax = nvSlices.volumes[0].cal_max
+  }
+  nvSlices.setCrosshairColor(ACCENT_YELLOW_RGBA)     // re-assert crosshair styling after reload
+  nvSlices.setCrosshairWidth(0.5)
+  if (mm && typeof nvSlices.mm2frac === 'function') {
+    const frac = nvSlices.mm2frac([mm[0], mm[1], mm[2]])
+    if (frac) nvSlices.scene.crosshairPos = [...frac]
+  }
+  nvSlices.drawScene()
+}
+
+// Seed the dropdown: the already-loaded brain volume (if any), then "other…".
+if (VOL_URL) {
+  const initName = VOLUMES[0].name || decodeURIComponent(VOL_URL.split('?')[0].split('/').pop())
+  currentVolKey = addVolumeOption({ name: initName, url: VOL_URL }, true)
+}
+{
+  const other = document.createElement('option')
+  other.value = '__other__'
+  other.textContent = 'other…'
+  volSel.appendChild(other)
+}
+
+volSel.addEventListener('change', () => {
+  if (volSel.value === '__other__') {
+    volSel.value = currentVolKey ?? ''   // revert; the real switch commits once a file is picked
+    volFile.click()
+    return
+  }
+  showVolume(volSel.value)
+})
+
+volFile.addEventListener('change', () => {
+  const file = volFile.files && volFile.files[0]
+  volFile.value = ''                     // reset so the same file can be re-picked later
+  if (!file) return
+  showVolume(addVolumeOption({ name: file.name, file }, true))
+})
 
 // ── depth control ─────────────────────────────────────────────────────────────
 function setDepth(d) {
@@ -2268,6 +2362,7 @@ def make_html(subj_id, vol_path, lh_path, rh_path, overlay_info, port, surf_type
     volumes = []
     if vol_path:
         volumes.append({'url': f'{base}/{os.path.basename(vol_path)}{q}',
+                        'name': os.path.basename(vol_path),
                         'colormap': 'gray', 'opacity': 1})
     # Per-hemisphere accent colors; the front-end derives the LH/RH plot line
     # colors from these same rgba255 values so surfaces and plots stay in sync.
