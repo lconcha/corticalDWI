@@ -189,6 +189,11 @@ canvas.nv-canvas { display: block; width: 100% !important; height: 100% !importa
   <div class="sep"></div>
 
   <label title="Volume shown in the orthoslices">Volume <select id="volSel"></select></label>
+  <label title="Colormap for the orthoslice volume">cmap <select id="volCmapSel"></select></label>
+  <input type="number" id="volClipMin" step="any" title="Orthoslice color min (clip)">
+  <span style="color:#999999">–</span>
+  <input type="number" id="volClipMax" step="any" title="Orthoslice color max (clip)">
+  <button class="cbtn" id="volClipAuto" title="Reset the orthoslice color range to the volume default">Auto</button>
   <input type="file" id="volFile" accept=".nii,.nii.gz,.gz,.mgz,.mgh,.hdr,.img" style="display:none">
   <div class="sep"></div>
 
@@ -196,6 +201,7 @@ canvas.nv-canvas { display: block; width: 100% !important; height: 100% !importa
   <label><input type="checkbox" id="crosshairChk" checked> X-hair</label>
   <label title="Overlay white-matter surface outline on the orthoslices (loaded on first use)"><input type="checkbox" id="contourWmChk"> WM</label>
   <label title="Overlay pial surface outline on the orthoslices (loaded on first use)"><input type="checkbox" id="contourPialChk"> pial</label>
+  <label title="Smooth (linear) vs nearest-neighbor orthoslice interpolation — shortcut: i"><input type="checkbox" id="interpChk" checked> Interp</label>
   <label>Vertex <input type="number" id="vtxInput" min="0" step="1" title="Jump to vertex ID"></label>
   <label>Rings <input type="number" id="ringsInput" min="0" step="1" value="0" title="Neighbor rings to average around the selected vertex"></label>
   <label><input type="checkbox" id="pivotAtVertexChk"> Pivot@vertex</label>
@@ -366,7 +372,8 @@ const sliceContourVisible = { wm: false, pial: false }
 const SURF_CFG = { backColor: [0.06, 0.06, 0.06, 1], show3Dcrosshair: false }
 const SLIC_CFG = {
   backColor: [0.04, 0.04, 0.04, 1], show3Dcrosshair: true,
-  meshThicknessOn2D: 2, multiplanarLayout: 'row'
+  meshThicknessOn2D: 2, multiplanarLayout: 'row',
+  isColorbar: true            // one colorbar for the ortho view (NiiVue draws it instance-wide, not per-panel)
 }
 
 const nvLhL   = new niivue.Niivue(SURF_CFG)
@@ -675,6 +682,7 @@ const volFile = document.getElementById('volFile')
 const volumeRegistry = {}
 let currentVolKey = null
 let volSeq = 0
+let orthoCmap = 'gray'   // colormap applied to whichever volume the orthoslices show
 
 function addVolumeOption(desc, select) {
   const key = 'vol' + (volSeq++)
@@ -699,12 +707,11 @@ async function showVolume(key) {
     try { mm = nvSlices.frac2mm([...nvSlices.scene.crosshairPos]) } catch (e) {}
   }
 
-  const t0 = performance.now()
-
-  // First selection of this volume: decode + upload once, then keep it resident.
-  let tLoad = 0
+  // First selection of this volume: decode + upload once, then keep it resident
+  // so re-selecting it later skips the expensive decode (the GL recomposite in
+  // setVolume() below is unavoidable per switch, but the decode is not).
   if (!desc.image) {
-    const item = { colormap: 'gray', opacity: 1 }
+    const item = { colormap: orthoCmap, opacity: 1 }
     if (desc.url) {
       item.url = desc.url
     } else if (desc.file) {
@@ -712,7 +719,6 @@ async function showVolume(key) {
       item.url  = desc.blobUrl
       item.name = desc.file.name       // blob URLs carry no extension; let NiiVue infer the format
     }
-    const tA = performance.now()
     try {
       await nvSlices.addVolumeFromUrl(item)   // add without dropping the resident volumes
     } catch (e) {
@@ -720,7 +726,6 @@ async function showVolume(key) {
       alert('Could not load volume: ' + desc.name)
       return
     }
-    tLoad = performance.now() - tA
     desc.image     = nvSlices.volumes[nvSlices.volumes.length - 1]
     desc.defCalMin = desc.image.cal_min      // per-volume default window for the 'r' reset
     desc.defCalMax = desc.image.cal_max
@@ -731,11 +736,10 @@ async function showVolume(key) {
   // and frac<->vox transforms. Reordering nvSlices.volumes by hand does NOT, so
   // the next click crashed in convertFrac2Vox. setVolume() rebuilds the GL
   // texture itself, so there is no separate updateGLVolume() call.
+  desc.image.colormap = orthoCmap                   // colormap follows the shown volume
   for (const v of nvSlices.volumes) v.opacity = (v === desc.image ? 1 : 0)
-  const tB = performance.now()
   if (nvSlices.volumes[0] !== desc.image) nvSlices.setVolume(desc.image, 0)
   else nvSlices.updateGLVolume()
-  const tGL = performance.now() - tB
 
   currentVolKey = key
   volSel.value = key
@@ -747,13 +751,8 @@ async function showVolume(key) {
     const frac = nvSlices.mm2frac([mm[0], mm[1], mm[2]])
     if (frac) nvSlices.scene.crosshairPos = [...frac]
   }
-  const tC = performance.now()
   nvSlices.drawScene()
-  // Temporary timing probe — tells us whether the cost is decode (first load
-  // only) or NiiVue's per-switch GL recomposite. Remove once we've decided.
-  console.log(`[volume switch] "${desc.name}"  load/decode=${tLoad.toFixed(0)}ms`
-    + `  updateGL=${tGL.toFixed(0)}ms  draw=${(performance.now()-tC).toFixed(0)}ms`
-    + `  total=${(performance.now()-t0).toFixed(0)}ms  (residentLayers=${arr.length})`)
+  syncVolClipInputs()          // reflect the shown volume's color range in the clip boxes
 }
 
 // Seed the dropdown: the already-loaded brain volume (if any), then "other…".
@@ -789,6 +788,58 @@ volFile.addEventListener('change', () => {
   if (!file) return
   showVolume(addVolumeOption({ name: file.name, file }, true))
 })
+
+// ── orthoslice colormap selector ──────────────────────────────────────────────
+// Options come straight from NiiVue's own colormap list, so every entry is valid.
+// The choice is orthoslice-wide: it applies to the current background volume and
+// is re-applied by showVolume() when you switch volumes.
+const volCmapSel = document.getElementById('volCmapSel')
+for (const name of (nvSlices.colormaps ? nvSlices.colormaps() : ['gray']).slice().sort()) {
+  const opt = document.createElement('option')
+  opt.value = name
+  opt.textContent = name
+  if (name === orthoCmap) opt.selected = true
+  volCmapSel.appendChild(opt)
+}
+volCmapSel.addEventListener('change', () => {
+  orthoCmap = volCmapSel.value
+  const bg = nvSlices.volumes[0]
+  if (bg) { bg.colormap = orthoCmap; nvSlices.updateGLVolume(); nvSlices.drawScene() }
+})
+
+// ── orthoslice color clip (cal_min / cal_max) ─────────────────────────────────
+// Clip the intensity range mapped through the colormap on the orthoslice
+// background volume; the built-in colorbar reflects the range automatically.
+const volClipMin = document.getElementById('volClipMin')
+const volClipMax = document.getElementById('volClipMax')
+function syncVolClipInputs() {
+  const bg = nvSlices.volumes[0]
+  if (!bg) return
+  volClipMin.value = (+bg.cal_min).toPrecision(4)
+  volClipMax.value = (+bg.cal_max).toPrecision(4)
+}
+function applyVolClip() {
+  const bg = nvSlices.volumes[0]
+  if (!bg) return
+  const mn = parseFloat(volClipMin.value), mx = parseFloat(volClipMax.value)
+  if (!isFinite(mn) || !isFinite(mx) || mx <= mn) { syncVolClipInputs(); return }  // ignore invalid, restore
+  bg.cal_min = mn; bg.cal_max = mx
+  nvSlices.updateGLVolume(); nvSlices.drawScene()
+}
+volClipMin.addEventListener('change', applyVolClip)
+volClipMax.addEventListener('change', applyVolClip)
+document.getElementById('volClipAuto').addEventListener('click', () => {
+  const bg = nvSlices.volumes[0], desc = volumeRegistry[currentVolKey]
+  if (!bg || !desc || desc.defCalMin == null) return
+  bg.cal_min = desc.defCalMin; bg.cal_max = desc.defCalMax   // the volume's default (auto) window
+  nvSlices.updateGLVolume(); nvSlices.drawScene()
+  syncVolClipInputs()
+})
+syncVolClipInputs()          // initial fill from the startup volume
+
+// Right-click-drag window/level changes cal_min/cal_max inside NiiVue (the
+// colorbar updates, but nothing else); mirror the new range into the boxes.
+nvSlices.opts.onIntensityChange = () => syncVolClipInputs()
 
 // ── depth control ─────────────────────────────────────────────────────────────
 function setDepth(d) {
@@ -1043,6 +1094,13 @@ document.getElementById('crosshairChk').addEventListener('change', function() {
   nvSlices.opts.show3Dcrosshair = this.checked
   nvSlices.setCrosshairWidth(this.checked ? defaultCrosshairWidth : 0)
   nvSlices.drawScene()
+})
+
+// Orthoslice interpolation: checked = smooth (linear), unchecked = nearest. Also
+// toggled by the "i" keyboard shortcut, which flips this checkbox. setInterpolation
+// takes isNearest, so pass the negation of "smooth", and it redraws itself.
+document.getElementById('interpChk').addEventListener('change', function() {
+  nvSlices.setInterpolation(!this.checked)
 })
 
 // ── metric selector ───────────────────────────────────────────────────────────
@@ -1545,6 +1603,7 @@ function resetSliceView() {
     nvSlices.volumes[0].cal_min = defaultVolCalMin
     nvSlices.volumes[0].cal_max = defaultVolCalMax
     nvSlices.updateGLVolume()
+    syncVolClipInputs()
   }
   nvSlices.drawScene()
 }
@@ -1600,6 +1659,13 @@ document.addEventListener('keydown', e => {
     }
     case 'p': {   // toggle Pivot@vertex via its checkbox so the UI stays in sync
       const chk = document.getElementById('pivotAtVertexChk')
+      chk.checked = !chk.checked
+      chk.dispatchEvent(new Event('change'))
+      e.preventDefault()
+      break
+    }
+    case 'i': {   // toggle orthoslice smooth/nearest interpolation via its checkbox
+      const chk = document.getElementById('interpChk')
       chk.checked = !chk.checked
       chk.dispatchEvent(new Event('change'))
       e.preventDefault()

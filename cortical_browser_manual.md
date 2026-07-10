@@ -165,6 +165,10 @@ toggle with **Rad**.
 | **Rad** | Radiological vs neurological orthoslice orientation |
 | **X‑hair** | Show/hide the orthoslice crosshair |
 | **WM** / **pial** | Overlay white‑matter / pial surface contours on the orthoslices (loaded on first use) |
+| **Volume** | Choose which volume the orthoslices show; **other…** opens a file picker to load an extra volume (see *Orthoslice volume*) |
+| **cmap** | Colormap for the orthoslice volume (a colorbar is drawn on the ortho view) |
+| **clip** min / max / **Auto** | Clip the orthoslice color range; **Auto** restores the volume's default window |
+| **Interp** | Smooth (linear) vs nearest‑neighbor orthoslice interpolation (shortcut `i`) |
 | **Vertex** | Jump to a vertex by index (0‑based) |
 | **Rings** | Number of neighbor rings to aggregate around the selected vertex |
 | **Pivot@vertex** | Orbit the 3‑D surfaces around the selected vertex instead of the whole‑brain center |
@@ -189,6 +193,25 @@ toggle with **Rad**.
 Setting **Rings > 0** expands the selection to include mesh neighbors within that many
 edge‑hops. Every plot then shows the **mean ± 1 SD** across the selected vertices — the
 univariate profiles and all three multivariate panels aggregate over the same vertex set.
+
+---
+
+## Orthoslice volume
+
+The **Volume** dropdown selects which volume the orthoslices display. At startup it holds
+only the subject's `brain.mgz` / `brain.nii[.gz]` (if present). The last entry, **other…**,
+opens a file picker so you can load any additional NIfTI/MGZ volume from disk; every loaded
+volume is **appended to the dropdown**, so you can switch back and forth between them.
+
+- Switching to an already‑loaded volume is fast — each volume is decoded once and kept in
+  memory — and the world‑space crosshair position is preserved across the switch.
+- **cmap** sets the colormap (a colorbar is drawn on the ortho view), and **clip** min / max
+  clip the mapped intensity range (**Auto** restores the volume's default window). Both apply
+  to whichever volume is currently shown.
+- Right‑drag on the orthoslices adjusts window/level interactively; the **clip** boxes and the
+  colorbar track it live.
+- **Interp** (or the `i` shortcut) toggles between smooth (linear) and nearest‑neighbor
+  display.
 
 ---
 
@@ -233,6 +256,7 @@ working normally.
 | `r` | Reset everything: orthoslice zoom/pan, orthoslice grayscale contrast, and the 3‑D surface framing (camera angles, zoom, rotation pivot). |
 | `x` | Toggle the orthoslice crosshair on/off (mirrors the **X‑hair** checkbox). |
 | `p` | Toggle **Pivot@vertex** — orbit the 3‑D surfaces around the selected vertex vs. the whole‑brain centre. |
+| `i` | Toggle orthoslice interpolation — smooth (linear) vs nearest‑neighbor (mirrors the **Interp** checkbox). |
 
 ### Orthoslice navigation (moves the crosshair one voxel)
 | Key | Plane | Direction |
