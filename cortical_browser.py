@@ -16,10 +16,10 @@ import h5py
 
 sys.path.insert(0, os.path.dirname(__file__))
 from cortical_io import read_mrtrix_tsf, pad_to_matrix
+from cortical_browser_config import TEMPLATE, METRICS   # shared with the normative builder
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from urllib.parse import urlparse, parse_qs
 
-TEMPLATE        = 'ico6_sym'
 STEP_MM         = 0.5
 NIIVUE_CDN      = 'https://cdn.jsdelivr.net/npm/@niivue/niivue/dist/index.js'
 CHARTJS_CDN     = 'https://cdn.jsdelivr.net/npm/chart.js/dist/chart.umd.min.js'
@@ -279,6 +279,10 @@ const SURF_TYPES = __SURF_TYPES_JSON__
 const NORMATIVE = __NORMATIVE_JSON__
 const METRICS  = __METRICS_JSON__
 const BASE_URL = "__BASE_URL__"
+// Per-launch cache-buster: appended to every /data/ fetch so an immutable-cached
+// file from a previous subject (same port, same URL) can't leak into this one.
+const CACHE_BUST = "__CACHE_BUST__"
+const Q = CACHE_BUST ? `?v=${CACHE_BUST}` : ''
 const TEMPLATE = "__TEMPLATE__"
 const STEP_MM  = __STEP_MM__
 
@@ -311,7 +315,7 @@ const neighborMeshes = new Map() // nv instance -> its neighbor-rings connectome
 const MV_AVAILABLE = Object.keys(NORMATIVE).length > 0
 let mvZlim = 3            // max |z| on radar / z-bar panels (user-editable)
 let mvMahalLim = 10       // max Mahalanobis distance on the depth panel
-const mvCache = {}        // vertex -> parsed /mahal payload
+const mvCache = {}        // "vertex:rings" -> parsed /mahal payload
 let mvCurrent = null      // payload for the currently selected vertex
 
 // Hoisted so updateDepthMarker is safe to call before makeChart runs
@@ -339,8 +343,8 @@ const LH_COLOR = LH_SURF ? rgba255ToHex(LH_SURF.rgba255) : '#66B3FF'
 const RH_COLOR = RH_SURF ? rgba255ToHex(RH_SURF.rgba255) : '#FF854D'
 
 // Independently-selectable surface geometry per panel (white/pial/inflated/
-// very_inflated/average_white/average_pial) — all share the same ico6_sym
-// topology, so switching only changes vertex coordinates, not data mapping.
+// very_inflated/average_white/average_pial) — all share the same surface
+// template topology, so switching only changes vertex coordinates, not data mapping.
 let lhSurfUrl   = LH_SURF?.url ?? null
 let rhSurfUrl   = RH_SURF?.url ?? null
 let asymSurfUrl = LH_SURF?.url ?? null
@@ -463,14 +467,14 @@ function resetPivot(nv) {
 function layerDataFor(hemi, metric) {
   const info = metric ? METRICS[metric] : null
   if (!info) return []
-  return [{ url: `${BASE_URL}/${hemi}_${TEMPLATE}_${metric}.func.gii`,
+  return [{ url: `${BASE_URL}/${hemi}_${TEMPLATE}_${metric}.func.gii${Q}`,
             colormap: currentCmap, colormapInvert: dataInvert,
             opacity: layerOpacity, cal_min: currentClimMin, cal_max: currentClimMax }]
 }
 function layerAsymFor(metric) {
   const info = metric ? METRICS[metric] : null
   if (!info) return []
-  return [{ url: `${BASE_URL}/asym_${TEMPLATE}_${metric}.func.gii`,
+  return [{ url: `${BASE_URL}/asym_${TEMPLATE}_${metric}.func.gii${Q}`,
             colormap: currentCmapAsym, colormapInvert: asymInvert,
             opacity: layerOpacity, cal_min: currentAsymMin, cal_max: currentAsymMax }]
 }
@@ -566,7 +570,7 @@ const matCache = {}
 async function ensureMatrix(hemi, metric) {
   const key = `${hemi}_${metric}`
   if (matCache[key]) return matCache[key]
-  const r = await fetch(`${BASE_URL}/${hemi}_${TEMPLATE}_${metric}_matrix.f32`)
+  const r = await fetch(`${BASE_URL}/${hemi}_${TEMPLATE}_${metric}_matrix.f32${Q}`)
   matCache[key] = new Float32Array(await r.arrayBuffer())
   return matCache[key]
 }
@@ -577,7 +581,7 @@ const normCache = {}
 async function ensureNormativeMatrix(kind, metric, stat) {
   const key = `${kind}_${metric}_${stat}`
   if (normCache[key]) return normCache[key]
-  const r = await fetch(`${BASE_URL}/normative_${kind}_${metric}_${stat}.f32`)
+  const r = await fetch(`${BASE_URL}/normative_${kind}_${metric}_${stat}.f32${Q}`)
   normCache[key] = new Float32Array(await r.arrayBuffer())
   return normCache[key]
 }
@@ -593,16 +597,26 @@ async function normativeRingStat(kind, metric, ringSet) {
   // Ring-average the precomputed per-vertex cohort mean; combine per-vertex
   // SDs by averaging variances (a "pooled SD" approximation — the true
   // per-ring SD would need the raw per-subject stack, not just mean/std).
+  // The cohort mean/std files carry NaN where no subject reached a vertex/depth
+  // (nanmean in materialize_normative), so skip those rather than poisoning the
+  // ring average.
   const mean = new Array(nd).fill(0)
   const variance = new Array(nd).fill(0)
+  const cnt = new Array(nd).fill(0)
   for (const vi of ringSet) {
     for (let d = 0; d < nd; d++) {
-      mean[d]     += meanMat[vi*nd+d]
-      variance[d] += stdMat[vi*nd+d] ** 2
+      const mv = meanMat[vi*nd+d]
+      if (!Number.isFinite(mv)) continue
+      const sv = stdMat[vi*nd+d]
+      mean[d]     += mv
+      variance[d] += Number.isFinite(sv) ? sv*sv : 0
+      cnt[d]++
     }
   }
-  const n = ringSet.length
-  for (let d = 0; d < nd; d++) { mean[d] /= n; variance[d] /= n }
+  for (let d = 0; d < nd; d++) {
+    if (cnt[d]) { mean[d] /= cnt[d]; variance[d] /= cnt[d] }
+    else        { mean[d] = NaN;    variance[d] = NaN }
+  }
   return { mean, sd: variance.map(Math.sqrt), n: NORMATIVE[metric].n_subjects }
 }
 
@@ -932,7 +946,7 @@ refreshColorbars()
 
 // ── neighbor-ring expansion (mirrors getNeighborRings in cortical_browser_2.m) ─
 // Built lazily from the LH mesh topology and reused for RH/Asym since all three
-// share the same ico6_sym triangulation — only vertex coordinates differ.
+// share the same surface template triangulation — only vertex coordinates differ.
 let vertexAdjacency = null
 
 function buildAdjacency(tris, nVerts) {
@@ -1009,15 +1023,25 @@ function ringArea(hemi, ringSet) {
   return sum
 }
 
+// Per-depth mean ± sd across vertices, ignoring NaN ("no data": invalid or
+// short-track depths). A depth with no valid samples yields NaN (→ a gap in
+// the chart); sd needs ≥2 valid samples at that depth, else NaN (no band).
 function meanStd(rows) {
   const n = rows.length, nd = rows[0].length
   const mean = new Array(nd).fill(0)
-  for (const row of rows) for (let d = 0; d < nd; d++) mean[d] += row[d]
-  for (let d = 0; d < nd; d++) mean[d] /= n
+  const cnt  = new Array(nd).fill(0)
+  for (const row of rows) for (let d = 0; d < nd; d++) {
+    const v = row[d]
+    if (Number.isFinite(v)) { mean[d] += v; cnt[d]++ }
+  }
+  for (let d = 0; d < nd; d++) mean[d] = cnt[d] ? mean[d] / cnt[d] : NaN
   if (n <= 1) return { mean, sd: null }
   const sd = new Array(nd).fill(0)
-  for (const row of rows) for (let d = 0; d < nd; d++) { const diff = row[d] - mean[d]; sd[d] += diff*diff }
-  for (let d = 0; d < nd; d++) sd[d] = Math.sqrt(sd[d] / (n - 1))
+  for (const row of rows) for (let d = 0; d < nd; d++) {
+    const v = row[d]
+    if (Number.isFinite(v)) { const diff = v - mean[d]; sd[d] += diff*diff }
+  }
+  for (let d = 0; d < nd; d++) sd[d] = cnt[d] > 1 ? Math.sqrt(sd[d] / (cnt[d] - 1)) : NaN
   return { mean, sd }
 }
 
@@ -1240,7 +1264,8 @@ async function selectVertex(vertIdx, nvInst) {
 
   // Multivariate panels fetch independently so the profiles above render
   // immediately rather than waiting on the server-side Mahalanobis compute.
-  updateMultivariate(vertIdx)
+  // They aggregate over the same neighbor-ring set as the univariate charts.
+  updateMultivariate(vertIdx, ringSet)
 }
 
 async function pickOnSurface(canvas, mouseX, mouseY, nvInst) {
@@ -1532,21 +1557,32 @@ applyAsymYLimits()
 const mvTick = { color:'#dddddd', font:{size:10} }
 const mvGrid = { color:'#303030' }
 
-// Mahalanobis distance vs depth — one line per hemisphere, plus the shared
-// yellow depth reference line. Clicking sets the depth, like the profile charts.
+// Mahalanobis distance vs depth — a mean line per hemisphere with a dashed
+// ±SD band (mirroring the univariate profile charts; the band is only
+// populated when >1 vertex is selected), plus the shared yellow depth
+// reference line. Clicking sets the depth, like the profile charts.
+const mvSdBand = color => ([
+  { data:[], borderColor:color, borderDash:[5,4], borderWidth:1,
+    pointRadius:0, tension:0.3, fill:false, parsing:false, spanGaps:false, _isSd:true },
+  { data:[], borderColor:color, borderDash:[5,4], borderWidth:1,
+    pointRadius:0, tension:0.3, fill:false, parsing:false, spanGaps:false, _isSd:true },
+])
 chartMahal = new Chart(document.getElementById('chart-mahal'), {
   type: 'line',
   data: { datasets: [
     { label:'LH', data:[], borderColor:LH_COLOR, backgroundColor:LH_COLOR+'28',
       pointRadius:2, tension:0.3, fill:false, parsing:false, spanGaps:false },
+    ...mvSdBand(LH_COLOR),
     { label:'RH', data:[], borderColor:RH_COLOR, backgroundColor:RH_COLOR+'28',
       pointRadius:2, tension:0.3, fill:false, parsing:false, spanGaps:false },
+    ...mvSdBand(RH_COLOR),
   ]},
   options: {
     responsive:true, maintainAspectRatio:false, animation:false,
     onClick: (evt, els, chart) => setDepthFromChart(chart, evt.x),
     plugins: {
-      legend: { display:true, labels:{ color:'#dddddd', boxWidth:10, font:{size:10} } },
+      legend: { display:true, labels:{ color:'#dddddd', boxWidth:10, font:{size:10},
+        filter:(item,data) => !data.datasets[item.datasetIndex]?._isSd } },
       annotation: { annotations: { depthLine: {
         type:'line', xMin:0, xMax:0, borderColor:ACCENT_YELLOW, borderWidth:1.5, borderDash:[4,3]
       }}}
@@ -1561,15 +1597,26 @@ chartMahal = new Chart(document.getElementById('chart-mahal'), {
 })
 
 // |z-score| radar — one polygon per hemisphere, one spoke per metric.
+// Mean |z| polygon plus dashed +SD/−SD polygons (hidden from the legend),
+// mirroring the band on the profile/Mahalanobis charts.
+const mvRadarSd = color => ([
+  { data:[], borderColor:color, backgroundColor:'transparent', borderDash:[4,3],
+    borderWidth:1, pointRadius:0, fill:false, _isSd:true },
+  { data:[], borderColor:color, backgroundColor:'transparent', borderDash:[4,3],
+    borderWidth:1, pointRadius:0, fill:false, _isSd:true },
+])
 chartRadar = new Chart(document.getElementById('chart-radar'), {
   type: 'radar',
   data: { labels: [], datasets: [
     { label:'LH', data:[], borderColor:LH_COLOR, backgroundColor:LH_COLOR+'33', borderWidth:2, pointRadius:2 },
+    ...mvRadarSd(LH_COLOR),
     { label:'RH', data:[], borderColor:RH_COLOR, backgroundColor:RH_COLOR+'33', borderWidth:2, pointRadius:2 },
+    ...mvRadarSd(RH_COLOR),
   ]},
   options: {
     responsive:true, maintainAspectRatio:false, animation:false,
-    plugins: { legend: { display:true, labels:{ color:'#dddddd', boxWidth:10, font:{size:10} } } },
+    plugins: { legend: { display:true, labels:{ color:'#dddddd', boxWidth:10, font:{size:10},
+      filter:(item,data) => !data.datasets[item.datasetIndex]?._isSd } } },
     scales: { r: {
       min:0, max:mvZlim,
       ticks:{ color:'#aaaaaa', backdropColor:'transparent', showLabelBackdrop:false, font:{size:8}, stepSize:1 },
@@ -1578,6 +1625,35 @@ chartRadar = new Chart(document.getElementById('chart-radar'), {
   }
 })
 
+// Across-vertex sd whiskers on each z-score bar (Chart.js has no native error
+// bars). Reads dataset._sd (signed-z sd per metric) and draws a horizontal
+// whisker with end caps, since the bars are horizontal (indexAxis:'y').
+const mvErrorBars = {
+  id: 'mvErrorBars',
+  afterDatasetsDraw(chart) {
+    const x = chart.scales.x, ctx = chart.ctx, ca = chart.chartArea
+    const clamp = px => Math.max(ca.left, Math.min(ca.right, px))
+    chart.data.datasets.forEach((ds, di) => {
+      const sd = ds._sd
+      const meta = chart.getDatasetMeta(di)
+      if (!sd || meta.hidden) return
+      ctx.save()
+      ctx.strokeStyle = ds.borderColor || '#cccccc'; ctx.lineWidth = 1
+      meta.data.forEach((el, i) => {
+        const v = ds.data[i], s = sd[i]
+        if (v == null || s == null || !isFinite(s) || s <= 0) return
+        const y = el.y, cap = 3
+        const xp = clamp(x.getPixelForValue(v + s)), xm = clamp(x.getPixelForValue(v - s))
+        ctx.beginPath()
+        ctx.moveTo(xm, y);       ctx.lineTo(xp, y)
+        ctx.moveTo(xm, y - cap); ctx.lineTo(xm, y + cap)
+        ctx.moveTo(xp, y - cap); ctx.lineTo(xp, y + cap)
+        ctx.stroke()
+      })
+      ctx.restore()
+    })
+  }
+}
 // z-score horizontal bars — metrics on the y-axis, signed z on the x-axis.
 chartZBar = new Chart(document.getElementById('chart-zbar'), {
   type: 'bar',
@@ -1585,6 +1661,7 @@ chartZBar = new Chart(document.getElementById('chart-zbar'), {
     { label:'LH', data:[], backgroundColor:LH_COLOR+'cc', borderColor:LH_COLOR, borderWidth:0 },
     { label:'RH', data:[], backgroundColor:RH_COLOR+'cc', borderColor:RH_COLOR, borderWidth:0 },
   ]},
+  plugins: [mvErrorBars],
   options: {
     indexAxis:'y', responsive:true, maintainAspectRatio:false, animation:false,
     plugins: {
@@ -1610,33 +1687,57 @@ if (!MV_AVAILABLE) {
   }
 }
 
-const mvHasNull = a => !a || a.some(v => v == null)
+const mvLabel = (base, n) => (n > 1 ? `${base} (n=${n})` : base)
 
-// Mahalanobis-by-depth lines for the current vertex.
+// Mahalanobis-by-depth: mean line per hemisphere plus dashed ±SD band across
+// the selected vertex + neighbor-ring set (the band appears only for n>1).
 function renderMahalChart(data) {
-  const toXY = arr => arr.map((v,i) => ({ x: i*data.step_mm, y: v == null ? null : v }))
-  chartMahal.data.datasets[0].data = toXY(data.lh.mahal)
-  chartMahal.data.datasets[1].data = toXY(data.rh.mahal)
+  const toXY  = arr => arr.map((v,i) => ({ x: i*data.step_mm, y: (v == null ? null : v) }))
+  const band  = (mean, sd, sign) => mean.map((m,i) => ({
+    x: i*data.step_mm,
+    y: (m == null || !sd || sd[i] == null) ? null : m + sign*sd[i]
+  }))
+  const setHemi = (base, hemi, name) => {
+    chartMahal.data.datasets[base].data     = toXY(hemi.mahal)
+    chartMahal.data.datasets[base].label    = mvLabel(name, data.n_vertices)
+    chartMahal.data.datasets[base + 1].data = band(hemi.mahal, hemi.mahal_sd, +1)
+    chartMahal.data.datasets[base + 2].data = band(hemi.mahal, hemi.mahal_sd, -1)
+  }
+  setHemi(0, data.lh, 'LH')
+  setHemi(3, data.rh, 'RH')
   chartMahal.options.scales.y.max = mvMahalLim
   const ann = chartMahal.options.plugins.annotation.annotations.depthLine
   ann.xMin = ann.xMax = currentDepth * STEP_MM
   chartMahal.update('none')
 }
 
-// Radar (|z|) and horizontal bars (signed z) at one depth. A hemisphere with
-// any missing metric is dropped entirely (matches the MATLAB explorer).
+// Radar (mean |z| ± SD across vertices) and horizontal bars (mean signed z ±
+// SD via whiskers) at one depth. Per-metric gaps (null) are left in place
+// rather than dropping the whole hemisphere, so partially-valid vertices show.
 function renderRadarBar(data, depth) {
-  const d  = Math.max(0, Math.min(data.n_depths - 1, depth))
-  const zl = data.lh.z[d], zr = data.rh.z[d]
+  const d = Math.max(0, Math.min(data.n_depths - 1, depth))
+  const at = (arr) => (arr && arr[d]) ? arr[d] : []
+
   chartRadar.data.labels = data.metrics
-  chartRadar.data.datasets[0].data = mvHasNull(zl) ? [] : zl.map(Math.abs)
-  chartRadar.data.datasets[1].data = mvHasNull(zr) ? [] : zr.map(Math.abs)
+  const setRadar = (base, hemi) => {
+    const mean = at(hemi.absz), sd = at(hemi.absz_sd)
+    chartRadar.data.datasets[base].data     = mean
+    chartRadar.data.datasets[base].label    = mvLabel(base === 0 ? 'LH' : 'RH', data.n_vertices)
+    chartRadar.data.datasets[base + 1].data = mean.map((m,i) => (m == null || sd[i] == null) ? null : m + sd[i])
+    chartRadar.data.datasets[base + 2].data = mean.map((m,i) => (m == null || sd[i] == null) ? null : Math.max(0, m - sd[i]))
+  }
+  setRadar(0, data.lh)
+  setRadar(3, data.rh)
   chartRadar.options.scales.r.max = mvZlim
   chartRadar.update('none')
 
   chartZBar.data.labels = data.metrics
-  chartZBar.data.datasets[0].data = mvHasNull(zl) ? [] : zl
-  chartZBar.data.datasets[1].data = mvHasNull(zr) ? [] : zr
+  chartZBar.data.datasets[0].data = at(data.lh.z)
+  chartZBar.data.datasets[1].data = at(data.rh.z)
+  chartZBar.data.datasets[0]._sd  = at(data.lh.z_sd)
+  chartZBar.data.datasets[1]._sd  = at(data.rh.z_sd)
+  chartZBar.data.datasets[0].label = mvLabel('LH', data.n_vertices)
+  chartZBar.data.datasets[1].label = mvLabel('RH', data.n_vertices)
   chartZBar.options.scales.x.min = -mvZlim
   chartZBar.options.scales.x.max =  mvZlim
   chartZBar.update('none')
@@ -1645,21 +1746,25 @@ function renderRadarBar(data, depth) {
 function clearMultivariate() {
   mvCurrent = null
   for (const ch of [chartMahal, chartRadar, chartZBar]) {
-    for (const ds of ch.data.datasets) ds.data = []
+    for (const ds of ch.data.datasets) { ds.data = []; ds._sd = null }
     ch.update('none')
   }
 }
 
-// Fetch (once per vertex) and render all three multivariate panels.
-async function updateMultivariate(vertIdx) {
+// Fetch (once per vertex + ring count) and render all three multivariate
+// panels. ringSet mirrors the neighbor-ring set used by the univariate charts,
+// so both sets of panels aggregate over exactly the same vertices.
+async function updateMultivariate(vertIdx, ringSet) {
   if (!MV_AVAILABLE) return
+  const verts = (ringSet && ringSet.length) ? ringSet : [vertIdx]
+  const key = `${vertIdx}:${nRings}`
   try {
-    let data = mvCache[vertIdx]
+    let data = mvCache[key]
     if (!data) {
-      const r = await fetch(`/mahal?vertex=${vertIdx}`)
+      const r = await fetch(`/mahal?vertex=${vertIdx}&vertices=${verts.join(',')}`)
       if (!r.ok) return
       data = await r.json()
-      mvCache[vertIdx] = data
+      mvCache[key] = data
     }
     mvCurrent = data
     renderMahalChart(data)
@@ -1682,7 +1787,9 @@ function updateDepthMarker(mm) {
 }
 
 function setProfiles(lhStat, rhStat, asymStat, count, lhArea, rhArea, normStat) {
-  const toXY = vals => vals.map((v,i) => ({x: i*STEP_MM, y: v}))
+  // Non-finite (NaN "no data", or a band edge built from one) → null so the
+  // chart draws a gap at that depth rather than a spurious point.
+  const toXY = vals => vals.map((v,i) => ({x: i*STEP_MM, y: Number.isFinite(v) ? v : null}))
   const entries = [
     [chartLH,   lhStat,   lhArea,  normStat?.lh],
     [chartRH,   rhStat,   rhArea,  normStat?.rh],
@@ -1778,16 +1885,21 @@ def find_surface_types(subjects_dir, subj_dir, template=TEMPLATE):
     return result
 
 
-def find_tsf_metrics(subj_dir, template=TEMPLATE):
-    dwi_dir = os.path.join(subj_dir, 'dwi')
-    metrics = {}
-    prefix  = f'lh_{template}_'
-    for tsf in sorted(glob.glob(os.path.join(dwi_dir, f'lh_{template}_*.tsf'))):
-        metric = os.path.basename(tsf)[len(prefix):].replace('.tsf', '')
-        rh     = os.path.join(dwi_dir, f'rh_{template}_{metric}.tsf')
-        if os.path.isfile(rh):
-            metrics[metric] = {'lh': tsf, 'rh': rh}
-    return metrics
+def find_tsf_metrics(subj_dir, template=TEMPLATE, metrics=METRICS):
+    """Locate each configured metric's lh/rh TSF files anywhere under the
+    subject dir (recursive, mirroring the normative builder's search — so files
+    nested in sub-folders like dwi/csd_fixels_singletissue/ are found, not just
+    those directly in dwi/). A metric is included only when both hemispheres are
+    present as siblings, and the result preserves the config's metric order."""
+    found = {}
+    for metric in metrics:
+        for lh in sorted(glob.glob(os.path.join(subj_dir, '**', f'lh_{template}_{metric}.tsf'),
+                                   recursive=True)):
+            rh = os.path.join(os.path.dirname(lh), f'rh_{template}_{metric}.tsf')
+            if os.path.isfile(rh):
+                found[metric] = {'lh': lh, 'rh': rh}
+                break   # first lh with a matching rh sibling wins
+    return found
 
 
 # ── TSF → func.gii conversion ─────────────────────────────────────────────────
@@ -1797,10 +1909,16 @@ def find_tsf_metrics(subj_dir, template=TEMPLATE):
 # which only runs for a metric once it's actually requested.
 
 def read_tsf_matrix(tsf_path):
-    """Read a TSF file into a padded (n_vertices, n_depths) float32 matrix."""
+    """Read a TSF file into a padded (n_vertices, n_depths) float32 matrix.
+    Both the -1 invalid sentinel and the short-track NaN padding are left as
+    NaN (matching the stats/normative readers) so they read as "no data" —
+    excluded from profile averages and shown as gaps, never as spurious 0/-1
+    values. The surface overlay re-fills these to 0 at gii-write time
+    (write_func_gii), since NaN is only meaningful for the profile matrices."""
     _, tracks = read_mrtrix_tsf(tsf_path)
-    M = pad_to_matrix(tracks).astype(np.float32)
-    return np.nan_to_num(M, nan=0.0)
+    M = pad_to_matrix(tracks).astype(np.float32)   # NaN where a track is short
+    M[M == -1] = np.nan                            # mask mrtrix invalid sentinel
+    return M
 
 
 def matrix_cal_range(M):
@@ -1811,13 +1929,16 @@ def matrix_cal_range(M):
 
 
 def compute_asym_matrix(lh_M, rh_M):
-    """Compute asymmetry index (LH-RH)/mean(LH,RH)."""
+    """Asymmetry index (LH-RH)/mean(LH,RH). Invalid inputs (NaN) and undefined
+    ratios (both hemispheres zero → 0/0) propagate as NaN, so they're excluded
+    from profiles and cohort averages rather than biasing them toward 0."""
     LH = lh_M.astype(np.float64)
     RH = rh_M.astype(np.float64)
     denom = (LH + RH) / 2.0
     with np.errstate(divide='ignore', invalid='ignore'):
-        A = np.where(denom != 0.0, (LH - RH) / denom, 0.0).astype(np.float32)
-    return np.nan_to_num(A, nan=0.0, posinf=0.0, neginf=0.0)
+        A = ((LH - RH) / denom).astype(np.float32)
+    A[~np.isfinite(A)] = np.nan   # NaN input or 0/0 → undefined
+    return A
 
 
 def asym_cal_range():
@@ -1827,6 +1948,11 @@ def asym_cal_range():
 
 
 def write_func_gii(M, out_path):
+    # NaN ("no data") is meaningful only for the profile matrices; on the
+    # surface overlay it would render unpredictably, so zero-fill a copy here
+    # (the caller's array — written to the .f32 profile file — keeps its NaN).
+    # Invalid vertices then clamp to the low end of the colormap, as before.
+    M = np.nan_to_num(M, nan=0.0)
     intent  = nib.nifti1.intent_codes['NIFTI_INTENT_NONE']
     darrays = [nib.gifti.GiftiDataArray(M[:, d], intent=intent, datatype='NIFTI_TYPE_FLOAT32')
                for d in range(M.shape[1])]
@@ -1996,24 +2122,46 @@ def _mahal_sq(x, mu, cov, n_valid, n_metrics):
     return val if np.isfinite(val) else None
 
 
-def compute_multivariate(subjects_dir, tsf_metrics, subj_cache, vertex, template=TEMPLATE):
+def _jsonable(arr):
+    """numpy float array → nested Python lists with any non-finite value
+    (NaN/inf, e.g. an all-invalid mean or a single-sample std) replaced by
+    None, so the front end draws a gap rather than a bogus point."""
+    a = np.asarray(arr, dtype=np.float64)
+    conv = lambda x: (float(x) if np.isfinite(x) else None)
+    if a.ndim == 1:
+        return [conv(v) for v in a]
+    return [[conv(v) for v in row] for row in a]
+
+
+def compute_multivariate(subjects_dir, tsf_metrics, subj_cache, vertices,
+                         primary=None, template=TEMPLATE):
     """Per-depth squared Mahalanobis distance and per-metric z-scores (LH and
-    RH) for one vertex. Returns a JSON-ready dict, or None if there's no cohort
-    file / no shared metrics / the vertex is out of range."""
+    RH), aggregated over a set of vertices (the selected vertex plus its
+    neighbor-ring set). Mirrors the univariate profile panels: each vertex
+    yields a Mahalanobis-by-depth vector and per-depth z-vectors, and we return
+    the mean ± sd across vertices. With a single vertex the sd arrays are all
+    None (no band). Returns a JSON-ready dict, or None if there's no cohort
+    file / no shared metrics / no in-range vertex."""
+    if isinstance(vertices, int):
+        vertices = [vertices]
     h5_path = os.path.join(subjects_dir, 'templates', 'normative', f'{template}_multivariate.h5')
     if not os.path.isfile(h5_path):
         return None
     with h5py.File(h5_path, 'r') as h5f:
         cohort_metrics = list(h5f['metrics'].asstr()[:])
         n_subjects = int(h5f['subjects'].shape[0])
+        n_cohort_verts = h5f['lh_M'].shape[0]
         # Metrics the cohort AND this subject both have, ordered by the cohort's
         # metric axis so the subject vector lines up with lh_M/rh_M column-wise.
         metrics = [m for m in cohort_metrics if m in tsf_metrics]
-        if not metrics or vertex < 0 or vertex >= h5f['lh_M'].shape[0]:
+        # Unique, in-range, sorted so h5py fancy indexing is happy (order does
+        # not matter — we aggregate across vertices).
+        verts = sorted({int(v) for v in vertices if 0 <= int(v) < n_cohort_verts})
+        if not metrics or not verts:
             return None
         midx = [cohort_metrics.index(m) for m in metrics]
-        lh_c = np.asarray(h5f['lh_M'][vertex])[:, :, midx].astype(np.float64)  # (nDepthsL, nSub, nUsed)
-        rh_c = np.asarray(h5f['rh_M'][vertex])[:, :, midx].astype(np.float64)  # (nDepthsR, nSub, nUsed)
+        lh_c = np.asarray(h5f['lh_M'][verts])[:, :, :, midx].astype(np.float64)  # (nV, nDepthsL, nSub, nUsed)
+        rh_c = np.asarray(h5f['rh_M'][verts])[:, :, :, midx].astype(np.float64)  # (nV, nDepthsR, nSub, nUsed)
 
     # Subject's own per-metric matrices (NaN-masked), cached for the session.
     for m in metrics:
@@ -2022,9 +2170,10 @@ def compute_multivariate(subjects_dir, tsf_metrics, subj_cache, vertex, template
                              _subject_tsf_nan(tsf_metrics[m]['rh']))
 
     n_used   = len(metrics)
-    n_depths = min(lh_c.shape[0], rh_c.shape[0])   # combine both hemis per depth
+    n_depths = min(lh_c.shape[1], rh_c.shape[1])   # combine both hemis per depth
+    nV       = len(verts)
 
-    def subj_vec(hemi_i):
+    def subj_vec(vertex, hemi_i):
         out = np.full((n_depths, n_used), np.nan)
         for j, m in enumerate(metrics):
             M = subj_cache[m][hemi_i]
@@ -2035,55 +2184,84 @@ def compute_multivariate(subjects_dir, tsf_metrics, subj_cache, vertex, template
             out[:dd, j] = row[:dd]
         return out
 
-    subj = (subj_vec(0), subj_vec(1))   # (lh, rh)
-    mahal = ([], [])
-    zsc   = ([], [])
-    for d in range(n_depths):
-        cohort_d = np.vstack([lh_c[d], rh_c[d]])            # (2*nSub, nUsed)
-        C = cohort_d[~np.any(np.isnan(cohort_d), axis=1)]   # drop subjects missing any metric
-        nC = C.shape[0]
-        if nC >= 1:
-            mu = C.mean(axis=0)
-            sd = C.std(axis=0, ddof=0)                      # population std, as MATLAB std(...,1)
-        else:
-            mu = np.full(n_used, np.nan); sd = np.full(n_used, np.nan)
-        cov = np.atleast_2d(np.cov(C, rowvar=False, ddof=1)) if nC > 1 else None
-        for h in (0, 1):
-            x = subj[h][d]
-            mahal[h].append(_mahal_sq(x, mu, cov, nC, n_used))
-            with np.errstate(invalid='ignore', divide='ignore'):
-                z = np.where(sd > 0, (x - mu) / sd, np.nan)
-            zsc[h].append([float(v) if np.isfinite(v) else None for v in z])
+    # Per-vertex results: NaN where undefined so the aggregation can skip them.
+    mahal = [np.full((nV, n_depths), np.nan) for _ in (0, 1)]           # (nV, nDepths)
+    zsc   = [np.full((nV, n_depths, n_used), np.nan) for _ in (0, 1)]   # (nV, nDepths, nUsed)
+    for vi, vertex in enumerate(verts):
+        subj = (subj_vec(vertex, 0), subj_vec(vertex, 1))   # (lh, rh)
+        for d in range(n_depths):
+            cohort_d = np.vstack([lh_c[vi, d], rh_c[vi, d]])   # (2*nSub, nUsed)
+            C = cohort_d[~np.any(np.isnan(cohort_d), axis=1)]  # drop subjects missing any metric
+            nC = C.shape[0]
+            if nC >= 1:
+                mu = C.mean(axis=0)
+                sd = C.std(axis=0, ddof=0)                     # population std, as MATLAB std(...,1)
+            else:
+                mu = np.full(n_used, np.nan); sd = np.full(n_used, np.nan)
+            cov = np.atleast_2d(np.cov(C, rowvar=False, ddof=1)) if nC > 1 else None
+            for h in (0, 1):
+                x = subj[h][d]
+                ms = _mahal_sq(x, mu, cov, nC, n_used)
+                mahal[h][vi, d] = np.nan if ms is None else ms
+                with np.errstate(invalid='ignore', divide='ignore'):
+                    zsc[h][vi, d, :] = np.where(sd > 0, (x - mu) / sd, np.nan)
+
+    def aggregate(h):
+        """Mean ± sd across vertices, ignoring NaN. Signed z feeds the bar
+        chart; |z| feeds the radar; both need their own mean/sd because
+        mean(|z|) != |mean(z)|. sd uses ddof=1, so it is None for a lone
+        vertex."""
+        m_arr, z_arr = mahal[h], zsc[h]
+        absz = np.abs(z_arr)
+        with warnings.catch_warnings():   # all-NaN slices are expected (fully invalid depths)
+            warnings.simplefilter('ignore', category=RuntimeWarning)
+            nan_sd = lambda a, shape: (np.nanstd(a, axis=0, ddof=1) if nV > 1 else np.full(shape, np.nan))
+            return {
+                'mahal':    _jsonable(np.nanmean(m_arr, axis=0)),
+                'mahal_sd': _jsonable(nan_sd(m_arr, n_depths)),
+                'z':        _jsonable(np.nanmean(z_arr, axis=0)),
+                'z_sd':     _jsonable(nan_sd(z_arr, (n_depths, n_used))),
+                'absz':     _jsonable(np.nanmean(absz, axis=0)),
+                'absz_sd':  _jsonable(nan_sd(absz, (n_depths, n_used))),
+            }
 
     return {
-        'vertex': int(vertex), 'metrics': metrics, 'step_mm': STEP_MM,
+        'vertex': int(primary if primary is not None else verts[0]),
+        'n_vertices': nV, 'metrics': metrics, 'step_mm': STEP_MM,
         'n_depths': int(n_depths), 'n_subjects': n_subjects,
-        'lh': {'mahal': mahal[0], 'z': zsc[0]},
-        'rh': {'mahal': mahal[1], 'z': zsc[1]},
+        'lh': aggregate(0), 'rh': aggregate(1),
     }
 
 
 # ── HTML generation ───────────────────────────────────────────────────────────
 
-def make_html(subj_id, vol_path, lh_path, rh_path, overlay_info, port, surf_types=None, normative_info=None, template=TEMPLATE):
+def make_html(subj_id, vol_path, lh_path, rh_path, overlay_info, port, surf_types=None,
+              normative_info=None, template=TEMPLATE, cache_bust=''):
     base = f'http://localhost:{port}/data'
+    # The /data/ files are served immutable (see _reply), and their URLs depend
+    # only on hemi/template/metric — NOT the subject. Two subjects on the same
+    # port therefore share URLs, so the browser would serve subject A's cached
+    # bytes for subject B. A per-launch token in the query string gives each
+    # session its own cache keys (the server ignores the query when locating the
+    # file), busting the cache across subjects while keeping it within a session.
+    q = f'?v={cache_bust}' if cache_bust else ''
 
     volumes = []
     if vol_path:
-        volumes.append({'url': f'{base}/{os.path.basename(vol_path)}',
+        volumes.append({'url': f'{base}/{os.path.basename(vol_path)}{q}',
                         'colormap': 'gray', 'opacity': 1})
     # Per-hemisphere accent colors; the front-end derives the LH/RH plot line
     # colors from these same rgba255 values so surfaces and plots stay in sync.
     surfs = []
     if lh_path:
-        surfs.append({'url': f'{base}/{os.path.basename(lh_path)}',
+        surfs.append({'url': f'{base}/{os.path.basename(lh_path)}{q}',
                       'rgba255': [102, 179, 255, 255], 'hemi': 'lh'})   # #66B3FF
     if rh_path:
-        surfs.append({'url': f'{base}/{os.path.basename(rh_path)}',
+        surfs.append({'url': f'{base}/{os.path.basename(rh_path)}{q}',
                       'rgba255': [255, 133, 77, 255], 'hemi': 'rh'})    # #FF854D
 
     surf_types_urls = {
-        surf_type: {hemi: f'{base}/{os.path.basename(p)}' for hemi, p in hemis.items()}
+        surf_type: {hemi: f'{base}/{os.path.basename(p)}{q}' for hemi, p in hemis.items()}
         for surf_type, hemis in (surf_types or {}).items()
     }
 
@@ -2107,6 +2285,7 @@ def make_html(subj_id, vol_path, lh_path, rh_path, overlay_info, port, surf_type
         ('__NORMATIVE_JSON__', json.dumps(normative_info or {})),
         ('__METRICS_JSON__',   json.dumps(overlay_info)),
         ('__BASE_URL__',       base),
+        ('__CACHE_BUST__',     cache_bust),
         ('__TEMPLATE__',       template),
         ('__STEP_MM__',        str(STEP_MM)),
         ('__METRIC_OPTIONS__', metric_opts),
@@ -2191,13 +2370,22 @@ def make_handler(html_bytes, file_map, overlay_arrays, materialized, out_dir,
             if not subjects_dir or not tsf_metrics:
                 self._reply(404, 'text/plain', b'no cohort data\n')
                 return
+            qs = parse_qs(urlparse(self.path).query)
             try:
-                vtx = int(parse_qs(urlparse(self.path).query).get('vertex', [''])[0])
+                vtx = int(qs.get('vertex', [''])[0])
             except (ValueError, TypeError):
                 self._reply(400, 'text/plain', b'bad or missing vertex\n')
                 return
+            # Optional neighbor-ring set to aggregate over (mean ± sd across
+            # vertices); defaults to the selected vertex alone.
+            verts_arg = qs.get('vertices', [''])[0]
             try:
-                payload = compute_multivariate(subjects_dir, tsf_metrics, mv_subject_cache, vtx, template)
+                verts = [int(v) for v in verts_arg.split(',') if v != ''] or [vtx]
+            except (ValueError, TypeError):
+                verts = [vtx]
+            try:
+                payload = compute_multivariate(subjects_dir, tsf_metrics, mv_subject_cache,
+                                               verts, primary=vtx, template=template)
             except Exception as exc:   # noqa: BLE001 — report, don't crash the server
                 self._reply(500, 'text/plain', f'mahal error: {exc}\n'.encode('utf-8'))
                 return
@@ -2212,7 +2400,14 @@ def make_handler(html_bytes, file_map, overlay_arrays, materialized, out_dir,
             self.send_header('Content-Length',              str(len(data)))
             self.send_header('Access-Control-Allow-Origin', '*')
             if cacheable:
+                # Safe to cache forever only because the URL carries a per-launch
+                # cache-buster (see make_html) — otherwise a different subject on
+                # the same port would reuse these bytes.
                 self.send_header('Cache-Control', 'public, max-age=31536000, immutable')
+            else:
+                # Dynamic responses (the HTML page, /mahal JSON): never cache, so
+                # they can't leak across subjects sharing a port.
+                self.send_header('Cache-Control', 'no-store')
             self.end_headers()
             self.wfile.write(data)
 
@@ -2276,9 +2471,13 @@ def main():
     print(f'Normative metrics: {list(normative_info) or "none"}')
     normative_materialized = set()
 
+    # Unique per launch (tempfile guarantees a fresh suffix), so every session's
+    # /data/ URLs differ from any previous subject's on the same port.
+    cache_bust = os.path.basename(out_dir)
     html_bytes = make_html(
         args.subj_id, vol_path, lh_path, rh_path,
-        overlay_info, args.port, surf_types, normative_info
+        overlay_info, args.port, surf_types, normative_info,
+        cache_bust=cache_bust,
     ).encode('utf-8')
 
     server = HTTPServer(('localhost', args.port),

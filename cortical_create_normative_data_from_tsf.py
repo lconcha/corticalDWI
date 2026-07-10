@@ -33,9 +33,7 @@ import h5py
 
 sys.path.insert(0, os.path.dirname(__file__))
 from cortical_io import read_mrtrix_tsf, pad_to_matrix
-
-TEMPLATE = 'ico6_sym'
-METRICS  = ['fa', 'md', 'ad', 'rd', 'afd-par', 'afd-perp']
+from cortical_browser_config import TEMPLATE, METRICS   # shared with cortical_browser.py
 
 
 def find_one_subject_file(subjects_dir, subject, filename):
