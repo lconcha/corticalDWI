@@ -33,18 +33,31 @@ _HTML = r"""<!DOCTYPE html>
 <meta charset="utf-8">
 <title>Cortical Browser — __SUBJ_ID__</title>
 <style>
-:root { --accent-yellow: #F5C842; }   /* selected-vertex accent, shared by box/crosshair/plot line */
+:root {
+  --accent-yellow: #F5C842;   /* selected-vertex accent, shared by box/crosshair/plot line */
+  --plot-text: #dddddd;       /* CSS twin of the JS PLOT_TEXT const (plot + colorbar text) */
+}
 * { box-sizing: border-box; margin: 0; padding: 0; }
 body {
   background: #1f1f1f; color: #ccc;
   font: 11px/1.4 -apple-system, "Segoe UI", Arial, sans-serif;
-  display: flex; flex-direction: column; height: 100vh; overflow: hidden;
+  display: flex; flex-direction: row; height: 100vh; overflow: hidden;
 }
-header {
-  background: #2b2b2b; border-bottom: 1px solid #444444;
-  padding: 3px 8px; display: flex; align-items: center;
-  gap: 6px; flex-shrink: 0; flex-wrap: wrap;
+/* Fixed-width control column on the left: sections never reflow, so every
+   control keeps a stable position. Scrolls vertically if it overflows. */
+#sidebar {
+  width: 224px; flex-shrink: 0; height: 100vh; overflow-y: auto; overflow-x: hidden;
+  background: #2b2b2b; border-right: 1px solid #444444;
+  padding: 6px 8px 14px; display: flex; flex-direction: column; gap: 6px;
 }
+#main { flex: 1; min-width: 0; height: 100vh; display: flex; flex-direction: column; }
+.ctl-group { display: flex; flex-direction: column; gap: 4px; padding-top: 5px; border-top: 1px solid #3a3a3a; }
+.ctl-h {
+  color: var(--accent-yellow); font-size: 9px; letter-spacing: 0.8px;
+  text-transform: uppercase; font-weight: bold; opacity: 0.9; margin: 1px 0;
+}
+.ctl-row { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; }
+#sidebar select { max-width: 100%; }
 .apptitle { font-weight: bold; color: var(--accent-yellow); font-size: 12px; letter-spacing: 0.5px; white-space: nowrap; }
 .subj { font-weight: bold; color: #f0f0f0; font-size: 12px; white-space: nowrap; }
 .glab { color: #d1d1d1; font-size: 10px; white-space: nowrap; }
@@ -79,21 +92,32 @@ button.cbtn {
 }
 button.cbtn:hover { background: #484848; }
 #depth-label { color: #d1d1d1; min-width: 40px; }
-#pos-display  { color: #999999; font-size: 10px; white-space: nowrap; overflow: hidden; max-width: 200px; }
+#pos-display  { color: #999999; font-size: 10px; max-width: 100%; overflow: hidden; }
 #vtx-display  {
   color: #ccc; font-size: 11px; font-family: monospace; font-weight: bold;
   background: #262626; border: 1px solid #555555; border-radius: 3px;
-  padding: 1px 7px; margin-left: auto; white-space: nowrap; min-width: 76px;
+  padding: 1px 7px; white-space: nowrap; min-width: 76px;
   text-align: center;
 }
-.sep { border-left: 1px solid #444444; height: 14px; flex-shrink: 0; }
 #grid {
   display: grid;
   grid-template-columns: 1fr 1fr 1fr;
-  grid-template-rows: 1fr 1fr 1fr 1fr;
+  /* four content rows separated by three draggable gutter tracks; the content
+     row sizes are driven by --gr1..--gr4 so gutters can rescale them live */
+  grid-template-rows: var(--gr1,1fr) 7px var(--gr2,1fr) 7px var(--gr3,1fr) 7px var(--gr4,1fr);
   flex: 1; gap: 2px; background: #0a0a0a; overflow: hidden;
 }
 .cell { position: relative; overflow: hidden; background: #141414; }
+/* pin each panel group to its content row (tracks 1,3,5,7) so auto-placement
+   never lands a panel in a gutter track */
+.grow1 { grid-row: 1; } .grow2 { grid-row: 3; } .grow3 { grid-row: 5; } .grow4 { grid-row: 7; }
+/* draggable row-resize gutters, spanning all columns */
+.rgutter { grid-column: 1 / -1; cursor: row-resize; background: #0a0a0a; touch-action: none; }
+.rgutter:hover { background: var(--accent-yellow); }
+/* double-click maximize: only the maximized panel is shown, filling the grid */
+#grid.has-max > .cell:not(.maxed) { display: none; }
+#grid.has-max > .rgutter { display: none; }
+#grid.has-max > .cell.maxed { grid-row: 1 / -1 !important; grid-column: 1 / -1 !important; }
 canvas.nv-canvas { display: block; width: 100% !important; height: 100% !important; }
 .clabel {
   position: absolute; top: 4px; left: 6px; z-index: 10;
@@ -102,6 +126,15 @@ canvas.nv-canvas { display: block; width: 100% !important; height: 100% !importa
   padding: 1px 5px; border-radius: 3px; pointer-events: none;
 }
 .cell-span3 { grid-column: 1 / -1; }
+/* per-panel maximize/restore button (top-right corner) */
+.maxbtn {
+  position: absolute; top: 3px; right: 3px; z-index: 15;
+  width: 18px; height: 18px; line-height: 16px; text-align: center;
+  font-size: 12px; color: #cfcfcf;
+  background: rgba(0,0,0,0.5); border: 1px solid #555555; border-radius: 3px;
+  cursor: pointer; padding: 0; opacity: 0.45;
+}
+.maxbtn:hover { opacity: 1; color: var(--accent-yellow); border-color: var(--accent-yellow); }
 .plot-cell { display: flex; flex-direction: column; padding: 20px 5px 4px; }
 .chart-wrap { position: relative; flex: 1; min-height: 0; background: #242424; }
 .cbar {
@@ -109,98 +142,122 @@ canvas.nv-canvas { display: block; width: 100% !important; height: 100% !importa
 }
 .cbar-title {
   display: block; text-align: center;
-  font-size: 9px; color: #999999; margin-bottom: 2px; font-family: monospace;
+  font-size: 11px; color: var(--plot-text); margin-bottom: 2px; font-family: monospace;
 }
 .cbar-g {
   height: 8px; border-radius: 2px; border: 1px solid rgba(255,255,255,0.08);
 }
 .cbar-ll {
   display: flex; justify-content: space-between;
-  font-size: 9px; color: #999999; margin-top: 2px; font-family: monospace;
+  font-size: 11px; color: var(--plot-text); margin-top: 2px; font-family: monospace;
 }
 </style>
 </head>
 <body>
 
-<header>
-  <span class="apptitle">CORTICAL BROWSER</span>
-  <span class="subj">__SUBJ_ID__</span>
-  <div class="sep"></div>
+<aside id="sidebar">
+  <div class="apptitle">CORTICAL BROWSER</div>
+  <div class="subj">__SUBJ_ID__</div>
 
-  <label>Metric <select id="metricSel">__METRIC_OPTIONS__</select></label>
-  <label>Depth
-    <input type="range" id="depthSlider" min="0" max="__MAX_DEPTH__" value="__INIT_DEPTH__">
-    <span id="depth-label">__INIT_DEPTH_MM__ mm</span>
-  </label>
-  <div class="sep"></div>
+  <section class="ctl-group">
+    <h3 class="ctl-h">Global</h3>
+    <div class="ctl-row"><label>Metric <select id="metricSel">__METRIC_OPTIONS__</select></label></div>
+    <div class="ctl-row"><label>Depth
+      <input type="range" id="depthSlider" min="0" max="__MAX_DEPTH__" value="__INIT_DEPTH__">
+      <span id="depth-label">__INIT_DEPTH_MM__ mm</span></label></div>
+  </section>
 
-  <span class="glab">Data</span>
-  <input type="number" id="climMin" step="0.001" title="Color min">
-  <span style="color:#999999">–</span>
-  <input type="number" id="climMax" step="0.001" title="Color max">
-  <button class="cbtn" id="climAuto">Auto</button>
-  <select id="cmapSel"></select>
-  <label><input type="checkbox" id="cmapInv"> Inv</label>
-  <label>Ov <input type="range" id="ovOp" min="0" max="100" value="100"></label>
-  <div class="sep"></div>
+  <section class="ctl-group">
+    <h3 class="ctl-h">Surfaces</h3>
+    <div class="ctl-row">
+      <span class="glab">Data</span>
+      <input type="number" id="climMin" step="0.001" title="Color min">
+      <span style="color:#999999">–</span>
+      <input type="number" id="climMax" step="0.001" title="Color max">
+      <button class="cbtn" id="climAuto">Auto</button>
+    </div>
+    <div class="ctl-row">
+      <label>cmap <select id="cmapSel"></select></label>
+      <label><input type="checkbox" id="cmapInv"> Inv</label>
+      <label>Ov <input type="range" id="ovOp" min="0" max="100" value="100"></label>
+    </div>
+    <div class="ctl-row">
+      <span class="glab">Asym</span>
+      <input type="number" id="asymMin" step="0.001" title="Asym color min">
+      <span style="color:#999999">–</span>
+      <input type="number" id="asymMax" step="0.001" title="Asym color max">
+      <button class="cbtn" id="asymAuto">Auto</button>
+    </div>
+    <div class="ctl-row">
+      <label>cmap <select id="cmapAsymSel">
+        <option value="bwr">blue-white-red</option>
+        <option value="cwr">cyan-white-red</option>
+        <option value="gwr">green-white-red</option>
+        <option value="blue2red">blue2red (hue)</option>
+        <option value="blue2magenta">blue2magenta</option>
+        <option value="hsv">hsv</option>
+        <option value="jet">jet</option>
+      </select></label>
+      <label><input type="checkbox" id="cmapAsymInv"> Inv</label>
+    </div>
+    <div class="ctl-row"><label>Shader <select id="shaderSel">
+      <option value="Matte">Matte</option>
+      <option value="Phong">Phong</option>
+      <option value="Diffuse" selected>Diffuse</option>
+    </select></label></div>
+    <div class="ctl-row">
+      <label>LH surf <select id="lhSurfSel"></select></label>
+      <label>RH surf <select id="rhSurfSel"></select></label>
+      <label>Asym surf <select id="asymSurfSel"></select></label>
+    </div>
+    <div class="ctl-row">
+      <label>Vertex <input type="number" id="vtxInput" min="0" step="1" title="Jump to vertex ID"></label>
+      <label>Rings <input type="number" id="ringsInput" min="0" step="1" value="0" title="Neighbor rings to average around the selected vertex"></label>
+    </div>
+    <div class="ctl-row">
+      <label><input type="checkbox" id="pivotAtVertexChk"> Pivot@vertex</label>
+      <button class="cbtn" id="resetPivotBtn" title="Reset 3D view rotation pivot to the whole-brain center">Reset pivot</button>
+    </div>
+    <div class="ctl-row"><span id="vtx-display">—, —, — mm</span></div>
+  </section>
 
-  <span class="glab">Asym</span>
-  <input type="number" id="asymMin" step="0.001" title="Asym color min">
-  <span style="color:#999999">–</span>
-  <input type="number" id="asymMax" step="0.001" title="Asym color max">
-  <button class="cbtn" id="asymAuto">Auto</button>
-  <select id="cmapAsymSel">
-    <option value="bwr">blue-white-red</option>
-    <option value="cwr">cyan-white-red</option>
-    <option value="gwr">green-white-red</option>
-    <option value="blue2red">blue2red (hue)</option>
-    <option value="blue2magenta">blue2magenta</option>
-    <option value="hsv">hsv</option>
-    <option value="jet">jet</option>
-  </select>
-  <label><input type="checkbox" id="cmapAsymInv"> Inv</label>
-  <div class="sep"></div>
+  <section class="ctl-group">
+    <h3 class="ctl-h">Orthoslices</h3>
+    <div class="ctl-row"><label title="Volume shown in the orthoslices">Volume <select id="volSel"></select></label></div>
+    <div class="ctl-row"><label title="Colormap for the orthoslice volume">cmap <select id="volCmapSel"></select></label></div>
+    <div class="ctl-row">
+      <input type="number" id="volClipMin" step="any" title="Orthoslice color min (clip)">
+      <span style="color:#999999">–</span>
+      <input type="number" id="volClipMax" step="any" title="Orthoslice color max (clip)">
+      <button class="cbtn" id="volClipAuto" title="Reset the orthoslice color range to the volume default">Auto</button>
+    </div>
+    <input type="file" id="volFile" accept=".nii,.nii.gz,.gz,.mgz,.mgh,.hdr,.img" style="display:none">
+    <div class="ctl-row">
+      <label><input type="checkbox" id="radioConv" checked> Rad</label>
+      <label><input type="checkbox" id="crosshairChk" checked> X-hair</label>
+      <label title="Smooth (linear) vs nearest-neighbor orthoslice interpolation — shortcut: i"><input type="checkbox" id="interpChk" checked> Interp</label>
+    </div>
+    <div class="ctl-row">
+      <label title="Overlay white-matter surface outline on the orthoslices (loaded on first use)"><input type="checkbox" id="contourWmChk"> WM</label>
+      <label title="Overlay pial surface outline on the orthoslices (loaded on first use)"><input type="checkbox" id="contourPialChk"> pial</label>
+    </div>
+    <div class="ctl-row"><span id="pos-display"></span></div>
+  </section>
 
-  <label>Shader <select id="shaderSel">
-    <option value="Matte">Matte</option>
-    <option value="Phong">Phong</option>
-    <option value="Diffuse" selected>Diffuse</option>
-  </select></label>
-  <div class="sep"></div>
-
-  <label>LH surf <select id="lhSurfSel"></select></label>
-  <label>RH surf <select id="rhSurfSel"></select></label>
-  <label>Asym surf <select id="asymSurfSel"></select></label>
-  <div class="sep"></div>
-
-  <label title="Volume shown in the orthoslices">Volume <select id="volSel"></select></label>
-  <label title="Colormap for the orthoslice volume">cmap <select id="volCmapSel"></select></label>
-  <input type="number" id="volClipMin" step="any" title="Orthoslice color min (clip)">
-  <span style="color:#999999">–</span>
-  <input type="number" id="volClipMax" step="any" title="Orthoslice color max (clip)">
-  <button class="cbtn" id="volClipAuto" title="Reset the orthoslice color range to the volume default">Auto</button>
-  <input type="file" id="volFile" accept=".nii,.nii.gz,.gz,.mgz,.mgh,.hdr,.img" style="display:none">
-  <div class="sep"></div>
-
-  <label><input type="checkbox" id="radioConv" checked> Rad</label>
-  <label><input type="checkbox" id="crosshairChk" checked> X-hair</label>
-  <label title="Overlay white-matter surface outline on the orthoslices (loaded on first use)"><input type="checkbox" id="contourWmChk"> WM</label>
-  <label title="Overlay pial surface outline on the orthoslices (loaded on first use)"><input type="checkbox" id="contourPialChk"> pial</label>
-  <label title="Smooth (linear) vs nearest-neighbor orthoslice interpolation — shortcut: i"><input type="checkbox" id="interpChk" checked> Interp</label>
-  <label>Vertex <input type="number" id="vtxInput" min="0" step="1" title="Jump to vertex ID"></label>
-  <label>Rings <input type="number" id="ringsInput" min="0" step="1" value="0" title="Neighbor rings to average around the selected vertex"></label>
-  <label><input type="checkbox" id="pivotAtVertexChk"> Pivot@vertex</label>
-  <button class="cbtn" id="resetPivotBtn" title="Reset 3D view rotation pivot to the whole-brain center">Reset pivot</button>
-  <label><input type="checkbox" id="showNormativeChk" title="Fetch and overlay cohort normative mean ± SD (computed lazily on first use)"> Show normative</label>
-  <label title="Max |z| shown on the radar and z-score bar panels">|z|≤ <input type="number" id="mvZlimInput" min="0.5" step="0.5" value="3"></label>
-  <label title="Max Mahalanobis distance shown on the multivariate depth panel">Mahal≤ <input type="number" id="mvMahalInput" min="1" step="1" value="10"></label>
-  <span id="pos-display"></span>
-  <span id="vtx-display">—, —, — mm</span>
-</header>
+  <section class="ctl-group">
+    <h3 class="ctl-h">Plots</h3>
+    <div class="ctl-row"><label><input type="checkbox" id="showNormativeChk" title="Fetch and overlay cohort normative mean ± SD (computed lazily on first use)"> Show normative</label></div>
+    <div class="ctl-row">
+      <label title="Max |z| shown on the radar and z-score bar panels">|z|≤ <input type="number" id="mvZlimInput" min="0.5" step="0.5" value="3"></label>
+      <label title="Max Mahalanobis distance shown on the multivariate depth panel">Mahal≤ <input type="number" id="mvMahalInput" min="1" step="1" value="10"></label>
+    </div>
+  </section>
+</aside>
+<main id="main">
 
 <div id="grid">
   <!-- Row 1: surface 3-D renders -->
-  <div class="cell">
+  <div class="cell grow1">
     <canvas id="gl-lh" class="nv-canvas"></canvas>
     <span class="clabel">LH lateral</span>
     <div class="cbar">
@@ -209,7 +266,7 @@ canvas.nv-canvas { display: block; width: 100% !important; height: 100% !importa
       <div class="cbar-ll"><span id="cblbl-lh-min">0</span><span id="cblbl-lh-max">1</span></div>
     </div>
   </div>
-  <div class="cell">
+  <div class="cell grow1">
     <canvas id="gl-rh" class="nv-canvas"></canvas>
     <span class="clabel">RH lateral</span>
     <div class="cbar">
@@ -218,7 +275,7 @@ canvas.nv-canvas { display: block; width: 100% !important; height: 100% !importa
       <div class="cbar-ll"><span id="cblbl-rh-min">0</span><span id="cblbl-rh-max">1</span></div>
     </div>
   </div>
-  <div class="cell">
+  <div class="cell grow1">
     <canvas id="gl-asym" class="nv-canvas"></canvas>
     <span class="clabel">Asymmetry index (LH geom)</span>
     <div class="cbar">
@@ -229,38 +286,44 @@ canvas.nv-canvas { display: block; width: 100% !important; height: 100% !importa
   </div>
 
   <!-- Row 2: single multiplanar orthoslice (row layout = axial/coronal/sagittal side by side) -->
-  <div class="cell cell-span3">
+  <div class="cell cell-span3 grow2">
     <canvas id="gl-slices" class="nv-canvas"></canvas>
   </div>
 
   <!-- Row 3: depth-profile charts -->
-  <div class="cell plot-cell">
+  <div class="cell plot-cell grow3">
     <span class="clabel">LH depth profile</span>
     <div class="chart-wrap"><canvas id="chart-lh"></canvas></div>
   </div>
-  <div class="cell plot-cell">
+  <div class="cell plot-cell grow3">
     <span class="clabel">RH depth profile</span>
     <div class="chart-wrap"><canvas id="chart-rh"></canvas></div>
   </div>
-  <div class="cell plot-cell">
+  <div class="cell plot-cell grow3">
     <span class="clabel">Asymmetry profile</span>
     <div class="chart-wrap"><canvas id="chart-asym"></canvas></div>
   </div>
 
   <!-- Row 4: multivariate explorer (Mahalanobis / |z| radar / z-score bars) -->
-  <div class="cell plot-cell">
+  <div class="cell plot-cell grow4">
     <span class="clabel" id="clabel-mahal">Mahalanobis distance</span>
     <div class="chart-wrap"><canvas id="chart-mahal"></canvas></div>
   </div>
-  <div class="cell plot-cell">
+  <div class="cell plot-cell grow4">
     <span class="clabel" id="clabel-radar">|Z-score| radar</span>
     <div class="chart-wrap"><canvas id="chart-radar"></canvas></div>
   </div>
-  <div class="cell plot-cell">
+  <div class="cell plot-cell grow4">
     <span class="clabel" id="clabel-zbar">Z-scores</span>
     <div class="chart-wrap"><canvas id="chart-zbar"></canvas></div>
   </div>
+
+  <!-- Draggable row-resize gutters (placed into the gutter tracks 2/4/6) -->
+  <div class="rgutter" data-above="1" data-below="2" style="grid-row:2"></div>
+  <div class="rgutter" data-above="2" data-below="3" style="grid-row:4"></div>
+  <div class="rgutter" data-above="3" data-below="4" style="grid-row:6"></div>
 </div>
+</main>
 
 <script src="__CHARTJS_CDN__"></script>
 <script src="__CHARTJS_ANN_CDN__"></script>
@@ -285,6 +348,9 @@ const STEP_MM  = __STEP_MM__
 // the orthoslice crosshair, and the plots' depth reference line.
 const ACCENT_YELLOW = '#F5C842'
 const ACCENT_YELLOW_RGBA = [0xF5/255, 0xC8/255, 0x42/255, 1]
+
+// Shared light-gray text color for all plot axis labels, titles, and legends.
+const PLOT_TEXT = '#dddddd'
 
 // ── app state ─────────────────────────────────────────────────────────────────
 let currentMetric  = Object.keys(METRICS)[0] || null
@@ -358,7 +424,8 @@ const SURF_CFG = { backColor: [0.06, 0.06, 0.06, 1], show3Dcrosshair: false }
 const SLIC_CFG = {
   backColor: [0.04, 0.04, 0.04, 1], show3Dcrosshair: true,
   meshThicknessOn2D: 2, multiplanarLayout: 'row',
-  isColorbar: true            // one colorbar for the ortho view (NiiVue draws it instance-wide, not per-panel)
+  isColorbar: true,           // one colorbar for the ortho view (NiiVue draws it instance-wide, not per-panel)
+  showColorbarBorder: false   // drop the outline around the colorbar
 }
 
 const nvLhL   = new niivue.Niivue(SURF_CFG)
@@ -833,8 +900,10 @@ document.getElementById('volClipAuto').addEventListener('click', () => {
 syncVolClipInputs()          // initial fill from the startup volume
 
 // Right-click-drag window/level changes cal_min/cal_max inside NiiVue (the
-// colorbar updates, but nothing else); mirror the new range into the boxes.
-nvSlices.opts.onIntensityChange = () => syncVolClipInputs()
+// colorbar updates immediately); mirror that same range into the clip boxes.
+// NiiVue invokes the *instance* callback this.onIntensityChange(volume), not
+// opts.onIntensityChange, so it must be assigned on the instance to fire.
+nvSlices.onIntensityChange = () => syncVolClipInputs()
 
 // ── depth control ─────────────────────────────────────────────────────────────
 function setDepth(d) {
@@ -1708,7 +1777,7 @@ function makeChart(id, color, label, fill = false) {
       responsive: true, maintainAspectRatio: false, animation: false,
       onClick: (evt, elements, chart) => setDepthFromChart(chart, evt.x),
       plugins: {
-        legend: { display: true, labels: { color: '#dddddd', boxWidth: 10, font: {size:10},
+        legend: { display: true, labels: { color: PLOT_TEXT, boxWidth: 10, font: {size:10},
           filter: (item, data) => !data.datasets[item.datasetIndex]?._isSd } },
         annotation: { annotations: { depthLine: {
           type: 'line', xMin: 0, xMax: 0,
@@ -1717,10 +1786,10 @@ function makeChart(id, color, label, fill = false) {
       },
       scales: {
         x: { type:'linear',
-             title: { display:true, text:'Depth (mm)', color:'#dddddd' },
-             ticks: { color:'#dddddd', maxTicksLimit:8, callback: v => v.toFixed(1) },
+             title: { display:true, text:'Depth (mm)', color:PLOT_TEXT },
+             ticks: { color:PLOT_TEXT, maxTicksLimit:8, callback: v => v.toFixed(1) },
              grid:  { color:'#303030' } },
-        y: { ticks: { color:'#dddddd', maxTicksLimit:5 }, grid: { color:'#303030' } }
+        y: { ticks: { color:PLOT_TEXT, maxTicksLimit:5 }, grid: { color:'#303030' } }
       }
     }
   })
@@ -1742,7 +1811,7 @@ chartAsym = makeChart('chart-asym', '#8af5a6', 'Asymmetry', true)
 applyAsymYLimits()
 
 // ── multivariate explorer charts (row 4) ─────────────────────────────────────
-const mvTick = { color:'#dddddd', font:{size:10} }
+const mvTick = { color:PLOT_TEXT, font:{size:10} }
 const mvGrid = { color:'#303030' }
 
 // Mahalanobis distance vs depth — a mean line per hemisphere with a dashed
@@ -1769,16 +1838,16 @@ chartMahal = new Chart(document.getElementById('chart-mahal'), {
     responsive:true, maintainAspectRatio:false, animation:false,
     onClick: (evt, els, chart) => setDepthFromChart(chart, evt.x),
     plugins: {
-      legend: { display:true, labels:{ color:'#dddddd', boxWidth:10, font:{size:10},
+      legend: { display:true, labels:{ color:PLOT_TEXT, boxWidth:10, font:{size:10},
         filter:(item,data) => !data.datasets[item.datasetIndex]?._isSd } },
       annotation: { annotations: { depthLine: {
         type:'line', xMin:0, xMax:0, borderColor:ACCENT_YELLOW, borderWidth:1.5, borderDash:[4,3]
       }}}
     },
     scales: {
-      x: { type:'linear', title:{ display:true, text:'Depth (mm)', color:'#dddddd' },
+      x: { type:'linear', title:{ display:true, text:'Depth (mm)', color:PLOT_TEXT },
            ticks:{ ...mvTick, maxTicksLimit:8, callback:v => v.toFixed(1) }, grid:mvGrid },
-      y: { min:0, max:mvMahalLim, title:{ display:true, text:'Mahalanobis distance', color:'#dddddd' },
+      y: { min:0, max:mvMahalLim, title:{ display:true, text:'Mahalanobis distance', color:PLOT_TEXT },
            ticks:mvTick, grid:mvGrid }
     }
   }
@@ -1803,12 +1872,12 @@ chartRadar = new Chart(document.getElementById('chart-radar'), {
   ]},
   options: {
     responsive:true, maintainAspectRatio:false, animation:false,
-    plugins: { legend: { display:true, labels:{ color:'#dddddd', boxWidth:10, font:{size:10},
+    plugins: { legend: { display:true, labels:{ color:PLOT_TEXT, boxWidth:10, font:{size:10},
       filter:(item,data) => !data.datasets[item.datasetIndex]?._isSd } } },
     scales: { r: {
       min:0, max:mvZlim,
-      ticks:{ color:'#aaaaaa', backdropColor:'transparent', showLabelBackdrop:false, font:{size:8}, stepSize:1 },
-      grid:{ color:'#3a3a3a' }, angleLines:{ color:'#3a3a3a' }, pointLabels:{ color:'#dddddd', font:{size:10} }
+      ticks:{ color:PLOT_TEXT, backdropColor:'transparent', showLabelBackdrop:false, font:{size:8}, stepSize:1 },
+      grid:{ color:'#3a3a3a' }, angleLines:{ color:'#3a3a3a' }, pointLabels:{ color:PLOT_TEXT, font:{size:10} }
     }}
   }
 })
@@ -1853,15 +1922,15 @@ chartZBar = new Chart(document.getElementById('chart-zbar'), {
   options: {
     indexAxis:'y', responsive:true, maintainAspectRatio:false, animation:false,
     plugins: {
-      legend: { display:true, labels:{ color:'#dddddd', boxWidth:10, font:{size:10} } },
+      legend: { display:true, labels:{ color:PLOT_TEXT, boxWidth:10, font:{size:10} } },
       annotation: { annotations: { zeroLine: {
         type:'line', xMin:0, xMax:0, borderColor:'#888888', borderWidth:1
       }}}
     },
     scales: {
-      x: { min:-mvZlim, max:mvZlim, title:{ display:true, text:'Z-score', color:'#dddddd' },
+      x: { min:-mvZlim, max:mvZlim, title:{ display:true, text:'Z-score', color:PLOT_TEXT },
            ticks:mvTick, grid:mvGrid },
-      y: { ticks:{ color:'#dddddd', font:{size:9} }, grid:{ display:false } }
+      y: { ticks:{ color:PLOT_TEXT, font:{size:9} }, grid:{ display:false } }
     }
   }
 })
@@ -2010,6 +2079,74 @@ function setProfiles(lhStat, rhStat, asymStat, count, lhArea, rhArea, normStat) 
   }
   chartLH.update('none'); chartRH.update('none'); chartAsym.update('none')
   updateDepthMarker(currentDepth * STEP_MM)
+}
+
+// ── resizable rows + double-click maximize ───────────────────────────────────
+// NiiVue/Chart panels auto-resize to their cells (NiiVue via ResizeObserver,
+// Chart via responsive), so adjusting the grid tracks is all that's needed.
+{
+  const gridEl = document.getElementById('grid')
+  const gridRowFr = [1, 1, 1, 1]                       // content-row weights (fr)
+  const applyGridRows = () => {
+    for (let i = 0; i < 4; i++) gridEl.style.setProperty(`--gr${i+1}`, gridRowFr[i] + 'fr')
+  }
+  applyGridRows()
+
+  // Current rendered pixel height of content row n (1..4), read off a panel in it.
+  const rowPx = n => {
+    const el = gridEl.querySelector('.grow' + n)
+    return el ? el.getBoundingClientRect().height : 0
+  }
+
+  // Drag a gutter: repartition just the two rows it sits between, in fr units so
+  // the result still scales with the window afterwards.
+  for (const g of gridEl.querySelectorAll('.rgutter')) {
+    g.addEventListener('pointerdown', e => {
+      e.preventDefault()
+      const ai = +g.dataset.above - 1, bi = +g.dataset.below - 1
+      const aPx0 = rowPx(ai + 1), bPx0 = rowPx(bi + 1)
+      const pairPx = aPx0 + bPx0, pairFr = gridRowFr[ai] + gridRowFr[bi]
+      if (pairPx <= 0 || pairFr <= 0) return
+      const pxPerFr = pairPx / pairFr, startY = e.clientY, MIN = 40
+      g.setPointerCapture(e.pointerId)
+      const onMove = ev => {
+        const aPx = Math.max(MIN, Math.min(pairPx - MIN, aPx0 + (ev.clientY - startY)))
+        gridRowFr[ai] = aPx / pxPerFr
+        gridRowFr[bi] = (pairPx - aPx) / pxPerFr
+        applyGridRows()
+      }
+      const onUp = () => {
+        g.removeEventListener('pointermove', onMove)
+        g.removeEventListener('pointerup', onUp)
+        window.dispatchEvent(new Event('resize'))
+      }
+      g.addEventListener('pointermove', onMove)
+      g.addEventListener('pointerup', onUp)
+    })
+  }
+
+  // A corner button on each panel toggles maximize (fill the grid) / restore.
+  // A button — not a canvas gesture — so it never triggers NiiVue's click/
+  // double-click behavior (vertex pick, crosshair move, brightness reset).
+  const toggleMaximize = cell => {
+    const wasMax = cell.classList.contains('maxed')
+    gridEl.querySelectorAll('.cell.maxed').forEach(c => c.classList.remove('maxed'))
+    gridEl.classList.toggle('has-max', !wasMax)
+    if (!wasMax) cell.classList.add('maxed')
+    for (const b of gridEl.querySelectorAll('.maxbtn')) {
+      const maxed = b.parentElement.classList.contains('maxed')
+      b.textContent = maxed ? '⤡' : '⤢'
+      b.title = maxed ? 'Restore panel' : 'Maximize panel'
+    }
+    requestAnimationFrame(() => window.dispatchEvent(new Event('resize')))
+  }
+  for (const cell of gridEl.querySelectorAll('.cell')) {
+    const btn = document.createElement('button')
+    btn.className = 'maxbtn'; btn.type = 'button'
+    btn.textContent = '⤢'; btn.title = 'Maximize panel'
+    btn.addEventListener('click', e => { e.stopPropagation(); e.preventDefault(); toggleMaximize(cell) })
+    cell.appendChild(btn)
+  }
 }
 
 window._nvSurf  = [nvLhL, nvRhL, nvAsym]
