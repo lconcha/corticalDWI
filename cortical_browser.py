@@ -92,7 +92,7 @@ button.cbtn {
 }
 button.cbtn:hover { background: #484848; }
 #depth-label { color: #d1d1d1; min-width: 40px; }
-#pos-display  { color: #999999; font-size: 10px; max-width: 100%; overflow: hidden; }
+#pos-display  { color: #999999; font-size: 11px; max-width: 100%; white-space: pre-line; font-family: monospace; }
 #vtx-display  {
   color: #ccc; font-size: 11px; font-family: monospace; font-weight: bold;
   background: #262626; border: 1px solid #555555; border-radius: 3px;
@@ -725,8 +725,17 @@ if (nvSlices.volumes.length) {
 }
 
 // ── slice setup (single multiplanar instance) ─────────────────────────────────
-nvSlices.opts.onLocationChange = d => {
-  document.getElementById('pos-display').textContent = d.string
+// Instance callback (not opts) — NiiVue invokes this.onLocationChange(data).
+// Show the crosshair position in both world (mm) and voxel coords, plus the
+// shown volume's intensity value there.
+nvSlices.onLocationChange = d => {
+  const mm = d.mm, vox = d.vox
+  const lines = []
+  if (mm)  lines.push(`${mm[0].toFixed(1)},${mm[1].toFixed(1)},${mm[2].toFixed(1)} mm`)
+  if (vox) lines.push(`${Math.round(vox[0])},${Math.round(vox[1])},${Math.round(vox[2])} vox`)
+  const v = d.values && d.values[0]
+  if (v && isFinite(v.value)) lines.push(`value=${(+v.value).toPrecision(4)}`)
+  document.getElementById('pos-display').textContent = lines.join('\n')
 }
 nvSlices.setSliceType(nvSlices.sliceTypeMultiplanar)
 nvSlices.setRadiologicalConvention(true)
@@ -805,7 +814,13 @@ async function showVolume(key) {
   // the next click crashed in convertFrac2Vox. setVolume() rebuilds the GL
   // texture itself, so there is no separate updateGLVolume() call.
   desc.image.colormap = orthoCmap                   // colormap follows the shown volume
-  for (const v of nvSlices.volumes) v.opacity = (v === desc.image ? 1 : 0)
+  // Show only the chosen volume's pixels AND its colorbar; resident volumes keep
+  // their own colormap but their colorbars stay hidden so they don't pile up.
+  for (const v of nvSlices.volumes) {
+    const shown = (v === desc.image)
+    v.opacity = shown ? 1 : 0
+    v.colorbarVisible = shown
+  }
   if (nvSlices.volumes[0] !== desc.image) nvSlices.setVolume(desc.image, 0)
   else nvSlices.updateGLVolume()
 
@@ -819,6 +834,8 @@ async function showVolume(key) {
     const frac = nvSlices.mm2frac([mm[0], mm[1], mm[2]])
     if (frac) nvSlices.scene.crosshairPos = [...frac]
   }
+  // Refresh the position readout so its value line reflects the new volume.
+  if (typeof nvSlices.createOnLocationChange === 'function') nvSlices.createOnLocationChange()
   nvSlices.drawScene()
   syncVolClipInputs()          // reflect the shown volume's color range in the clip boxes
 }
@@ -1442,11 +1459,17 @@ async function selectVertex(vertIdx, nvInst) {
   const nVerts = mesh.pts.length / 3
   if (vertIdx < 0 || vertIdx >= nVerts) return
 
-  // Snap orthoslice crosshairs to vertex world position
+  // Snap orthoslice crosshairs to vertex world position. Setting crosshairPos
+  // directly doesn't fire onLocationChange (only user slice interaction does),
+  // so call createOnLocationChange() to refresh the position readout.
   const vx=mesh.pts[vertIdx*3], vy=mesh.pts[vertIdx*3+1], vz=mesh.pts[vertIdx*3+2]
   if (nvSlices.volumes.length && typeof nvSlices.mm2frac === 'function') {
     const frac = nvSlices.mm2frac([vx, vy, vz])
-    if (frac) { nvSlices.scene.crosshairPos=[...frac]; nvSlices.drawScene() }
+    if (frac) {
+      nvSlices.scene.crosshairPos = [...frac]
+      if (typeof nvSlices.createOnLocationChange === 'function') nvSlices.createOnLocationChange()
+      nvSlices.drawScene()
+    }
   }
 
   const ringSet     = neighborRings(vertIdx, nRings)
