@@ -1711,6 +1711,13 @@ function stepRings(delta) {
   el.dispatchEvent(new Event('change'))
 }
 
+// Show the nth loaded orthoslice volume (1-based), in dropdown order; no-op if
+// there's no volume at that position.
+function showVolumeByIndex(n) {
+  const opts = [...volSel.options].filter(o => o.value !== '__other__')
+  if (opts[n - 1]) showVolume(opts[n - 1].value)
+}
+
 // Global handler; ignores keys typed into form fields so vertex/number inputs
 // still work normally. More shortcuts get added to the switch below.
 document.addEventListener('keydown', e => {
@@ -1762,6 +1769,12 @@ document.addEventListener('keydown', e => {
     case 'home':       stepDepth( 1); e.preventDefault(); break
     case '-':
     case 'end':        stepDepth(-1); e.preventDefault(); break
+    // Orthoslice volume: 1-9 pick the nth loaded volume (dropdown order),
+    // 0 opens the "other…" file picker.
+    case '1': case '2': case '3': case '4': case '5':
+    case '6': case '7': case '8': case '9':
+      showVolumeByIndex(+e.key); e.preventDefault(); break
+    case '0':          volFile.click(); e.preventDefault(); break
   }
 })
 

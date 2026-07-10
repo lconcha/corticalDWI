@@ -284,6 +284,12 @@ slider stays in sync.
 The numpad keys are distinct from the main‑keyboard `+`/`-` (which control depth); they
 require a real numeric keypad with NumLock on.
 
+### Orthoslice volume
+| Key | Action |
+| --- | --- |
+| `1`–`9` | Show the *n*th loaded volume, in the order it appears in the **Volume** dropdown. A key with no matching volume (e.g. `4` when only one volume is loaded) does nothing. |
+| `0` | Open the **other…** file picker to load a new volume. |
+
 ### Mouse
 | Action | Effect |
 | --- | --- |
