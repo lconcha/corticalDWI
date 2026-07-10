@@ -662,11 +662,17 @@ nvSlices.setCrosshairWidth(0.5)                   // thinner than the default 1p
 // The dropdown chooses which volume the orthoslices show. It starts with just
 // the discovered brain volume (already loaded above, served by URL) plus a
 // trailing "other…" entry that opens the browser's file picker; each picked file
-// is appended so volumes can be switched back and forth. Switching preserves the
-// world-space crosshair position where possible.
+// is appended so volumes can be switched back and forth.
+//
+// To keep switching instant, every chosen volume is decoded + uploaded to the
+// GPU exactly once and then kept RESIDENT in nvSlices.volumes. Switching just
+// reorders the chosen volume to the background (index 0) and zeroes the others'
+// opacity — no re-fetch, no re-decode, no re-upload. The world-space crosshair
+// is preserved across the switch.
 const volSel  = document.getElementById('volSel')
 const volFile = document.getElementById('volFile')
-const volumeRegistry = {}          // option value -> { name, url? , file?, blobUrl? }
+// option value -> { name, url?|file?, blobUrl?, image?(NVImage), defCalMin?, defCalMax? }
+const volumeRegistry = {}
 let currentVolKey = null
 let volSeq = 0
 
@@ -684,46 +690,82 @@ function addVolumeOption(desc, select) {
 async function showVolume(key) {
   const desc = volumeRegistry[key]
   if (!desc) return
-  // Preserve the current crosshair in world mm so switching volumes keeps the
-  // anatomical focus rather than jumping to the new volume's centre.
+  if (key === currentVolKey && desc.image) return   // already displayed — nothing to do
+
+  // Preserve the current crosshair in world mm (captured against the OLD
+  // background) so the switch keeps the anatomical focus point.
   let mm = null
   if (nvSlices.volumes.length && typeof nvSlices.frac2mm === 'function') {
     try { mm = nvSlices.frac2mm([...nvSlices.scene.crosshairPos]) } catch (e) {}
   }
-  const item = { colormap: 'gray', opacity: 1 }
-  if (desc.url) {
-    item.url = desc.url
-  } else if (desc.file) {
-    if (!desc.blobUrl) desc.blobUrl = URL.createObjectURL(desc.file)
-    item.url  = desc.blobUrl
-    item.name = desc.file.name         // blob URLs carry no extension; let NiiVue infer the format
+
+  const t0 = performance.now()
+
+  // First selection of this volume: decode + upload once, then keep it resident.
+  let tLoad = 0
+  if (!desc.image) {
+    const item = { colormap: 'gray', opacity: 1 }
+    if (desc.url) {
+      item.url = desc.url
+    } else if (desc.file) {
+      if (!desc.blobUrl) desc.blobUrl = URL.createObjectURL(desc.file)
+      item.url  = desc.blobUrl
+      item.name = desc.file.name       // blob URLs carry no extension; let NiiVue infer the format
+    }
+    const tA = performance.now()
+    try {
+      await nvSlices.addVolumeFromUrl(item)   // add without dropping the resident volumes
+    } catch (e) {
+      console.warn('[volume] failed to load', desc.name, e)
+      alert('Could not load volume: ' + desc.name)
+      return
+    }
+    tLoad = performance.now() - tA
+    desc.image     = nvSlices.volumes[nvSlices.volumes.length - 1]
+    desc.defCalMin = desc.image.cal_min      // per-volume default window for the 'r' reset
+    desc.defCalMax = desc.image.cal_max
   }
-  try {
-    await nvSlices.loadVolumes([item])
-  } catch (e) {
-    console.warn('[volume] failed to load', desc.name, e)
-    alert('Could not load volume: ' + desc.name)
-    return
-  }
+
+  // Bring the chosen volume to the background (index 0) and hide the rest. Use
+  // NiiVue's official setVolume(): it updates the internal background reference
+  // and frac<->vox transforms. Reordering nvSlices.volumes by hand does NOT, so
+  // the next click crashed in convertFrac2Vox. setVolume() rebuilds the GL
+  // texture itself, so there is no separate updateGLVolume() call.
+  for (const v of nvSlices.volumes) v.opacity = (v === desc.image ? 1 : 0)
+  const tB = performance.now()
+  if (nvSlices.volumes[0] !== desc.image) nvSlices.setVolume(desc.image, 0)
+  else nvSlices.updateGLVolume()
+  const tGL = performance.now() - tB
+
   currentVolKey = key
   volSel.value = key
-  if (nvSlices.volumes.length) {
-    defaultVolCalMin = nvSlices.volumes[0].cal_min   // refresh the 'r'-reset window
-    defaultVolCalMax = nvSlices.volumes[0].cal_max
-  }
-  nvSlices.setCrosshairColor(ACCENT_YELLOW_RGBA)     // re-assert crosshair styling after reload
+  defaultVolCalMin = desc.defCalMin
+  defaultVolCalMax = desc.defCalMax
+  nvSlices.setCrosshairColor(ACCENT_YELLOW_RGBA)    // re-assert crosshair styling
   nvSlices.setCrosshairWidth(0.5)
   if (mm && typeof nvSlices.mm2frac === 'function') {
     const frac = nvSlices.mm2frac([mm[0], mm[1], mm[2]])
     if (frac) nvSlices.scene.crosshairPos = [...frac]
   }
+  const tC = performance.now()
   nvSlices.drawScene()
+  // Temporary timing probe — tells us whether the cost is decode (first load
+  // only) or NiiVue's per-switch GL recomposite. Remove once we've decided.
+  console.log(`[volume switch] "${desc.name}"  load/decode=${tLoad.toFixed(0)}ms`
+    + `  updateGL=${tGL.toFixed(0)}ms  draw=${(performance.now()-tC).toFixed(0)}ms`
+    + `  total=${(performance.now()-t0).toFixed(0)}ms  (residentLayers=${arr.length})`)
 }
 
 // Seed the dropdown: the already-loaded brain volume (if any), then "other…".
+// Its NVImage is already resident (from the startup loadVolumes), so link it
+// directly rather than re-adding it.
 if (VOL_URL) {
   const initName = VOLUMES[0].name || decodeURIComponent(VOL_URL.split('?')[0].split('/').pop())
-  currentVolKey = addVolumeOption({ name: initName, url: VOL_URL }, true)
+  const img = nvSlices.volumes[0] || null
+  currentVolKey = addVolumeOption({
+    name: initName, url: VOL_URL, image: img,
+    defCalMin: img ? img.cal_min : null, defCalMax: img ? img.cal_max : null,
+  }, true)
 }
 {
   const other = document.createElement('option')
