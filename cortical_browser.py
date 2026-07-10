@@ -139,22 +139,7 @@ canvas.nv-canvas { display: block; width: 100% !important; height: 100% !importa
   <span style="color:#999999">–</span>
   <input type="number" id="climMax" step="0.001" title="Color max">
   <button class="cbtn" id="climAuto">Auto</button>
-  <select id="cmapSel">
-    <option value="viridis">viridis</option>
-    <option value="hot">hot</option>
-    <option value="inferno">inferno</option>
-    <option value="plasma">plasma</option>
-    <option value="magma">magma</option>
-    <option value="cividis">cividis</option>
-    <option value="thermal">thermal</option>
-    <option value="batlow">batlow</option>
-    <option value="cool">cool</option>
-    <option value="warm">warm</option>
-    <option value="gray">gray</option>
-    <option value="bone">bone</option>
-    <option value="copper">copper</option>
-    <option value="jet">jet</option>
-  </select>
+  <select id="cmapSel"></select>
   <label><input type="checkbox" id="cmapInv"> Inv</label>
   <label>Ov <input type="range" id="ovOp" min="0" max="100" value="100"></label>
   <div class="sep"></div>
@@ -423,6 +408,22 @@ for (const nv of [nvLhL, nvRhL, nvAsym, nvSlices]) {
     }
   }
 }
+
+// Colormaps for scalar data, shared by BOTH the surface data overlays (cmapSel)
+// and the orthoslice volume (volCmapSel) so the two menus are identical. Built
+// from NiiVue's full registered set (so lipari, navia, etc. are all included),
+// minus the CT-specific clinical maps and our own diverging maps — the latter
+// live on the asymmetry menu (cmapAsymSel), since asymmetry is signed and needs
+// a white-centered map, not a sequential one.
+const CUSTOM_CMAP_NAMES = new Set(Object.keys(CUSTOM_CMAPS))
+const SURFACE_CMAPS = (nvSlices.colormaps ? nvSlices.colormaps() : ['gray'])
+  .filter(n => !/^ct[-_]/i.test(n) && !CUSTOM_CMAP_NAMES.has(n))
+  .sort()
+function fillCmapSelect(sel, selected) {
+  sel.innerHTML = SURFACE_CMAPS.map(n =>
+    `<option value="${n}"${n === selected ? ' selected' : ''}>${n}</option>`).join('')
+}
+fillCmapSelect(document.getElementById('cmapSel'), currentCmap)
 
 function applyShader(nv, name) {
   if (!nv.meshShaders) return
@@ -794,13 +795,7 @@ volFile.addEventListener('change', () => {
 // The choice is orthoslice-wide: it applies to the current background volume and
 // is re-applied by showVolume() when you switch volumes.
 const volCmapSel = document.getElementById('volCmapSel')
-for (const name of (nvSlices.colormaps ? nvSlices.colormaps() : ['gray']).slice().sort()) {
-  const opt = document.createElement('option')
-  opt.value = name
-  opt.textContent = name
-  if (name === orthoCmap) opt.selected = true
-  volCmapSel.appendChild(opt)
-}
+fillCmapSelect(volCmapSel, orthoCmap)   // same curated list as the surface overlays
 volCmapSel.addEventListener('change', () => {
   orthoCmap = volCmapSel.value
   const bg = nvSlices.volumes[0]
@@ -926,32 +921,23 @@ function setLayerOpacity(op) {
 }
 
 // ── colorbars ─────────────────────────────────────────────────────────────────
-const CMAP_CSS = {
-  hot:       '#000 0%,#900 30%,#f00 55%,#ff0 80%,#fff 100%',
-  inferno:   '#000 0%,#3b0f70 20%,#8c2981 40%,#dd4968 60%,#fb9a06 80%,#fcffa4 100%',
-  plasma:    '#0d0887 0%,#6a00a8 25%,#b12a90 50%,#e16462 75%,#fca636 100%',
-  viridis:   '#440154 0%,#31688e 33%,#35b779 67%,#fde725 100%',
-  magma:     '#000 0%,#51127c 25%,#b73779 50%,#fd9567 75%,#fbfdbf 100%',
-  cividis:   '#00204c 0%,#4a5569 33%,#8a8e73 67%,#dde318 100%',
-  thermal:   '#042333 0%,#2c3f6a 25%,#7c4e80 50%,#d45e53 75%,#fde735 100%',
-  batlow:    '#011959 0%,#1c5769 25%,#4c8a67 50%,#c08253 75%,#fad7c0 100%',
-  cool:      '#0ff 0%,#f0f 100%',
-  warm:      '#6e40aa 0%,#ff5e63 50%,#aff05b 100%',
-  gray:      '#000 0%,#fff 100%',
-  bone:      '#000 0%,#556677 50%,#fff 100%',
-  copper:    '#000 0%,#c87941 50%,#ffb07a 100%',
-  jet:       '#00f 0%,#0ff 25%,#0f0 50%,#ff0 75%,#f00 100%',
-  bwr:       '#00f 0%,#fff 50%,#f00 100%',
-  cwr:       '#0cc 0%,#fff 50%,#f00 100%',
-  gwr:       '#0b4 0%,#fff 50%,#f00 100%',
-  blue2red:  '#00f 0%,#0ff 25%,#0f0 50%,#ff0 75%,#f00 100%',
-  blue2magenta: '#00f 0%,#fff 50%,#f0f 100%',
-  hsv:       '#f00 0%,#ff0 17%,#0f0 33%,#0ff 50%,#00f 67%,#f0f 83%,#f00 100%',
-}
-
+// Build the gradient straight from NiiVue's interpolated colormap LUT so every
+// registered colormap (built-in or our custom diverging ones) renders correctly
+// and the bar always matches the surface. nvSlices.colormap(name, invert) returns
+// the full 256-entry RGBA table with inversion already applied, so no separate
+// per-colormap CSS table to keep in sync.
 function cmapCss(name, invert) {
-  const stops = CMAP_CSS[name] || '#333 0%,#ccc 100%'
-  return `linear-gradient(to ${invert ? 'left' : 'right'}, ${stops})`
+  let lut = null
+  try { lut = nvSlices.colormap ? nvSlices.colormap(name, !!invert) : null } catch (e) {}
+  if (lut && lut.length >= 8) {
+    const n = lut.length / 4, STEPS = 16, stops = []
+    for (let s = 0; s <= STEPS; s++) {
+      const idx = Math.round(s / STEPS * (n - 1)) * 4
+      stops.push(`rgb(${lut[idx]},${lut[idx+1]},${lut[idx+2]}) ${(s / STEPS * 100).toFixed(1)}%`)
+    }
+    return `linear-gradient(to right, ${stops.join(',')})`
+  }
+  return `linear-gradient(to ${invert ? 'left' : 'right'}, #333 0%, #ccc 100%)`
 }
 
 function refreshColorbars() {
