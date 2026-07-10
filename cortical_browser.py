@@ -1885,20 +1885,39 @@ def find_surface_types(subjects_dir, subj_dir, template=TEMPLATE):
     return result
 
 
-def find_tsf_metrics(subj_dir, template=TEMPLATE, metrics=METRICS):
+def find_tsf_metrics(subj_dir, template=TEMPLATE, metrics=METRICS, verbose=True):
     """Locate each configured metric's lh/rh TSF files anywhere under the
     subject dir (recursive, mirroring the normative builder's search — so files
     nested in sub-folders like dwi/csd_fixels_singletissue/ are found, not just
     those directly in dwi/). A metric is included only when both hemispheres are
-    present as siblings, and the result preserves the config's metric order."""
+    present as siblings, and the result preserves the config's metric order.
+
+    With verbose=True (the default) it reports, per configured metric, whether it
+    was found and in which sub-folder, or why it was skipped (no file at all, or
+    an lh with no matching rh sibling) — so a missing metric is visible in the
+    terminal rather than silently absent from the dropdown."""
+    if verbose:
+        print(f'Finding TSF files (template={template}) under {subj_dir}:')
     found = {}
     for metric in metrics:
-        for lh in sorted(glob.glob(os.path.join(subj_dir, '**', f'lh_{template}_{metric}.tsf'),
-                                   recursive=True)):
-            rh = os.path.join(os.path.dirname(lh), f'rh_{template}_{metric}.tsf')
-            if os.path.isfile(rh):
-                found[metric] = {'lh': lh, 'rh': rh}
-                break   # first lh with a matching rh sibling wins
+        lh_matches = sorted(glob.glob(os.path.join(subj_dir, '**', f'lh_{template}_{metric}.tsf'),
+                                      recursive=True))
+        chosen = next(((lh, rh) for lh in lh_matches
+                       if os.path.isfile(rh := os.path.join(os.path.dirname(lh),
+                                                            f'rh_{template}_{metric}.tsf'))), None)
+        if chosen:
+            found[metric] = {'lh': chosen[0], 'rh': chosen[1]}
+            if verbose:
+                rel = os.path.relpath(chosen[0], subj_dir)
+                print(f'  found    {metric:12s} {rel}')
+        elif verbose:
+            if not lh_matches:
+                print(f'\033[31m  MISSING  {metric:12s} no lh/rh .tsf found\033[0m')
+            else:
+                rel = os.path.relpath(os.path.dirname(lh_matches[0]), subj_dir)
+                print(f'\033[31m  MISSING  {metric:12s} lh in {rel}/ but no rh sibling\033[0m')
+    if verbose:
+        print(f'  -> {len(found)}/{len(metrics)} configured metric(s) available: {list(found) or "none"}')
     return found
 
 
@@ -2431,14 +2450,13 @@ def main():
         sys.exit(f'Subject directory not found: {subj_dir}')
 
     vol_path, lh_path, rh_path = find_files(subj_dir)
-    tsf_metrics = find_tsf_metrics(subj_dir)
-    surf_types  = find_surface_types(args.subjects_dir, subj_dir)
-
     print(f'Subject  : {args.subj_id}')
     print(f'Volume   : {vol_path  or "NOT FOUND"}')
     print(f'LH surf  : {lh_path   or "NOT FOUND"}')
     print(f'RH surf  : {rh_path   or "NOT FOUND"}')
-    print(f'Metrics  : {list(tsf_metrics) or "none"}')
+
+    tsf_metrics = find_tsf_metrics(subj_dir)   # prints its own per-metric finding report
+    surf_types  = find_surface_types(args.subjects_dir, subj_dir)
     print(f'Surf types: {list(surf_types) or "none"}')
 
     out_dir = tempfile.mkdtemp(prefix='cortical_browser_')
