@@ -9,7 +9,7 @@ CLim and colormap controls for both data and asymmetry surfaces.
 Usage:
     python cortical_browser.py [subjects_dir] [subj_id] [--port PORT]
 """
-import os, sys, glob, json, time, threading, webbrowser, argparse, tempfile, re, warnings
+import os, sys, glob, json, time, threading, webbrowser, argparse, tempfile, re, warnings, shutil, atexit
 import numpy as np
 import nibabel as nib
 import h5py
@@ -2442,6 +2442,11 @@ def main():
     print(f'Surf types: {list(surf_types) or "none"}')
 
     out_dir = tempfile.mkdtemp(prefix='cortical_browser_')
+    # Materialized overlays/matrices live here for the session only; mkdtemp
+    # doesn't self-clean, so remove it on any graceful exit (normal quit or the
+    # Ctrl+C below). A hard kill (kill -9, crash) can't run this — the OS clears
+    # /tmp on reboot in that case.
+    atexit.register(shutil.rmtree, out_dir, ignore_errors=True)
     print(f'\nScanning {len(tsf_metrics)} metric(s) (stats only, no conversion yet)…')
     overlay_info, overlay_arrays = scan_overlay_stats(tsf_metrics)
 
