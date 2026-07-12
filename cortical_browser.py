@@ -400,6 +400,10 @@ const VOL_URL = VOLUMES.length ? VOLUMES[0].url : null
 // surfaces and their depth-profile plots always match.
 const rgba255ToHex = ([r, g, b]) =>
   '#' + [r, g, b].map(v => v.toString(16).padStart(2, '0')).join('')
+const hexToRgba = (hex, alpha) => {
+  const n = parseInt(hex.slice(1), 16)
+  return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${alpha})`
+}
 const LH_COLOR = LH_SURF ? rgba255ToHex(LH_SURF.rgba255) : '#66B3FF'
 const RH_COLOR = RH_SURF ? rgba255ToHex(RH_SURF.rgba255) : '#FF854D'
 
@@ -1948,11 +1952,15 @@ const mvErrorBars = {
   }
 }
 // z-score horizontal bars — metrics on the y-axis, signed z on the x-axis.
+// Bar alpha ramps from 0.1 at z=0 to 1.0 at |z|=mvZlim, so bars near zero read
+// as faint and extreme deviations pop; it re-scales with the live |z| limit
+// since zBarAlpha closes over the mutable mvZlim rather than a copied value.
+const zBarAlpha = z => 0.1 + 0.9 * Math.min(Math.abs(z ?? 0), mvZlim) / mvZlim
 chartZBar = new Chart(document.getElementById('chart-zbar'), {
   type: 'bar',
   data: { labels: [], datasets: [
-    { label:'LH', data:[], backgroundColor:LH_COLOR+'cc', borderColor:LH_COLOR, borderWidth:0 },
-    { label:'RH', data:[], backgroundColor:RH_COLOR+'cc', borderColor:RH_COLOR, borderWidth:0 },
+    { label:'LH', data:[], backgroundColor:ctx => hexToRgba(LH_COLOR, zBarAlpha(ctx.raw)), borderColor:LH_COLOR, borderWidth:0 },
+    { label:'RH', data:[], backgroundColor:ctx => hexToRgba(RH_COLOR, zBarAlpha(ctx.raw)), borderColor:RH_COLOR, borderWidth:0 },
   ]},
   plugins: [mvErrorBars],
   options: {
