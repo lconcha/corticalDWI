@@ -1935,10 +1935,11 @@ const mvErrorBars = {
       const meta = chart.getDatasetMeta(di)
       if (!sd || meta.hidden) return
       ctx.save()
-      ctx.strokeStyle = ds.borderColor || '#cccccc'; ctx.lineWidth = 1
+      ctx.lineWidth = 1
       meta.data.forEach((el, i) => {
         const v = ds.data[i], s = sd[i]
         if (v == null || s == null || !isFinite(s) || s <= 0) return
+        ctx.strokeStyle = hexToRgba(ds.borderColor || '#cccccc', zBarAlpha(v))
         const y = el.y, cap = 3
         const xp = clamp(x.getPixelForValue(v + s)), xm = clamp(x.getPixelForValue(v - s))
         ctx.beginPath()
