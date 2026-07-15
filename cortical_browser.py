@@ -245,6 +245,31 @@ canvas.nv-canvas { display: block; width: 100% !important; height: 100% !importa
   </section>
 
   <section class="ctl-group">
+    <h3 class="ctl-h">Streamlines</h3>
+    <div class="ctl-row">
+      <button class="cbtn" id="loadStreamlinesBtn" title="Load LH/RH Laplace white-matter streamlines (.tck) overlaid on the orthoslices">Load streamlines</button>
+      <label title="Show/hide the loaded streamlines on the orthoslices"><input type="checkbox" id="streamlineVisibleChk" checked disabled> Show</label>
+    </div>
+    <div class="ctl-row">
+      <label title="Which streamlines to display: every one, or only those seeded from the selected vertex/rings">
+        <select id="streamlineModeSel" disabled>
+          <option value="selected" selected>Selected vertex</option>
+          <option value="all">All</option>
+        </select>
+      </label>
+    </div>
+    <div class="ctl-row">
+      <label title="Color streamlines by their start-to-end direction, or a single fixed color">Color
+        <select id="streamlineColorSel" disabled>
+          <option value="direction" selected>Direction</option>
+          <option value="fixed">Custom</option>
+        </select>
+      </label>
+      <input type="color" id="streamlineColorPicker" value="#f5c842" disabled style="display:none" title="Custom streamline color">
+    </div>
+  </section>
+
+  <section class="ctl-group">
     <h3 class="ctl-h">Plots</h3>
     <div class="ctl-row"><label><input type="checkbox" id="showNormativeChk" title="Fetch and overlay cohort normative mean ± SD (computed lazily on first use)"> Show normative</label></div>
     <div class="ctl-row">
@@ -334,6 +359,7 @@ import * as niivue from "__NIIVUE_CDN__"
 const VOLUMES  = __VOLUMES_JSON__
 const SURFS    = __SURFS_JSON__
 const SURF_TYPES = __SURF_TYPES_JSON__
+const STREAMLINES = __STREAMLINES_JSON__
 const NORMATIVE = __NORMATIVE_JSON__
 const METRICS  = __METRICS_JSON__
 const BASE_URL = "__BASE_URL__"
@@ -634,6 +660,105 @@ async function toggleSliceContour(kind, on) {
   sliceContourVisible[kind] = on
   if (on) await ensureSliceContour(kind)
   applySliceContourVisibility(kind)
+}
+
+// LH/RH Laplace white-matter streamlines (.tck), loaded on demand
+// from the "Load streamlines" button and overlaid on the orthoslices only
+// (nvSlices, not the 3-D surface panels). meshThicknessOn2D clips every mesh
+// in nvSlices — contours and streamlines alike — to a slab around each 2-D slice
+// plane, so the streamlines render as their intersection with that plane.
+const STREAMLINE_THICKNESS_MM = 2
+let streamlineMeshes = null    // { lh, rh } once loaded
+let streamlinesVisible = true  // toggled by the "Show" checkbox once streamlines are loaded
+
+async function ensureStreamlines() {
+  if (streamlineMeshes) return streamlineMeshes
+  console.time('ensureStreamlines')
+  const [lhMesh, rhMesh] = await Promise.all([
+    STREAMLINES.lh ? niivue.NVMesh.loadFromUrl({ url: STREAMLINES.lh, gl: nvSlices.gl, rgba255: LH_SURF.rgba255 }) : null,
+    STREAMLINES.rh ? niivue.NVMesh.loadFromUrl({ url: STREAMLINES.rh, gl: nvSlices.gl, rgba255: RH_SURF.rgba255 }) : null,
+  ])
+  for (const m of [lhMesh, rhMesh]) if (m) nvSlices.addMesh(m)
+  streamlineMeshes = { lh: lhMesh, rh: rhMesh }
+  nvSlices.setMeshThicknessOn2D(STREAMLINE_THICKNESS_MM)
+  applyStreamlineVisibility()
+  console.timeEnd('ensureStreamlines')
+  return streamlineMeshes
+}
+
+function applyStreamlineVisibility() {
+  if (!streamlineMeshes) return
+  const op = streamlinesVisible ? 1 : 0
+  for (const m of [streamlineMeshes.lh, streamlineMeshes.rh]) if (m) nvSlices.setMeshProperty(m.id, 'opacity', op)
+  nvSlices.drawScene()
+}
+
+// Per-streamline filtering: the streamline files are one streamline per vertex of
+// the same ico6-sym mesh used everywhere else (LH/RH share vertex indexing —
+// see ringSet's reuse across lh/rh matrices in selectVertex()), so a vertex ID
+// is also that vertex's streamline index. NVMesh has no built-in "show only
+// these streamline indices" call, but its dps/dpsThreshold mechanism (data-
+// per-streamline + a cutoff, normally used to threshold streamlines by a
+// scalar like FA) can be repurposed: give each streamline a 0/1 "selected"
+// flag as its dps value and threshold at 0.5, so only flagged streamlines
+// survive into the index buffer that updateFibers() rebuilds on every
+// setMeshProperty call. Passing NaN as the threshold (its documented default)
+// skips that filtering step entirely, i.e. shows every streamline.
+function setStreamlineSelection(vertexIds) {
+  if (!streamlineMeshes) return
+  const selected = new Set(vertexIds)
+  for (const m of [streamlineMeshes.lh, streamlineMeshes.rh]) {
+    if (!m?.offsetPt0) continue
+    const nStreamlines = m.offsetPt0.length - 1
+    const flags = new Float32Array(nStreamlines)
+    for (const v of selected) if (v >= 0 && v < nStreamlines) flags[v] = 1
+    m.dps = [{ id: 'vertex-selection', vals: flags }]
+    nvSlices.setMeshProperty(m.id, 'dpsThreshold', 0.5)
+  }
+}
+
+function showAllStreamlines() {
+  if (!streamlineMeshes) return
+  for (const m of [streamlineMeshes.lh, streamlineMeshes.rh]) {
+    if (m) nvSlices.setMeshProperty(m.id, 'dpsThreshold', NaN)
+  }
+}
+
+// Driven by the "Streamlines" mode selector (All / Selected vertex) and
+// re-applied on every vertex/rings selection change. A no-op until streamlines
+// are actually loaded (streamlineMeshes is null until then).
+function applyStreamlineSelection() {
+  if (!streamlineMeshes) return
+  const mode = document.getElementById('streamlineModeSel').value
+  if (mode === 'all' || currentVertex === null) {
+    showAllStreamlines()
+  } else {
+    setStreamlineSelection(neighborRings(currentVertex, nRings))
+  }
+}
+
+// Color selector: "direction" uses NiiVue's built-in start-to-end direction
+// coloring (fiberColor 'Global', the NVMesh default); "fixed" recolors every
+// streamline with a single user-chosen color via the color picker.
+function hexToRgba255(hex) {
+  const n = parseInt(hex.slice(1), 16)
+  return new Uint8Array([(n >> 16) & 255, (n >> 8) & 255, n & 255, 255])
+}
+function applyStreamlineColor() {
+  if (!streamlineMeshes) return
+  const mode = document.getElementById('streamlineColorSel').value
+  const picker = document.getElementById('streamlineColorPicker')
+  picker.style.display = mode === 'fixed' ? '' : 'none'
+  for (const m of [streamlineMeshes.lh, streamlineMeshes.rh]) {
+    if (!m) continue
+    if (mode === 'fixed') {
+      m.rgba255 = hexToRgba255(picker.value)
+      nvSlices.setMeshProperty(m.id, 'fiberColor', 'Fixed')
+    } else {
+      nvSlices.setMeshProperty(m.id, 'fiberColor', 'Global')
+    }
+  }
+  nvSlices.drawScene()
 }
 
 async function loadAllSurfaces(metric, resetCamera = false) {
@@ -1119,6 +1244,52 @@ document.getElementById('contourPialChk').addEventListener('change', function() 
   toggleSliceContour('pial', this.checked)
 })
 
+// ── streamlines overlay on the orthoslices ────────────────────────────────────
+{
+  const btn = document.getElementById('loadStreamlinesBtn')
+  const visChk = document.getElementById('streamlineVisibleChk')
+  const modeSel = document.getElementById('streamlineModeSel')
+  const colorSel = document.getElementById('streamlineColorSel')
+  const colorPicker = document.getElementById('streamlineColorPicker')
+  if (!STREAMLINES.lh && !STREAMLINES.rh) {
+    btn.disabled = true
+    btn.title = 'No streamlines (.tck) found for this subject'
+    btn.style.opacity = 0.4
+    visChk.parentElement.style.opacity = 0.4
+    modeSel.parentElement.style.opacity = 0.4
+    colorSel.parentElement.style.opacity = 0.4
+  } else {
+    btn.addEventListener('click', async () => {
+      btn.disabled = true
+      btn.textContent = 'Loading…'
+      try {
+        await ensureStreamlines()
+        btn.textContent = 'Streamlines loaded'
+        visChk.disabled = false
+        modeSel.disabled = false
+        colorSel.disabled = false
+        applyStreamlineSelection()   // start filtered to whatever vertex is already selected
+        applyStreamlineColor()
+      } catch (e) {
+        console.warn('[streamlines] failed to load', e)
+        alert('Could not load streamlines: ' + e.message)
+        btn.textContent = 'Load streamlines'
+        btn.disabled = false
+      }
+    })
+    visChk.addEventListener('change', function() {
+      streamlinesVisible = this.checked
+      applyStreamlineVisibility()
+    })
+    modeSel.addEventListener('change', applyStreamlineSelection)
+    colorSel.addEventListener('change', () => {
+      colorPicker.disabled = colorSel.value !== 'fixed'
+      applyStreamlineColor()
+    })
+    colorPicker.addEventListener('input', applyStreamlineColor)
+  }
+}
+
 // ── shader selector ───────────────────────────────────────────────────────────
 document.getElementById('shaderSel').addEventListener('change', e => {
   currentShader = e.target.value; applyCurrentShader()
@@ -1507,6 +1678,7 @@ async function selectVertex(vertIdx, nvInst) {
   }
 
   currentVertex = vertIdx
+  applyStreamlineSelection()   // respects the mode selector; no-op if streamlines haven't been loaded yet
 
   // Read depth profiles from binary matrices, averaged over the neighbor-ring set
   const info = METRICS[currentMetric]
@@ -2218,6 +2390,25 @@ def find_files(subj_dir, template=TEMPLATE):
     return vol_path, surf(f'lh_white_{template}.surf.gii'), surf(f'rh_white_{template}.surf.gii')
 
 
+STREAMLINE_FILENAMES = {
+    'lh': 'lh_ico6_sym_laplace-wm-streamlines.tck',
+    'rh': 'rh_ico6_sym_laplace-wm-streamlines.tck',
+}
+
+
+def find_streamline_files(subj_dir):
+    """Locate the per-hemisphere Laplace white-matter streamlines
+    (.tck, in DWI space) under mri/, if present. Returns {'lh': path, 'rh': path},
+    only including hemispheres whose file actually exists."""
+    mri_dir = os.path.join(subj_dir, 'mri')
+    result = {}
+    for hemi, fname in STREAMLINE_FILENAMES.items():
+        p = os.path.join(mri_dir, fname)
+        if os.path.isfile(p):
+            result[hemi] = p
+    return result
+
+
 SURF_TYPE_FILENAMES = {
     'white':         lambda hemi, t: f'{hemi}_white_{t}.surf.gii',
     'pial':          lambda hemi, t: f'{hemi}_pial_{t}.surf.gii',
@@ -2625,7 +2816,7 @@ def compute_multivariate(subjects_dir, tsf_metrics, subj_cache, vertices,
 # ── HTML generation ───────────────────────────────────────────────────────────
 
 def make_html(subj_id, vol_path, lh_path, rh_path, overlay_info, port, surf_types=None,
-              normative_info=None, template=TEMPLATE, cache_bust=''):
+              normative_info=None, template=TEMPLATE, cache_bust='', streamline_files=None):
     base = f'http://localhost:{port}/data'
     # The /data/ files are served immutable (see _reply), and their URLs depend
     # only on hemi/template/metric — NOT the subject. Two subjects on the same
@@ -2654,6 +2845,7 @@ def make_html(subj_id, vol_path, lh_path, rh_path, overlay_info, port, surf_type
         surf_type: {hemi: f'{base}/{os.path.basename(p)}{q}' for hemi, p in hemis.items()}
         for surf_type, hemis in (surf_types or {}).items()
     }
+    streamlines_urls = {hemi: f'{base}/{os.path.basename(p)}{q}' for hemi, p in (streamline_files or {}).items()}
 
     metric_opts = '\n'.join(
         f'      <option value="{m}">{m}</option>' for m in overlay_info
@@ -2672,6 +2864,7 @@ def make_html(subj_id, vol_path, lh_path, rh_path, overlay_info, port, surf_type
         ('__VOLUMES_JSON__',   json.dumps(volumes)),
         ('__SURFS_JSON__',     json.dumps(surfs)),
         ('__SURF_TYPES_JSON__', json.dumps(surf_types_urls)),
+        ('__STREAMLINES_JSON__',     json.dumps(streamlines_urls)),
         ('__NORMATIVE_JSON__', json.dumps(normative_info or {})),
         ('__METRICS_JSON__',   json.dumps(overlay_info)),
         ('__BASE_URL__',       base),
@@ -2830,6 +3023,9 @@ def main():
     surf_types  = find_surface_types(args.subjects_dir, subj_dir)
     print(f'Surf types: {list(surf_types) or "none"}')
 
+    streamline_files = find_streamline_files(subj_dir)
+    print(f'Streamlines: {list(streamline_files) or "none"}')
+
     out_dir = tempfile.mkdtemp(prefix='cortical_browser_')
     # Materialized overlays/matrices live here for the session only; mkdtemp
     # doesn't self-clean, so remove it on any graceful exit (normal quit or the
@@ -2850,6 +3046,8 @@ def main():
     for hemis in surf_types.values():
         for p in hemis.values():
             file_map[f'/data/{os.path.basename(p)}'] = p
+    for p in streamline_files.values():
+        file_map[f'/data/{os.path.basename(p)}'] = p
 
     materialized = set()
     first_metric = next(iter(tsf_metrics), None)
@@ -2871,7 +3069,7 @@ def main():
     html_bytes = make_html(
         args.subj_id, vol_path, lh_path, rh_path,
         overlay_info, args.port, surf_types, normative_info,
-        cache_bust=cache_bust,
+        cache_bust=cache_bust, streamline_files=streamline_files,
     ).encode('utf-8')
 
     server = HTTPServer(('localhost', args.port),
