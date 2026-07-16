@@ -241,6 +241,10 @@ canvas.nv-canvas { display: block; width: 100% !important; height: 100% !importa
       <label title="Overlay white-matter surface outline on the orthoslices (loaded on first use)"><input type="checkbox" id="contourWmChk"> WM</label>
       <label title="Overlay pial surface outline on the orthoslices (loaded on first use)"><input type="checkbox" id="contourPialChk"> pial</label>
     </div>
+    <div class="ctl-row">
+      <label title="In the 3-D panel, cut away the octant nearest the crosshair so the volume render is opened up along the three orthogonal slice planes, instead of showing an opaque whole-brain render — shortcut: c"><input type="checkbox" id="cutaway3DChk"> 3D cutaway</label>
+      <label title="Flip which octant the 3D cutaway removes"><input type="checkbox" id="cutawayInvertChk"> Invert</label>
+    </div>
     <div class="ctl-row"><span id="pos-display"></span></div>
   </section>
 
@@ -865,11 +869,83 @@ nvSlices.onLocationChange = d => {
   const v = d.values && d.values[0]
   if (v && isFinite(v.value)) lines.push(`value=${(+v.value).toPrecision(4)}`)
   document.getElementById('pos-display').textContent = lines.join('\n')
+  updateCutawayClipPlanes()   // keep the 3-D cutaway centered on the crosshair; no-op unless enabled
 }
+
+// ── 3-D cutaway (crosshair-centered clip planes) ──────────────────────────────
+// NiiVue's 3-D panel is always a volume raycast — there's no built-in mode that
+// shows just the three 2-D slices alone. Its multi-clip-plane cutaway
+// (isClipPlanesCutaway) is the native building block that gets closest: up to 6
+// clip planes are ANDed together in the raycaster, and cutaway mode removes only
+// the one region where ALL of them agree, rather than the usual single-sided
+// clip. Three axis-aligned planes positioned at the crosshair therefore carve
+// away just the one octant nearest the crosshair, opening the render to reveal
+// the orthogonal cut surfaces while the rest of the volume stays fully rendered.
+let cutawayEnabled = false
+let cutawayInverted = false
+nvSlices.opts.isClipPlanesCutaway = true
+// NiiVue's own C/P clip-plane hotkeys are bound to the orthoslice canvas itself
+// (focused whenever it's clicked) and operate on a single freeform clip plane —
+// they know nothing about our crosshair-synced 3-plane cutaway and would fight
+// it (KeyP also collides with this app's Pivot@vertex shortcut). Blanked out
+// here in favor of our own 'c' shortcut below, driven off the checkbox.
+nvSlices.opts.clipPlaneHotKey = ''
+nvSlices.opts.cycleClipPlaneHotKey = ''
+// [azimuth, elevation] for axis-aligned planes — the same values NiiVue's own
+// clip-plane presets use for RIGHT / ANTERIOR / SUPERIOR (see CLIP_PLANE_PRESETS
+// in its source). depth is computed per-crosshair-position below.
+const CUTAWAY_AZI_ELEV = [[90, 0], [180, 0], [0, 90]]
+function updateCutawayClipPlanes() {
+  if (!cutawayEnabled || !nvSlices.volumes.length) return
+  const frac = nvSlices.scene.crosshairPos   // [x, y, z] in 0..1 volume-fraction space
+  const depthAziElevs = CUTAWAY_AZI_ELEV.map(([azimuth, elevation]) => {
+    // Same sph2cartDeg NiiVue itself uses to turn azimuth/elevation into a clip
+    // normal, so depth = normal · (crosshair - center) lands the plane exactly
+    // on the crosshair without having to hand-derive the axis/sign convention.
+    const n = niivue.NVUtilities.sph2cartDeg(azimuth, elevation)
+    const depth = n[0] * (frac[0] - 0.5) + n[1] * (frac[1] - 0.5) + n[2] * (frac[2] - 0.5)
+    if (!cutawayInverted) return [depth, azimuth, elevation]
+    // Invert = remove the opposite octant instead. Negating the clip normal
+    // flips which side of each plane is cut away; for this azimuth/elevation
+    // convention that's azimuth+180/elevation negated (the spherical antipode),
+    // and the plane stays anchored at the same crosshair position by also
+    // negating depth (verified algebraically against NiiVue's sph2cartDeg, not
+    // just assumed — sph2cartDeg(azi+180, -elev) === -sph2cartDeg(azi, elev)).
+    return [-depth, (azimuth + 180) % 360, -elevation]
+  })
+  nvSlices.setClipPlanes(depthAziElevs)
+}
+function disableCutawayClipPlanes() {
+  nvSlices.setClipPlanes([[2, 0, 0], [2, 0, 0], [2, 0, 0]])   // depth=2 is NiiVue's "off" sentinel
+}
+document.getElementById('cutaway3DChk').addEventListener('change', function() {
+  cutawayEnabled = this.checked
+  if (cutawayEnabled) updateCutawayClipPlanes()
+  else disableCutawayClipPlanes()
+})
+document.getElementById('cutawayInvertChk').addEventListener('change', function() {
+  cutawayInverted = this.checked
+  updateCutawayClipPlanes()   // no-op if cutaway isn't currently enabled
+})
 nvSlices.setSliceType(nvSlices.sliceTypeMultiplanar)
 nvSlices.setRadiologicalConvention(true)
 nvSlices.setCrosshairColor(ACCENT_YELLOW_RGBA)   // match selected-vertex color
 nvSlices.setCrosshairWidth(0.5)                   // thinner than the default 1px
+// Right-drag brightness/contrast: NiiVue's default right-button gesture
+// (DRAG_MODE.contrast) draws a box and auto-windows to that box's intensity
+// range — unlike the up/down=brightness, left/right=contrast drag every other
+// neuroimaging viewer uses. DRAG_MODE.windowing is that familiar gesture
+// (vertical = level/brightness, horizontal = window width/contrast); only
+// rightButton is overridden here, so left-click crosshair placement and the
+// scroll-to-zoom/pan bindings elsewhere are untouched. onIntensityChange
+// (wired below to syncVolClipInputs) fires for this drag mode too, so the
+// clip-min/max sidebar inputs stay in sync automatically.
+nvSlices.setMouseEventConfig({ rightButton: niivue.DRAG_MODE.windowing })
+// windowingGainFactor scales pixels-dragged -> intensity-units-changed (no
+// dedicated setter; NiiVue reads opts.windowingGainFactor fresh on every drag
+// move). Default is 2 (fast); dialed down here since a full-canvas drag was
+// blowing past the intensity range almost immediately. Raise/lower to taste.
+nvSlices.opts.windowingGainFactor = 0.4
 
 // ── orthoslice volume selector ────────────────────────────────────────────────
 // The dropdown chooses which volume the orthoslices show. It starts with just
@@ -1927,6 +2003,13 @@ document.addEventListener('keydown', e => {
     }
     case 'i': {   // toggle orthoslice smooth/nearest interpolation via its checkbox
       const chk = document.getElementById('interpChk')
+      chk.checked = !chk.checked
+      chk.dispatchEvent(new Event('change'))
+      e.preventDefault()
+      break
+    }
+    case 'c': {   // toggle the 3-D cutaway via its checkbox so the UI stays in sync
+      const chk = document.getElementById('cutaway3DChk')
       chk.checked = !chk.checked
       chk.dispatchEvent(new Event('change'))
       e.preventDefault()
