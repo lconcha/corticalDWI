@@ -59,6 +59,7 @@ body {
 .ctl-row { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; }
 #sidebar select { max-width: 100%; }
 .apptitle { font-weight: bold; color: var(--accent-yellow); font-size: 12px; letter-spacing: 0.5px; white-space: nowrap; }
+.space { color: #999; font-size: 10px; white-space: nowrap; }
 .subj { font-weight: bold; color: #f0f0f0; font-size: 12px; white-space: nowrap; }
 .glab { color: #d1d1d1; font-size: 10px; white-space: nowrap; }
 label { display: flex; align-items: center; gap: 3px; white-space: nowrap; color: #999; }
@@ -157,7 +158,9 @@ canvas.nv-canvas { display: block; width: 100% !important; height: 100% !importa
 
 <aside id="sidebar">
   <div class="apptitle">CORTICAL BROWSER</div>
+  <div class="space">T1 space</div>
   <div class="subj">__SUBJ_ID__</div>
+  <button class="cbtn" id="openDwiBtn" title="Open the FA map in DWI space in a new tab, with the DWI-space streamlines overlaid. The crosshair there follows the vertex/depth selected here.">Open DWI space</button>
 
   <section class="ctl-group">
     <h3 class="ctl-h">Global</h3>
@@ -364,6 +367,7 @@ const VOLUMES  = __VOLUMES_JSON__
 const SURFS    = __SURFS_JSON__
 const SURF_TYPES = __SURF_TYPES_JSON__
 const STREAMLINES = __STREAMLINES_JSON__
+const DWI_AVAILABLE = __DWI_AVAILABLE_JSON__
 const NORMATIVE = __NORMATIVE_JSON__
 const METRICS  = __METRICS_JSON__
 const BASE_URL = "__BASE_URL__"
@@ -843,7 +847,7 @@ async function loadMatrices(metric) {
 // ── initial load ──────────────────────────────────────────────────────────────
 await Promise.all([
   VOL_URL
-    ? nvSlices.loadVolumes([{ url: VOL_URL, colormap: 'gray', opacity: 1 }])
+    ? nvSlices.loadVolumes([{ url: VOL_URL, colormap: 'bone', opacity: 1 }])
     : Promise.resolve(),
   currentMetric ? loadAllSurfaces(currentMetric, true) : Promise.resolve(),
   currentMetric ? loadMatrices(currentMetric)    : Promise.resolve(),
@@ -964,7 +968,7 @@ const volFile = document.getElementById('volFile')
 const volumeRegistry = {}
 let currentVolKey = null
 let volSeq = 0
-let orthoCmap = 'gray'   // colormap applied to whichever volume the orthoslices show
+let orthoCmap = 'bone'   // colormap applied to whichever volume the orthoslices show
 
 function addVolumeOption(desc, select) {
   const key = 'vol' + (volSeq++)
@@ -1135,6 +1139,7 @@ function setDepth(d) {
   for (const nv of [nvLhL, nvRhL, nvAsym])
     for (const mesh of nv.meshes)
       if (mesh.layers?.length) nv.setMeshLayerProperty(mesh.id, 0, 'frame4D', d)
+  broadcastDwiCrosshair()
   updateDepthMarker(mm)
 }
 
@@ -1363,6 +1368,43 @@ document.getElementById('contourPialChk').addEventListener('change', function() 
       applyStreamlineColor()
     })
     colorPicker.addEventListener('input', applyStreamlineColor)
+  }
+}
+
+// ── DWI-space companion tab ───────────────────────────────────────────────────
+// "Open DWI space" launches /dwi (FA map + DWI-space streamlines, no sidebar —
+// see make_dwi_html) in a second tab, then keeps its crosshair following this
+// tab's vertex/depth selection over BroadcastChannel. One-way (T1 tab → DWI
+// tab) and same-origin/same-browser only, so no server round-trip is needed;
+// the DWI tab does its own vertex→point lookup once it receives a message
+// (see placeCrosshairAtStreamlinePoint in _DWI_HTML — the DWI-space
+// streamlines are the literal warp target of the ones here, so a (vertex,
+// depth) pair indexes directly into that tab's own streamline points).
+const dwiChannel = ('BroadcastChannel' in window) ? new BroadcastChannel('cortical-browser-dwi-crosshair') : null
+let currentHemi = 'lh'   // hemisphere of the most recently selected vertex
+function broadcastDwiCrosshair() {
+  if (!dwiChannel || currentVertex === null) return
+  // vertex is the crosshair anchor (always a single point); vertices is the
+  // same neighbor-ring set the main tab's own "Selected vertex" streamline
+  // filter uses (see setStreamlineSelection/applyStreamlineSelection above),
+  // so the DWI tab's "Selected vertex" mode highlights the identical set.
+  dwiChannel.postMessage({
+    vertex: currentVertex, vertices: neighborRings(currentVertex, nRings),
+    depth: currentDepth, hemi: currentHemi,
+  })
+}
+{
+  const btn = document.getElementById('openDwiBtn')
+  if (!DWI_AVAILABLE) {
+    btn.disabled = true
+    btn.title = 'No dwi/fa.nii.gz found for this subject'
+    btn.style.opacity = 0.4
+  } else {
+    btn.addEventListener('click', () => {
+      // Named target: repeat clicks focus the same tab instead of piling up new ones.
+      window.open('/dwi', 'dwiSpaceTab')
+      broadcastDwiCrosshair()   // in case that tab was already open and waiting
+    })
   }
 }
 
@@ -1755,6 +1797,8 @@ async function selectVertex(vertIdx, nvInst) {
 
   currentVertex = vertIdx
   applyStreamlineSelection()   // respects the mode selector; no-op if streamlines haven't been loaded yet
+  currentHemi = (nvInst === nvRhL) ? 'rh' : 'lh'   // nvAsym shares LH geometry, counts as 'lh'
+  broadcastDwiCrosshair()
 
   // Read depth profiles from binary matrices, averaged over the neighbor-ring set
   const info = METRICS[currentMetric]
@@ -2456,6 +2500,401 @@ window._nvSlice = nvSlices
 </html>
 """
 
+# ── DWI-space companion page ─────────────────────────────────────────────────
+# Opened in a second tab via the "Open DWI space" button. A single orthoslice
+# viewer of the FA map with the DWI-space streamlines overlaid — no sidebar,
+# since its only job is to mirror the main tab's crosshair. The two tabs share
+# nothing server-side; they sync purely client-side via BroadcastChannel (both
+# pages are same-origin, served by this same process).
+_DWI_HTML = r"""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>CORTICAL BROWSER | DWI space — __SUBJ_ID__</title>
+<style>
+:root { --accent-yellow: #F5C842; }
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  background: #1f1f1f; color: #ccc;
+  font: 11px/1.4 -apple-system, "Segoe UI", Arial, sans-serif;
+  height: 100vh; overflow: hidden;
+  display: flex; flex-direction: column;
+}
+#hdr {
+  flex-shrink: 0; padding: 6px 10px; background: #2b2b2b; border-bottom: 1px solid #444444;
+  display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px;
+}
+.apptitle { font-weight: bold; color: var(--accent-yellow); font-size: 12px; letter-spacing: 0.5px; }
+.space { color: #999; font-size: 10px; white-space: nowrap; }
+.subj { font-weight: bold; color: #f0f0f0; font-size: 12px; }
+button.cbtn {
+  background: #3a3a3a; color: #ddd; border: 1px solid #555555;
+  border-radius: 3px; padding: 2px 8px; font-size: 10px; cursor: pointer;
+}
+button.cbtn:hover { background: #484848; }
+button.cbtn:disabled { opacity: 0.4; cursor: default; }
+label { display: flex; align-items: center; gap: 4px; color: #999999; white-space: nowrap; }
+select {
+  background: #d9d9d9; color: #1a1a1a; border: 1px solid #4d4d4d;
+  border-radius: 3px; padding: 1px 3px; font-size: 10px;
+}
+input[type=number] {
+  background: #d9d9d9; color: #1a1a1a; border: 1px solid #4d4d4d;
+  border-radius: 3px; padding: 1px 4px; font-size: 10px; width: 64px;
+  -moz-appearance: textfield;
+}
+input[type=number]::-webkit-inner-spin-button,
+input[type=number]::-webkit-outer-spin-button { display: none; }
+#status { color: #999999; font-size: 11px; font-family: monospace; margin-left: auto; white-space: pre; }
+#canvas-wrap { flex: 1; min-height: 0; position: relative; }
+canvas { display: block; width: 100% !important; height: 100% !important; outline: none; }
+</style>
+</head>
+<body>
+<div id="hdr">
+  <span class="apptitle">CORTICAL BROWSER</span>
+  <span class="space">DWI space</span>
+  <span class="subj">__SUBJ_ID__</span>
+  <button class="cbtn" id="dwiStreamVisBtn" title="Show/hide the DWI-space streamlines">Streamlines: on</button>
+  <button class="cbtn" id="dwiStreamModeBtn" title="Toggle between every streamline and only the ones seeded from the selected vertex/rings">Mode: selected</button>
+  <label title="Volume shown in the orthoslices">Volume <select id="dwiVolSel"></select></label>
+  <input type="file" id="dwiVolFile" accept=".nii,.nii.gz,.gz,.mgz,.mgh,.hdr,.img" style="display:none">
+  <label title="Colormap for the shown volume">cmap <select id="dwiCmapSel"></select></label>
+  <label title="Shown volume's color min (clip)">min <input type="number" id="dwiClipMin" step="any"></label>
+  <label title="Shown volume's color max (clip)">max <input type="number" id="dwiClipMax" step="any"></label>
+  <span id="status">waiting for a vertex to be selected in the main tab…</span>
+</div>
+<div id="canvas-wrap"><canvas id="gl-dwi"></canvas></div>
+
+<script type="module">
+import * as niivue from "__NIIVUE_CDN__"
+
+const FA_URL      = "__FA_URL__"
+const STREAMLINES = __STREAMLINES_JSON__   // {lh: url, rh: url}
+const STEP_MM     = __STEP_MM__
+const ACCENT_YELLOW_RGBA = [0xF5/255, 0xC8/255, 0x42/255, 1]
+const statusEl = document.getElementById('status')
+
+const nv = new niivue.Niivue({
+  backColor: [0.04, 0.04, 0.04, 1], show3Dcrosshair: true,
+  meshThicknessOn2D: 2, multiplanarLayout: 'row',
+  isColorbar: true, showColorbarBorder: false,
+  multiplanarShowRender: niivue.SHOW_RENDER.NEVER,   // just the 3 orthogonal slices, no 3-D volume panel
+})
+await new Promise(r => requestAnimationFrame(r))
+await nv.attachTo('gl-dwi')
+
+let dwiCmap = 'lipari'   // colormap applied to whichever volume the orthoslices show; follows switches
+if (FA_URL) await nv.loadVolumes([{ url: FA_URL, colormap: dwiCmap, opacity: 1 }])
+nv.setSliceType(nv.sliceTypeMultiplanar)
+nv.setRadiologicalConvention(true)
+nv.setCrosshairColor(ACCENT_YELLOW_RGBA)
+nv.setCrosshairWidth(0.5)
+// Right-drag brightness/contrast — same gesture override as the main tab's
+// orthoslices: NiiVue's default right-button gesture draws a box and
+// auto-windows to it, instead of the up/down=level, left/right=width drag
+// every other neuroimaging viewer uses.
+nv.setMouseEventConfig({ rightButton: niivue.DRAG_MODE.windowing })
+// windowingGainFactor is intensity-units-per-pixel-dragged, NOT a fraction of
+// the volume's range — NiiVue adds pixelsDragged*gainFactor straight onto
+// cal_min/cal_max in the volume's own native units (global_min/global_max
+// only clamp the result afterward, they don't scale the gain). So copying the
+// main tab's flat 0.4 here is wrong: brain.nii.gz is FreeSurfer-normalized to
+// roughly 0-255, but FA is bounded to roughly 0-1 by definition — the same
+// absolute 0.4/pixel blows past FA's entire range in ~2 pixels of drag.
+// Scale by this volume's own reported range instead, calibrated to the same
+// 0.4-per-~255-range rate the main tab uses, so the two tabs feel the same
+// regardless of what units the loaded volume happens to be in. Recalculated
+// on every volume switch (see showVolume below) since a newly-loaded volume
+// can have a completely different range.
+function calibrateWindowingGain() {
+  const bg = nv.volumes[0]
+  if (!bg) return
+  const RANGE_FRACTION_PER_PIXEL = 0.4 / 255   // main tab's calibration, as a fraction of range
+  const range = (bg.global_max ?? 1) - (bg.global_min ?? 0)
+  nv.opts.windowingGainFactor = RANGE_FRACTION_PER_PIXEL * range
+}
+calibrateWindowingGain()
+
+// ── colormap + color-clip controls, kept in sync with the built-in colorbar ──
+// Same pattern as the main tab's volCmapSel/volClipMin/volClipMax: NiiVue's
+// own colorbar (isColorbar above) redraws itself from cal_min/cal_max/colormap,
+// so these controls just read/write those three fields and it follows along.
+// Declared at top level (not nested in an if-block) so showVolume() below can
+// call them too — a function declared inside a block is block-scoped in a
+// module, invisible outside it.
+const cmapSel = document.getElementById('dwiCmapSel')
+const clipMin = document.getElementById('dwiClipMin')
+const clipMax = document.getElementById('dwiClipMax')
+function syncClipInputs() {
+  const bg = nv.volumes[0]
+  if (!bg) return
+  clipMin.value = (+bg.cal_min).toPrecision(4)
+  clipMax.value = (+bg.cal_max).toPrecision(4)
+}
+function applyClip() {
+  const bg = nv.volumes[0]
+  if (!bg) return
+  const mn = parseFloat(clipMin.value), mx = parseFloat(clipMax.value)
+  if (!isFinite(mn) || !isFinite(mx) || mx <= mn) { syncClipInputs(); return }   // ignore invalid, restore
+  bg.cal_min = mn; bg.cal_max = mx
+  nv.updateGLVolume(); nv.drawScene()
+}
+clipMin.addEventListener('change', applyClip)
+clipMax.addEventListener('change', applyClip)
+if (nv.volumes.length) {
+  const cmaps = (nv.colormaps ? nv.colormaps() : ['gray']).filter(n => !/^ct[-_]/i.test(n)).sort()
+  cmapSel.innerHTML = cmaps.map(n =>
+    `<option value="${n}"${n === dwiCmap ? ' selected' : ''}>${n}</option>`).join('')
+  cmapSel.addEventListener('change', () => {
+    dwiCmap = cmapSel.value
+    const bg = nv.volumes[0]
+    if (bg) { bg.colormap = dwiCmap; nv.updateGLVolume(); nv.drawScene() }
+  })
+  syncClipInputs()
+  // Right-drag windowing changes cal_min/cal_max inside NiiVue directly (the
+  // colorbar updates itself); mirror that range into the boxes too, same as
+  // the main tab's nvSlices.onIntensityChange -> syncVolClipInputs.
+  nv.onIntensityChange = () => syncClipInputs()
+} else {
+  cmapSel.disabled = true
+  clipMin.disabled = true
+  clipMax.disabled = true
+}
+
+// ── orthoslice volume selector ────────────────────────────────────────────
+// Same registry pattern as the main tab's volSel/volFile/showVolume: each
+// option is decoded+uploaded once on first selection, then kept resident (as
+// a hidden, zero-opacity volume) so switching back to it later is instant.
+const volSel  = document.getElementById('dwiVolSel')
+const volFile = document.getElementById('dwiVolFile')
+const volumeRegistry = {}   // key -> { name, url?|file?, blobUrl?, image?(NVImage) }
+let currentVolKey = null
+let volSeq = 0
+
+function addVolumeOption(desc, select) {
+  const key = 'vol' + (volSeq++)
+  volumeRegistry[key] = desc
+  const opt = document.createElement('option')
+  opt.value = key
+  opt.textContent = desc.name
+  volSel.insertBefore(opt, volSel.querySelector('option[value="__other__"]'))
+  if (select) volSel.value = key
+  return key
+}
+
+async function showVolume(key) {
+  const desc = volumeRegistry[key]
+  if (!desc) return
+  if (key === currentVolKey && desc.image) return   // already displayed — nothing to do
+
+  // Preserve the crosshair in world mm across the switch.
+  let mm = null
+  if (nv.volumes.length) {
+    try { mm = nv.frac2mm([...nv.scene.crosshairPos]) } catch (e) {}
+  }
+
+  // First selection of this volume: decode + upload once, then keep it resident.
+  if (!desc.image) {
+    const item = { colormap: dwiCmap, opacity: 1 }
+    if (desc.url) {
+      item.url = desc.url
+    } else if (desc.file) {
+      if (!desc.blobUrl) desc.blobUrl = URL.createObjectURL(desc.file)
+      item.url  = desc.blobUrl
+      item.name = desc.file.name   // blob URLs carry no extension; let NiiVue infer the format
+    }
+    try {
+      await nv.addVolumeFromUrl(item)   // add without dropping the resident volumes
+    } catch (e) {
+      console.warn('[volume] failed to load', desc.name, e)
+      alert('Could not load volume: ' + desc.name)
+      return
+    }
+    desc.image = nv.volumes[nv.volumes.length - 1]
+  }
+
+  desc.image.colormap = dwiCmap   // colormap follows the shown volume
+  // Show only the chosen volume's pixels AND its colorbar; resident volumes
+  // keep their own colormap but their colorbars stay hidden so they don't pile up.
+  for (const v of nv.volumes) {
+    const shown = (v === desc.image)
+    v.opacity = shown ? 1 : 0
+    v.colorbarVisible = shown
+  }
+  if (nv.volumes[0] !== desc.image) nv.setVolume(desc.image, 0)
+  else nv.updateGLVolume()
+
+  currentVolKey = key
+  volSel.value = key
+  nv.setCrosshairColor(ACCENT_YELLOW_RGBA)
+  nv.setCrosshairWidth(0.5)
+  if (mm) {
+    const frac = nv.mm2frac([mm[0], mm[1], mm[2]])
+    if (frac) nv.scene.crosshairPos = [...frac]
+  }
+  if (typeof nv.createOnLocationChange === 'function') nv.createOnLocationChange()
+  nv.drawScene()
+  syncClipInputs()
+  calibrateWindowingGain()   // the new volume can have a totally different intensity range
+}
+
+// Seed the dropdown: the already-loaded FA map (if any) links directly to its
+// resident NVImage rather than re-adding it, then "other…" for arbitrary files.
+if (FA_URL) {
+  const img = nv.volumes[0] || null
+  currentVolKey = addVolumeOption({ name: 'fa.nii.gz', url: FA_URL, image: img }, true)
+}
+{
+  const other = document.createElement('option')
+  other.value = '__other__'
+  other.textContent = 'other…'
+  volSel.appendChild(other)
+}
+
+volSel.addEventListener('change', () => {
+  if (volSel.value === '__other__') {
+    volSel.value = currentVolKey ?? ''   // revert; the real switch commits once a file is picked
+    volFile.click()
+    return
+  }
+  showVolume(volSel.value)
+})
+volFile.addEventListener('change', () => {
+  const file = volFile.files && volFile.files[0]
+  volFile.value = ''   // reset so the same file can be re-picked later
+  if (!file) return
+  showVolume(addVolumeOption({ name: file.name, file }, true))
+})
+
+// Show the nth loaded orthoslice volume (1-based), in dropdown order; 0 opens
+// the "other…" file picker. Same shortcuts as the main tab's orthoslices.
+function showVolumeByIndex(n) {
+  const opts = [...volSel.options].filter(o => o.value !== '__other__')
+  if (opts[n - 1]) showVolume(opts[n - 1].value)
+}
+document.addEventListener('keydown', e => {
+  const t = e.target
+  if (t && (t.tagName === 'INPUT' || t.tagName === 'SELECT' ||
+            t.tagName === 'TEXTAREA' || t.isContentEditable)) return
+  if (e.ctrlKey || e.metaKey || e.altKey) return
+  switch (e.key) {
+    case '1': case '2': case '3': case '4': case '5':
+    case '6': case '7': case '8': case '9':
+      showVolumeByIndex(+e.key); e.preventDefault(); break
+    case '0': volFile.click(); e.preventDefault(); break
+  }
+})
+
+// Same per-hemisphere accent colors as the main tab's Streamlines overlay.
+const streamMeshes = {}
+const [lhMesh, rhMesh] = await Promise.all([
+  STREAMLINES.lh ? niivue.NVMesh.loadFromUrl({ url: STREAMLINES.lh, gl: nv.gl, rgba255: [102, 179, 255, 255] }) : null,
+  STREAMLINES.rh ? niivue.NVMesh.loadFromUrl({ url: STREAMLINES.rh, gl: nv.gl, rgba255: [255, 133, 77, 255] }) : null,
+])
+for (const m of [lhMesh, rhMesh]) if (m) nv.addMesh(m)
+streamMeshes.lh = lhMesh
+streamMeshes.rh = rhMesh
+
+let streamVisible = true       // "Streamlines: on/off" button
+let streamMode = 'selected'    // 'selected' | 'all' — "Mode" button
+let lastVertices = null        // most recent neighbor-ring set from the main tab (null until first sync)
+
+// Same dps/dpsThreshold selection trick as the main tab's Streamlines section
+// (see cortical_browser.py's setStreamlineSelection): flag the given vertex
+// IDs' streamlines and threshold everything else out, rather than replacing
+// the whole tractogram. Takes an array so "Selected vertex" mode can show the
+// synced neighbor-ring set, not just the single primary vertex.
+function setStreamlineSelection(mesh, vertexIds) {
+  if (!mesh?.offsetPt0) return
+  const n = mesh.offsetPt0.length - 1
+  const flags = new Float32Array(n)
+  for (const v of vertexIds) if (v >= 0 && v < n) flags[v] = 1
+  mesh.dps = [{ id: 'vertex-selection', vals: flags }]
+  nv.setMeshProperty(mesh.id, 'dpsThreshold', 0.5)
+}
+function showAllStreamlines() {
+  for (const m of [streamMeshes.lh, streamMeshes.rh]) if (m) nv.setMeshProperty(m.id, 'dpsThreshold', NaN)
+}
+function applyStreamlineVisibility() {
+  const op = streamVisible ? 1 : 0
+  for (const m of [streamMeshes.lh, streamMeshes.rh]) if (m) nv.setMeshProperty(m.id, 'opacity', op)
+  nv.drawScene()
+}
+// Re-applied whenever the mode button is clicked locally, or a fresh sync
+// message arrives — mirrors the main tab's applyStreamlineSelection().
+function applyStreamlineDisplay() {
+  if (streamMode === 'all' || !lastVertices) showAllStreamlines()
+  else {
+    setStreamlineSelection(streamMeshes.lh, lastVertices)
+    setStreamlineSelection(streamMeshes.rh, lastVertices)
+  }
+}
+
+// The DWI-space streamlines are the exact warp target of the T1-space ones
+// loaded in the main tab: point i of streamline v here IS the DWI-space
+// location of point i of streamline v there. So a (vertex, depth) pair
+// selected in T1 space indexes directly into this mesh's own pts/offsetPt0 —
+// no coordinate transform needed, just the same lookup the main tab's
+// streamline-selection feature already does.
+function placeCrosshairAtStreamlinePoint(mesh, vertex, depth) {
+  if (!mesh?.offsetPt0 || !nv.volumes.length) return null
+  const start = mesh.offsetPt0[vertex]
+  const end   = mesh.offsetPt0[vertex + 1]
+  if (start === undefined || end === undefined || end <= start) return null
+  const idx = start + Math.max(0, Math.min(end - start - 1, depth))
+  const xyz = [mesh.pts[idx * 3], mesh.pts[idx * 3 + 1], mesh.pts[idx * 3 + 2]]
+  const frac = nv.mm2frac(xyz)
+  if (!frac) return null
+  nv.scene.crosshairPos = [...frac]
+  if (typeof nv.createOnLocationChange === 'function') nv.createOnLocationChange()
+  nv.drawScene()
+  return xyz
+}
+
+const dwiChannel = ('BroadcastChannel' in window) ? new BroadcastChannel('cortical-browser-dwi-crosshair') : null
+if (dwiChannel) {
+  dwiChannel.onmessage = ev => {
+    const { vertex, vertices, depth, hemi } = ev.data || {}
+    if (!Number.isInteger(vertex)) return
+    lastVertices = Array.isArray(vertices) && vertices.length ? vertices : [vertex]
+    const primary = (hemi === 'rh' ? streamMeshes.rh : streamMeshes.lh) || streamMeshes.lh || streamMeshes.rh
+    const xyz = primary ? placeCrosshairAtStreamlinePoint(primary, vertex, depth || 0) : null
+    applyStreamlineDisplay()
+    statusEl.textContent = xyz
+      ? `vertex ${vertex} (${hemi || 'lh'}) · depth ${((depth || 0) * STEP_MM).toFixed(1)} mm · ${xyz[0].toFixed(1)},${xyz[1].toFixed(1)},${xyz[2].toFixed(1)} mm`
+      : `vertex ${vertex}: no streamline point at that depth`
+  }
+} else {
+  statusEl.textContent = "this browser doesn't support BroadcastChannel — can't sync with the main tab"
+}
+
+// ── streamline show/hide + all-vs-selected buttons ───────────────────────────
+{
+  const visBtn  = document.getElementById('dwiStreamVisBtn')
+  const modeBtn = document.getElementById('dwiStreamModeBtn')
+  if (!streamMeshes.lh && !streamMeshes.rh) {
+    visBtn.disabled = true
+    modeBtn.disabled = true
+    visBtn.title = modeBtn.title = 'No DWI-space streamlines found for this subject'
+  } else {
+    visBtn.addEventListener('click', () => {
+      streamVisible = !streamVisible
+      visBtn.textContent = `Streamlines: ${streamVisible ? 'on' : 'off'}`
+      applyStreamlineVisibility()
+    })
+    modeBtn.addEventListener('click', () => {
+      streamMode = streamMode === 'selected' ? 'all' : 'selected'
+      modeBtn.textContent = `Mode: ${streamMode}`
+      applyStreamlineDisplay()
+    })
+  }
+}
+</script>
+</body>
+</html>
+"""
+
 
 # ── file discovery ─────────────────────────────────────────────────────────────
 
@@ -2481,12 +2920,38 @@ STREAMLINE_FILENAMES = {
 
 def find_streamline_files(subj_dir):
     """Locate the per-hemisphere Laplace white-matter streamlines
-    (.tck, in DWI space) under mri/, if present. Returns {'lh': path, 'rh': path},
+    (.tck, in T1 space) under mri/, if present. Returns {'lh': path, 'rh': path},
     only including hemispheres whose file actually exists."""
     mri_dir = os.path.join(subj_dir, 'mri')
     result = {}
     for hemi, fname in STREAMLINE_FILENAMES.items():
         p = os.path.join(mri_dir, fname)
+        if os.path.isfile(p):
+            result[hemi] = p
+    return result
+
+
+DWI_STREAMLINE_FILENAMES = {
+    'lh': 'lh_ico6_sym_laplace-wm-streamlines_dwispace.tck',
+    'rh': 'rh_ico6_sym_laplace-wm-streamlines_dwispace.tck',
+}
+
+
+def find_dwi_files(subj_dir):
+    """Locate the DWI-space FA map and its corresponding per-hemisphere
+    streamlines under dwi/. These are the same streamlines as
+    STREAMLINE_FILENAMES pre-warp: point index i of streamline v here is the
+    DWI-space location of point i of streamline v in the T1-space file, so a
+    (vertex, depth) pair already selected in T1 space locates directly into
+    these files with no separate transform. Returns {'fa': path, 'lh': path,
+    'rh': path}, omitting any that are missing."""
+    dwi_dir = os.path.join(subj_dir, 'dwi')
+    result = {}
+    fa_path = os.path.join(dwi_dir, 'fa.nii.gz')
+    if os.path.isfile(fa_path):
+        result['fa'] = fa_path
+    for hemi, fname in DWI_STREAMLINE_FILENAMES.items():
+        p = os.path.join(dwi_dir, fname)
         if os.path.isfile(p):
             result[hemi] = p
     return result
@@ -2899,7 +3364,8 @@ def compute_multivariate(subjects_dir, tsf_metrics, subj_cache, vertices,
 # ── HTML generation ───────────────────────────────────────────────────────────
 
 def make_html(subj_id, vol_path, lh_path, rh_path, overlay_info, port, surf_types=None,
-              normative_info=None, template=TEMPLATE, cache_bust='', streamline_files=None):
+              normative_info=None, template=TEMPLATE, cache_bust='', streamline_files=None,
+              dwi_available=False):
     base = f'http://localhost:{port}/data'
     # The /data/ files are served immutable (see _reply), and their URLs depend
     # only on hemi/template/metric — NOT the subject. Two subjects on the same
@@ -2948,6 +3414,7 @@ def make_html(subj_id, vol_path, lh_path, rh_path, overlay_info, port, surf_type
         ('__SURFS_JSON__',     json.dumps(surfs)),
         ('__SURF_TYPES_JSON__', json.dumps(surf_types_urls)),
         ('__STREAMLINES_JSON__',     json.dumps(streamlines_urls)),
+        ('__DWI_AVAILABLE_JSON__', json.dumps(bool(dwi_available))),
         ('__NORMATIVE_JSON__', json.dumps(normative_info or {})),
         ('__METRICS_JSON__',   json.dumps(overlay_info)),
         ('__BASE_URL__',       base),
@@ -2963,11 +3430,33 @@ def make_html(subj_id, vol_path, lh_path, rh_path, overlay_info, port, surf_type
     return html
 
 
+def make_dwi_html(subj_id, dwi_files, port, cache_bust=''):
+    """Build the companion DWI-space page: FA map + the DWI-space streamlines,
+    synced to the main tab's vertex/depth selection via BroadcastChannel."""
+    base = f'http://localhost:{port}/data'
+    q = f'?v={cache_bust}' if cache_bust else ''
+    fa_path = dwi_files.get('fa')
+    fa_url = f'{base}/{os.path.basename(fa_path)}{q}' if fa_path else ''
+    streamlines_urls = {hemi: f'{base}/{os.path.basename(p)}{q}'
+                         for hemi, p in dwi_files.items() if hemi in ('lh', 'rh')}
+
+    html = _DWI_HTML
+    for k, v in [
+        ('__SUBJ_ID__',        subj_id),
+        ('__NIIVUE_CDN__',     NIIVUE_CDN),
+        ('__FA_URL__',         fa_url),
+        ('__STREAMLINES_JSON__', json.dumps(streamlines_urls)),
+        ('__STEP_MM__',        str(STEP_MM)),
+    ]:
+        html = html.replace(k, v)
+    return html
+
+
 # ── HTTP server ───────────────────────────────────────────────────────────────
 
 def make_handler(html_bytes, file_map, overlay_arrays, materialized, out_dir,
                   subjects_dir=None, normative_materialized=None, template=TEMPLATE,
-                  tsf_metrics=None):
+                  tsf_metrics=None, dwi_html_bytes=None):
     # Session cache of the subject's NaN-masked per-metric matrices, populated
     # lazily on the first /mahal request and reused across vertices.
     mv_subject_cache = {}
@@ -2986,6 +3475,12 @@ def make_handler(html_bytes, file_map, overlay_arrays, materialized, out_dir,
             path = self.path.split('?')[0]
             if path in ('/', '/index.html'):
                 self._reply(200, 'text/html; charset=utf-8', html_bytes)
+                return
+            if path == '/dwi':
+                if dwi_html_bytes:
+                    self._reply(200, 'text/html; charset=utf-8', dwi_html_bytes)
+                else:
+                    self._reply(404, 'text/plain', b'DWI space not available for this subject\n')
                 return
             if path == '/mahal':
                 self._serve_mahal()
@@ -3109,6 +3604,9 @@ def main():
     streamline_files = find_streamline_files(subj_dir)
     print(f'Streamlines: {list(streamline_files) or "none"}')
 
+    dwi_files = find_dwi_files(subj_dir)
+    print(f'DWI space: {list(dwi_files) or "none"}')
+
     out_dir = tempfile.mkdtemp(prefix='cortical_browser_')
     # Materialized overlays/matrices live here for the session only; mkdtemp
     # doesn't self-clean, so remove it on any graceful exit (normal quit or the
@@ -3130,6 +3628,8 @@ def main():
         for p in hemis.values():
             file_map[f'/data/{os.path.basename(p)}'] = p
     for p in streamline_files.values():
+        file_map[f'/data/{os.path.basename(p)}'] = p
+    for p in dwi_files.values():
         file_map[f'/data/{os.path.basename(p)}'] = p
 
     materialized = set()
@@ -3153,11 +3653,17 @@ def main():
         args.subj_id, vol_path, lh_path, rh_path,
         overlay_info, args.port, surf_types, normative_info,
         cache_bust=cache_bust, streamline_files=streamline_files,
+        dwi_available=bool(dwi_files.get('fa')),
     ).encode('utf-8')
+    dwi_html_bytes = (
+        make_dwi_html(args.subj_id, dwi_files, args.port, cache_bust=cache_bust).encode('utf-8')
+        if dwi_files.get('fa') else None
+    )
 
     server = HTTPServer(('localhost', args.port),
         make_handler(html_bytes, file_map, overlay_arrays, materialized, out_dir,
-                      args.subjects_dir, normative_materialized, tsf_metrics=tsf_metrics))
+                      args.subjects_dir, normative_materialized, tsf_metrics=tsf_metrics,
+                      dwi_html_bytes=dwi_html_bytes))
     url    = f'http://localhost:{args.port}/'
     print(f'\nBrowser  : {url}')
     print('Ctrl+C to quit.\n')

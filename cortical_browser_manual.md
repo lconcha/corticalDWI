@@ -4,7 +4,8 @@
 depth‑profile data. It starts a small local web server and opens a page in your browser
 showing bilateral hemisphere surfaces with overlay metrics, a multiplanar MRI orthoslice
 view, per‑hemisphere depth‑profile charts, and a multivariate (Mahalanobis / z‑score)
-explorer that compares a subject against a precomputed normative cohort.
+explorer that compares a subject against a precomputed normative cohort. Depth from the pial
+surface is obtained through pre-computed streamlines that integrate a Laplacian field.
 
 It is the successor to the MATLAB `cortical_browser_2.m`; this manual covers the Python
 version.
@@ -61,9 +62,15 @@ copies.
 │   └── surf/                             # shared average surfaces (optional)
 └── <subject_id>/
     ├── mri/    brain.nii.gz | brain.nii | brain.mgz   # background volume (optional)
+    │           {lh,rh}_ico6_sym_laplace-wm-streamlines.tck   # T1-space streamlines (optional)
     ├── surf/   {lh,rh}_white_<TEMPLATE>.surf.gii, …_inflated, pial, …
     └── dwi/    {lh,rh}_<TEMPLATE>_<metric>.tsf   (also found in sub-folders)
+                fa.nii.gz                                          # DWI-space FA map (optional)
+                {lh,rh}_ico6_sym_laplace-wm-streamlines_dwispace.tck  # DWI-space streamlines (optional)
 ```
+
+The last three are all optional — without them, the browser still runs, just without the
+**Streamlines** panel and/or **Open DWI space** button (see *Streamlines* and *DWI space*).
 
 > :heavy_exclamation_mark: Vertex indices in this browser are **0‑based**.
 
@@ -165,10 +172,15 @@ toggle with **Rad**.
 | **Rad** | Radiological vs neurological orthoslice orientation |
 | **X‑hair** | Show/hide the orthoslice crosshair |
 | **WM** / **pial** | Overlay white‑matter / pial surface contours on the orthoslices (loaded on first use) |
+| **3D cutaway** / **Invert** | Carve the octant nearest the crosshair out of the orthoslice viewer's 3‑D volume render, revealing the three slice surfaces in 3‑D (shortcut `c`); **Invert** removes the opposite octant instead (see *Orthoslice volume*) |
 | **Volume** | Choose which volume the orthoslices show; **other…** opens a file picker to load an extra volume (see *Orthoslice volume*) |
 | **cmap** | Colormap for the orthoslice volume (a colorbar is drawn on the ortho view) |
 | **clip** min / max / **Auto** | Clip the orthoslice color range; **Auto** restores the volume's default window |
 | **Interp** | Smooth (linear) vs nearest‑neighbor orthoslice interpolation (shortcut `i`) |
+| **Load streamlines** / **Show** | Load and show/hide the white‑matter Laplacian streamlines overlay (see *Streamlines*) |
+| **Streamlines: Selected vertex / All** | Show only the streamline(s) seeded from the selected vertex/rings, or every streamline |
+| **Color: Direction / Custom** | Color streamlines by local direction, or a single fixed color |
+| **Open DWI space** | Open the subject's diffusion‑space data in a linked companion tab (see *DWI space*) |
 | **Vertex** | Jump to a vertex by index (0‑based) |
 | **Rings** | Number of neighbor rings to aggregate around the selected vertex |
 | **Pivot@vertex** | Orbit the 3‑D surfaces around the selected vertex instead of the whole‑brain center |
@@ -213,6 +225,94 @@ volume is **appended to the dropdown**, so you can switch back and forth between
 - **Interp** (or the `i` shortcut) toggles between smooth (linear) and nearest‑neighbor
   display.
 
+### 3‑D cutaway
+
+The orthoslice viewer's 3‑D panel normally renders the whole volume as an opaque block.
+**3D cutaway** (shortcut `c`) instead carves away the one octant nearest the crosshair,
+opening the render up to reveal the three orthogonal slice surfaces in 3‑D context — closer
+to the "corner view" most neuroimaging viewers show, rather than a full opaque render.
+**Invert** flips which octant gets removed. The cutaway follows the crosshair live as you
+move it.
+
+---
+
+## Streamlines
+
+The **Streamlines** panel loads the subject's white‑matter Laplacian streamlines 
+(`mri/{lh,rh}_ico6_sym_laplace-wm-streamlines.tck`, T1 space) and overlays it on the
+orthoslices. Streamlines are stored **one per vertex**, on the same surface template used
+everywhere else in the browser — streamline index *v* is the pathway seeded from vertex *v*.
+That correspondence is also what makes the DWI‑space linking below possible.
+
+- **Load streamlines** fetches the LH/RH files (lazily, on first click) and overlays them —
+  colored by local direction by default.
+- **Show** hides/shows the overlay without discarding it.
+- **Streamlines: Selected vertex / All** — in *Selected vertex* mode, only the streamline(s)
+  seeded from the currently selected vertex (and its neighbor rings, if **Rings** > 0) are
+  drawn; *All* shows all the Laplacian streamlines regardless of selection. Picking a vertex or
+  changing **Rings** updates the *Selected vertex* set immediately.
+- **Color: Direction / Custom** switches between direction‑coded coloring and a single
+  user‑picked color.
+
+> :information_source: Streamlines render **only on the orthoslices**, not on the 3‑D surface
+> panels.
+
+---
+
+## DWI space
+
+**Open DWI space** launches a second, linked browser tab showing the subject's diffusion
+data — the FA map (`dwi/fa.nii.gz`) by default — as its own multiplanar orthoslice viewer,
+with the corresponding **DWI‑space** streamlines
+(`dwi/{lh,rh}_ico6_sym_laplace-wm-streamlines_dwispace.tck`) overlaid. Unlike the main tab,
+its 3‑D panel is always off — just the three orthogonal slices.
+
+### Streamline position linking
+
+The DWI‑space streamlines are the exact warp target of the T1‑space ones in the main tab:
+point *i* along streamline *v* in the DWI file **is** the diffusion‑space location of point
+*i* along streamline *v* in the T1 file. Since a selected vertex plus the current **Depth**
+already picks out a specific point along a specific streamline in the main tab, that same
+(vertex, depth) pair locates a point in DWI space directly — no separate registration or
+transform step. Practically, this means:
+
+- Selecting a vertex, or moving the **Depth** slider, in the **main (T1‑space) tab**
+  instantly moves the crosshair in the **DWI‑space tab**, if it's open — the two tabs sync
+  live over the browser's own cross‑tab messaging, no server round‑trip.
+- The DWI tab's status line reports the vertex, depth, hemisphere, and resulting DWI‑space
+  coordinate for the most recent sync.
+- The DWI tab has its own **Streamlines: on/off** and **Mode: selected/all** buttons,
+  independent of the main tab's — *selected* mode highlights the same vertex/ring set just
+  synced from the main tab.
+
+> :heavy_exclamation_mark: The DWI tab must already be open for a selection to reach it — open
+> it once with **Open DWI space**; repeat clicks refocus the same tab rather than opening more.
+
+### Loading DWI‑derived maps
+
+The DWI tab has its own **Volume** dropdown, working exactly like the main tab's: it starts
+with just `fa.nii.gz`, and its **other…** entry opens a file picker to load any additional
+NIfTI/MGZ volume from disk — an MD map, an AD map, a fixel‑derived metric converted to
+NIfTI, another subject's registered FA, anything. **There is no limit on how many volumes you
+can add** — each one loaded is appended to the dropdown, exactly as in the main tab, so you
+can build up as many DWI‑derived maps as you like and switch between them freely. Switching
+back to an already‑loaded volume is instant (each is decoded once and kept resident), and the
+crosshair position is preserved across switches.
+
+- **cmap**, **min** / **max** control the colormap and clipped color range of whichever
+  volume is currently shown (a colorbar is drawn on the view), exactly as in the main tab.
+- Right‑drag adjusts window/level interactively, calibrated to feel the same as the main
+  tab's orthoslices regardless of the loaded volume's intensity range (an FA map's 0–1 range
+  and a T1's much wider range both feel the same to drag).
+
+| Key | Action |
+| --- | --- |
+| `1`–`9` | Show the *n*th loaded volume, in dropdown order |
+| `0` | Open the file picker to load a new volume |
+
+These shortcuts are independent of the main tab's own `1`–`9`/`0` — each tab tracks its own
+loaded volumes.
+
 ---
 
 ## Depth‑profile plots
@@ -248,7 +348,8 @@ the panels read "no cohort data".
 
 Shortcuts are handled by a global key listener and are **ignored while typing in a text
 field or dropdown** (Vertex, Rings, colour‑limit inputs, selectors), so those controls keep
-working normally.
+working normally. This section covers the **main (T1‑space) tab**; the **DWI‑space tab** has
+its own smaller, independent set (see *DWI space*).
 
 ### Views & display
 | Key | Action |
@@ -257,6 +358,7 @@ working normally.
 | `x` | Toggle the orthoslice crosshair on/off (mirrors the **X‑hair** checkbox). |
 | `p` | Toggle **Pivot@vertex** — orbit the 3‑D surfaces around the selected vertex vs. the whole‑brain centre. |
 | `i` | Toggle orthoslice interpolation — smooth (linear) vs nearest‑neighbor (mirrors the **Interp** checkbox). |
+| `c` | Toggle **3D cutaway** in the orthoslice viewer's 3‑D panel (mirrors the **3D cutaway** checkbox). |
 
 ### Orthoslice navigation (moves the crosshair one voxel)
 | Key | Plane | Direction |
