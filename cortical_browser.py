@@ -218,6 +218,13 @@ canvas.nv-canvas { display: block; width: 100% !important; height: 100% !importa
       <label>Rings <input type="number" id="ringsInput" min="0" step="1" value="0" title="Neighbor rings to average around the selected vertex"></label>
     </div>
     <div class="ctl-row">
+      <button class="cbtn" id="loadVertexIdsBtn" title="Load a .txt file of vertex indices (one per line). While loaded, this set replaces interactive vertex/rings selection everywhere — plots, streamlines, and the DWI-space link.">Load vertex IDs</button>
+      <button class="cbtn" id="saveVertexIdsBtn" title="Save the current selection (however it was made) as a .txt file, one vertex ID per line — the same format Load vertex IDs reads">Save vertex IDs</button>
+      <button class="cbtn" id="unloadVertexIdsBtn" disabled title="Discard the loaded vertex ID list and return to interactive click/Vertex/Rings selection">Unload vertex IDs</button>
+    </div>
+    <input type="file" id="vertexIdsFile" accept=".txt" style="display:none">
+    <div class="ctl-row"><span id="vertexIdsStatus" class="glab"></span></div>
+    <div class="ctl-row">
       <label><input type="checkbox" id="pivotAtVertexChk"> Pivot@vertex</label>
       <button class="cbtn" id="resetPivotBtn" title="Reset 3D view rotation pivot to the whole-brain center">Reset pivot</button>
     </div>
@@ -741,7 +748,7 @@ function applyStreamlineSelection() {
   if (mode === 'all' || currentVertex === null) {
     showAllStreamlines()
   } else {
-    setStreamlineSelection(neighborRings(currentVertex, nRings))
+    setStreamlineSelection(selectedVertices)
   }
 }
 
@@ -1374,22 +1381,36 @@ document.getElementById('contourPialChk').addEventListener('change', function() 
 // ── DWI-space companion tab ───────────────────────────────────────────────────
 // "Open DWI space" launches /dwi (FA map + DWI-space streamlines, no sidebar —
 // see make_dwi_html) in a second tab, then keeps its crosshair following this
-// tab's vertex/depth selection over BroadcastChannel. One-way (T1 tab → DWI
-// tab) and same-origin/same-browser only, so no server round-trip is needed;
-// the DWI tab does its own vertex→point lookup once it receives a message
-// (see placeCrosshairAtStreamlinePoint in _DWI_HTML — the DWI-space
+// tab's vertex/depth selection over BroadcastChannel. Mostly one-way (T1 tab →
+// DWI tab) and same-origin/same-browser only, so no server round-trip is
+// needed; the DWI tab does its own vertex→point lookup once it receives a
+// message (see placeCrosshairAtStreamlinePoint in _DWI_HTML — the DWI-space
 // streamlines are the literal warp target of the ones here, so a (vertex,
 // depth) pair indexes directly into that tab's own streamline points).
 const dwiChannel = ('BroadcastChannel' in window) ? new BroadcastChannel('cortical-browser-dwi-crosshair') : null
+// The one message that flows the other way: a freshly-opened DWI tab needs
+// several awaits (fetch its page, load NiiVue from the CDN, load the FA
+// volume and streamlines) before it's even listening. A broadcast fired right
+// after window.open() below routinely beats that — BroadcastChannel doesn't
+// queue messages for listeners that don't exist yet, so it's just lost. The
+// DWI tab announces "dwi-ready" once its own listener is actually live; this
+// re-sends the current selection in response, instead of guessing at timing.
+if (dwiChannel) {
+  dwiChannel.onmessage = ev => {
+    if (ev.data?.type === 'dwi-ready') broadcastDwiCrosshair()
+  }
+}
 let currentHemi = 'lh'   // hemisphere of the most recently selected vertex
 function broadcastDwiCrosshair() {
   if (!dwiChannel || currentVertex === null) return
   // vertex is the crosshair anchor (always a single point); vertices is the
-  // same neighbor-ring set the main tab's own "Selected vertex" streamline
-  // filter uses (see setStreamlineSelection/applyStreamlineSelection above),
-  // so the DWI tab's "Selected vertex" mode highlights the identical set.
+  // exact same selectedVertices array the main tab's own "Selected vertex"
+  // streamline filter uses, so the DWI tab's "Selected vertex" mode
+  // highlights the identical set — including a loaded vertex-ID list, if one
+  // is active. Read from the cache rather than recomputed, so what's
+  // broadcast can never drift from what selectVertex() actually applied.
   dwiChannel.postMessage({
-    vertex: currentVertex, vertices: neighborRings(currentVertex, nRings),
+    vertex: currentVertex, vertices: selectedVertices,
     depth: currentDepth, hemi: currentHemi,
   })
 }
@@ -1542,6 +1563,54 @@ function neighborRings(v, rings) {
     frontier = next
   }
   return Array.from(visited)
+}
+
+// ── loaded vertex-ID list (supersedes interactive vertex/rings selection) ────
+// When a .txt file is loaded via "Load vertex IDs", this array replaces the
+// vertex set everywhere a selection currently feeds into (depth-profile
+// aggregation, multivariate stats, streamline "Selected vertex" mode, and the
+// DWI-space link) — see currentRingSet() below. Rings is bypassed entirely in
+// this mode: the set is exactly the loaded IDs, not further expanded.
+let loadedVertexIds = null
+
+// Returns the vertex set to aggregate over for vertIdx: the loaded list if one
+// is active, otherwise the normal neighbor-ring expansion. Pure/stateless —
+// selectVertex() below is the only place that calls this and caches the
+// result into selectedVertices.
+function currentRingSet(vertIdx) {
+  return loadedVertexIds || neighborRings(vertIdx, nRings)
+}
+
+// ── the current selection, exposed as one array regardless of how it was
+// made (a single click, click+Rings, or a loaded vertex-ID list) ─────────────
+// selectVertex() is the sole writer, right after it computes ringSet via
+// currentRingSet(). Everything that needs "what's selected right now" —
+// streamline filtering, the DWI-space broadcast, and the dump helpers below —
+// reads this instead of recomputing it, so there's exactly one place selection
+// state can get out of sync with what's actually on screen.
+let selectedVertices = []
+
+// Log the current selection to the browser devtools console. Also reachable
+// as window.dumpSelectedVertices() from the console directly.
+function dumpSelectedVertices() {
+  console.log(`[selection] ${selectedVertices.length} vertex ID(s):`, selectedVertices)
+  return selectedVertices
+}
+window.dumpSelectedVertices = dumpSelectedVertices
+
+// Download the current selection as a .txt file — one vertex ID per line,
+// the exact format "Load vertex IDs" reads back in, so a selection can be
+// round-tripped (export, edit externally, re-import) or archived.
+function downloadSelectedVertices() {
+  if (!selectedVertices.length) { alert('No vertex selected'); return }
+  const subj = document.querySelector('.subj')?.textContent || 'subject'
+  const blob = new Blob([selectedVertices.join('\n') + '\n'], { type: 'text/plain' })
+  const url  = URL.createObjectURL(blob)
+  const a    = document.createElement('a')
+  a.href = url
+  a.download = `${subj}_vertex_selection.txt`
+  a.click()
+  URL.revokeObjectURL(url)
 }
 
 // ── per-vertex surface area (mirrors FreeSurfer's ?h.area: each triangle's
@@ -1765,7 +1834,8 @@ async function selectVertex(vertIdx, nvInst) {
     }
   }
 
-  const ringSet     = neighborRings(vertIdx, nRings)
+  selectedVertices  = currentRingSet(vertIdx)
+  const ringSet     = selectedVertices
   const neighborIdx = ringSet.filter(v => v !== vertIdx)
 
   // Drop a marker sphere on this vertex (plus smaller white spheres on its
@@ -1838,6 +1908,7 @@ async function selectVertex(vertIdx, nvInst) {
 
 async function pickOnSurface(canvas, mouseX, mouseY, nvInst) {
   if (!currentMetric) return
+  if (loadedVertexIds) return   // a loaded vertex-ID list supersedes interactive picking
   const mesh = nvInst.meshes[0]
   if (!mesh?.pts || !mesh?.tris) return
 
@@ -1889,6 +1960,7 @@ setupSurfaceZoom('gl-asym', nvAsym)
 // ── vertex ID text entry ──────────────────────────────────────────────────────
 document.getElementById('vtxInput').addEventListener('keydown', e => {
   if (e.key !== 'Enter') return
+  if (loadedVertexIds) return   // superseded by the loaded vertex-ID list; input is also disabled
   const id = parseInt(e.target.value, 10)
   if (!Number.isNaN(id)) selectVertex(id, nvLhL)
 })
@@ -1900,6 +1972,71 @@ document.getElementById('ringsInput').addEventListener('change', e => {
   nRings = r
   if (currentVertex !== null) selectVertex(currentVertex, nvLhL)
 })
+
+// ── loaded vertex-ID list ─────────────────────────────────────────────────────
+// A plain .txt file, one non-negative integer vertex index per line. Once
+// loaded it supersedes interactive selection everywhere (see currentRingSet
+// above, and the pickOnSurface/vtxInput guards): the loaded list itself is
+// the vertex set used for aggregation, Rings is bypassed, and the first ID
+// in the file becomes the anchor vertex for the crosshair/markers/DWI link,
+// same role currentVertex normally plays for a single interactive pick.
+{
+  const loadBtn   = document.getElementById('loadVertexIdsBtn')
+  const saveBtn   = document.getElementById('saveVertexIdsBtn')
+  const unloadBtn = document.getElementById('unloadVertexIdsBtn')
+  const fileInput = document.getElementById('vertexIdsFile')
+  const statusEl  = document.getElementById('vertexIdsStatus')
+  const vtxInput  = document.getElementById('vtxInput')
+  const ringsInputEl = document.getElementById('ringsInput')
+
+  saveBtn.addEventListener('click', downloadSelectedVertices)
+
+  function setLoadedUiState(loaded) {
+    unloadBtn.disabled = !loaded
+    vtxInput.disabled = loaded
+    ringsInputEl.disabled = loaded
+  }
+
+  loadBtn.addEventListener('click', () => fileInput.click())
+
+  fileInput.addEventListener('change', () => {
+    const file = fileInput.files && fileInput.files[0]
+    fileInput.value = ''   // reset so the same file can be re-picked later
+    if (!file) return
+    const reader = new FileReader()
+    reader.onload = async () => {
+      const lines = String(reader.result).split(/\r?\n/).map(s => s.trim()).filter(s => s.length)
+      const ids = lines.map(Number)
+      if (!ids.length || ids.some(n => !Number.isInteger(n) || n < 0)) {
+        alert(`Could not parse ${file.name}: expected one non-negative integer vertex index per line`)
+        return
+      }
+      const nVerts = nvLhL.meshes[0]?.pts.length / 3
+      const inRange = Number.isFinite(nVerts) ? ids.filter(n => n < nVerts) : ids
+      if (!inRange.length) {
+        alert(`${file.name}: no vertex ID is within range for this surface (0-${nVerts - 1})`)
+        return
+      }
+      if (inRange.length < ids.length) {
+        console.warn(`[vertex IDs] dropped ${ids.length - inRange.length} out-of-range ID(s) from ${file.name}`)
+      }
+      loadedVertexIds = inRange
+      setLoadedUiState(true)
+      const dropped = ids.length - inRange.length
+      statusEl.textContent = `${inRange.length} vertex ID${inRange.length === 1 ? '' : 's'} loaded from ${file.name}`
+        + (dropped ? ` (${dropped} out of range, dropped)` : '')
+      await selectVertex(inRange[0], nvLhL)
+    }
+    reader.onerror = () => alert(`Could not read ${file.name}`)
+    reader.readAsText(file)
+  })
+
+  unloadBtn.addEventListener('click', () => {
+    loadedVertexIds = null
+    setLoadedUiState(false)
+    statusEl.textContent = ''
+  })
+}
 
 // ── pivot@vertex toggle + reset 3D orbit pivot back to the whole-brain center ─
 document.getElementById('pivotAtVertexChk').addEventListener('change', function() {
@@ -2712,6 +2849,8 @@ async function showVolume(key) {
       return
     }
     desc.image = nv.volumes[nv.volumes.length - 1]
+    desc.defCalMin = desc.image.cal_min   // per-volume default window for the 'r' reset
+    desc.defCalMax = desc.image.cal_max
   }
 
   desc.image.colormap = dwiCmap   // colormap follows the shown volume
@@ -2743,7 +2882,10 @@ async function showVolume(key) {
 // resident NVImage rather than re-adding it, then "other…" for arbitrary files.
 if (FA_URL) {
   const img = nv.volumes[0] || null
-  currentVolKey = addVolumeOption({ name: 'fa.nii.gz', url: FA_URL, image: img }, true)
+  currentVolKey = addVolumeOption({
+    name: 'fa.nii.gz', url: FA_URL, image: img,
+    defCalMin: img ? img.cal_min : null, defCalMax: img ? img.cal_max : null,
+  }, true)
 }
 {
   const other = document.createElement('option')
@@ -2773,16 +2915,41 @@ function showVolumeByIndex(n) {
   const opts = [...volSel.options].filter(o => o.value !== '__other__')
   if (opts[n - 1]) showVolume(opts[n - 1].value)
 }
+
+// ── orthoslice zoom (Ctrl + scroll) ───────────────────────────────────────
+let sliceZoom = 1
+document.getElementById('gl-dwi').addEventListener('wheel', e => {
+  if (!e.ctrlKey) return
+  e.preventDefault(); e.stopImmediatePropagation()
+  sliceZoom = Math.max(0.3, Math.min(8, sliceZoom * (e.deltaY < 0 ? 1.1 : 1/1.1)))
+  nv.scene.pan2Dxyzmm[3] = sliceZoom; nv.drawScene()
+}, {capture:true, passive:false})
+
+// Reset the orthoslices: viewport (zoom + pan) and the shown volume's default
+// window — same shortcut and behavior as the main tab's resetSliceView().
+function resetDwiView() {
+  sliceZoom = 1
+  nv.scene.pan2Dxyzmm = [0, 0, 0, 1]
+  const bg = nv.volumes[0], desc = volumeRegistry[currentVolKey]
+  if (bg && desc && desc.defCalMin != null) {
+    bg.cal_min = desc.defCalMin; bg.cal_max = desc.defCalMax
+    nv.updateGLVolume()
+    syncClipInputs()
+  }
+  nv.drawScene()
+}
+
 document.addEventListener('keydown', e => {
   const t = e.target
   if (t && (t.tagName === 'INPUT' || t.tagName === 'SELECT' ||
             t.tagName === 'TEXTAREA' || t.isContentEditable)) return
   if (e.ctrlKey || e.metaKey || e.altKey) return
-  switch (e.key) {
+  switch (e.key.toLowerCase()) {
     case '1': case '2': case '3': case '4': case '5':
     case '6': case '7': case '8': case '9':
       showVolumeByIndex(+e.key); e.preventDefault(); break
     case '0': volFile.click(); e.preventDefault(); break
+    case 'r': resetDwiView(); e.preventDefault(); break
   }
 })
 
@@ -2865,6 +3032,13 @@ if (dwiChannel) {
       ? `vertex ${vertex} (${hemi || 'lh'}) · depth ${((depth || 0) * STEP_MM).toFixed(1)} mm · ${xyz[0].toFixed(1)},${xyz[1].toFixed(1)},${xyz[2].toFixed(1)} mm`
       : `vertex ${vertex}: no streamline point at that depth`
   }
+  // Announce readiness now that the listener above is actually live — the
+  // main tab responds by re-sending its current selection. Without this, a
+  // selection made in the main tab just before this tab finished loading
+  // (the common case: pick a vertex, then click "Open DWI space") would be
+  // silently lost, since BroadcastChannel doesn't queue messages for
+  // listeners that don't exist yet.
+  dwiChannel.postMessage({ type: 'dwi-ready' })
 } else {
   statusEl.textContent = "this browser doesn't support BroadcastChannel — can't sync with the main tab"
 }
