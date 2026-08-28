@@ -98,7 +98,7 @@ do
     exit 3
   fi
 
-  my_do_cmd tckedit $tmp_tck $tmp_tck_withheader; # this will put a header that cortical_treamlines.py cannot write
+  my_do_cmd tckedit -nthreads 1 $tmp_tck $tmp_tck_withheader; # this will put a header that cortical_treamlines.py cannot write
 
   echolor cyan "[INFO] Resampling and truncating streamlines to step size ${tck_step_size} mm"
   $PYTHON $(which tckresample_and_truncate) $tmp_tck_withheader $out_tck --step_size $tck_step_size
