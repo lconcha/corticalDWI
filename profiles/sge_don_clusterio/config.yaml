@@ -1,0 +1,64 @@
+# Template Snakemake profile for submitting the corticalDWI pipeline to
+# Don Clusterio's SGE. This lives in the repo only as a starting point —
+# copy this whole directory to $SUBJECTS_DIR/.corticalDWI/snakemake_profile/
+# and adjust there per dataset/cluster. Everything cluster-specific belongs
+# in that copy, not in the repo's Snakefile/rules, so switching to a
+# different cluster (even a different scheduler) never requires touching
+# pipeline code — see the Snakefile's own docstring.
+#
+# Usage:
+#   snakemake --profile "$SUBJECTS_DIR/.corticalDWI/snakemake_profile"
+#
+# Facts this was built from (checked directly on Don Clusterio, 2026-08-25):
+#   - Only two queues, all.q and nvidia.q, differing solely by CUDA
+#     capability — nothing here needs CUDA, so all.q (which still includes
+#     the dual-queue nodes) is the right target.
+#   - "smp" parallel environment exists for single-node multi-core jobs.
+#   - No queue or complex resource distinguishes node capability (checked
+#     via `qconf -sc`/`qconf -sq all.q`) — node RAM/core counts genuinely
+#     vary a lot (qhost: 4 to 48 cores, 7.7G to 125.5G RAM seen across the
+#     fleet), but the only real lever is the slot count itself: SGE can't
+#     place an N-slot request on a node with fewer than N total slots, so
+#     asking for enough slots (via threads: in rules/mrds.smk etc.) is
+#     itself the node-capability filter — no separate flag needed for that.
+#   - Plain `qsub` returns immediately after submitting, before the job
+#     runs — `-sync y` makes it block until the job finishes and return the
+#     real exit status, which is what Snakemake's --cluster-sync needs to
+#     correctly track job success/failure (as opposed to plain --cluster,
+#     which would think every job succeeded the instant it was submitted).
+#   - `-V` exports the submitting shell's full environment (PATH, the
+#     activated corticalDWI conda env, module-loaded tool paths,
+#     SUBJECTS_DIR, OMP_NUM_THREADS override from threads:, ...) to the
+#     job — without it the job runs in a bare environment and every
+#     cortical_*.sh invocation would fail immediately.
+#   - `-v XDG_CACHE_HOME=...`: --cluster-sync's jobscript is itself a nested
+#     Snakemake invocation that runs on the exec host to execute one rule.
+#     That nested process's own startup (Workflow -> SourceCache.__init__)
+#     unconditionally os.makedirs()'s a cache dir under appdirs's
+#     user_cache_dir, which without XDG_CACHE_HOME falls back to
+#     $HOME/.cache — i.e. /home/inb/<user>/.cache here, inherited via -V.
+#     Found 2026-08-27: a subset of Don Clusterio's exec hosts cannot write
+#     to that path (PermissionError creating $HOME itself), which crashes
+#     the nested Snakemake before the wrapped cortical_*.sh script ever
+#     runs — every job that lands on one of those hosts fails with no
+#     script-side error at all. -v XDG_CACHE_HOME here (which appdirs does
+#     respect, and which -v gives precedence over whatever -V inherited)
+#     redirects that cache into the study dir on shared NFS — the same
+#     mount every rule already reads/writes through — so this is now
+#     independent of which host a job lands on. See project_snakemake_port_
+#     implementation memory for the incident this fixed.
+
+cluster-sync: >-
+  qsub -sync y -V -cwd
+  -q all.q
+  -pe smp {threads}
+  -N {rule}.{jobid}
+  -o $SUBJECTS_DIR/.corticalDWI/logs/
+  -e $SUBJECTS_DIR/.corticalDWI/logs/
+  -v XDG_CACHE_HOME=$SUBJECTS_DIR/.corticalDWI/xdg_cache
+
+# Max concurrent qsub-sync "shepherd" processes Snakemake itself keeps
+# running — NOT a cap on how many jobs actually execute on the cluster at
+# once (that's SGE's own job entirely, via slot accounting). Set generously;
+# there's essentially no cost to a high number here.
+jobs: 50

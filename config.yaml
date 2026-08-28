@@ -1,0 +1,56 @@
+# Snakemake config for the corticalDWI pipeline — repo-wide DEFAULTS.
+# Mirrors corticalDWI_params.conf — kept separate because Snakemake needs its
+# own structured config, not because the values should drift from the conf file.
+# If you change corticalDWI_params.conf, update this file to match.
+#
+# To override any of these for one dataset without touching the repo, copy
+# this file to $SUBJECTS_DIR/.corticalDWI/config.yaml and edit just the keys
+# you want to change — the Snakefile merges it on top of these defaults.
+
+target_type: ico6_sym
+nsteps: 100
+step_size: 0.1
+tck_step_size: 0.5
+max_length: 10
+nDepths: 30
+csd_fixel_dir: csd_fixels_singletissue
+mrds_fixel_dir: mrds_fixels
+angle: 45
+
+# Restrict a run to specific subjects, e.g. ["sub-79291", "sub-79292"].
+# Leave empty to auto-discover every sub-* directory in $SUBJECTS_DIR.
+subjects: []
+
+# Thread counts for the tool families confirmed (via ldd, 2026-08-25) to
+# actually respect thread-count env vars — mdtmrds AND the MRDS package's own
+# `dti` response-fitting tool (both called inside cortical_MRDS.sh) link
+# libgomp directly -> OMP_NUM_THREADS; dipy_fit_dki/AMICO (cortical_DKI.sh,
+# cortical_NODDI.sh) link OpenBLAS's pthreads build -> OPENBLAS_NUM_THREADS
+# (OMP_NUM_THREADS set too, as OpenBLAS's own fallback). Everything else in
+# the pipeline (ANTs' N4BiasFieldCorrection/DenoiseImage/antsIntroduction/
+# WarpImageMultiTransform, every MRtrix tool) is NOT OpenMP-linked and
+# ITK_GLOBAL_DEFAULT_NUMBER_OF_THREADS is unset on this host, so those already
+# use all available cores by default — no threads: needed on those rules.
+#
+# mrds_threads doubles as the SGE slot request for cortical_MRDS.sh (see
+# profiles/sge_don_clusterio/) — kept at 18 to match established real-world
+# practice on this cluster (`fsl_sub -s smp,18`), not a benchmarked optimum:
+# a quick isolated 45s-per-thread-count test suggested a wall past 8 threads,
+# but that test's own numbers didn't match this same tool's real production
+# throughput closely enough to trust over hands-on experience (short-window
+# sampling likely doesn't amortize mdtmrds's per-run setup phase fairly across
+# thread counts) — see reference_omp_threads_pinned_to_1 memory for the detail.
+mrds_threads: 18
+python_threads: 4
+
+# cortical_register_t1_to_dwi.sh calls the external inb_synthreg.sh (not part
+# of this repo), which auto-detects a thread count via `nproc - 2` and passes
+# it straight to mri_synthseg's TensorFlow backend with no minimum clamp.
+# Under SGE, nproc inside a job reflects the granted slot count (confirmed on
+# Don Clusterio, 2026-08-25) — with no threads: here, Snakemake defaults to 1
+# slot, nproc reports 1, and `1 - 2 = -1` crashes mri_synthseg outright
+# (TensorFlow: "Check failed: num_threads >= 1"). This doesn't fix
+# inb_synthreg.sh's own missing clamp (a separate, real bug in that repo), but
+# requesting a real slot count here means nproc never returns something that
+# breaks its arithmetic in the first place.
+register_threads: 8
