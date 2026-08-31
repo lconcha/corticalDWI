@@ -9,7 +9,7 @@ CLim and colormap controls for both data and asymmetry surfaces.
 Usage:
     python cortical_browser.py [subjects_dir] [subj_id] [--port PORT]
 """
-import os, sys, glob, json, time, threading, webbrowser, argparse, tempfile, re, warnings, shutil, atexit
+import os, sys, glob, json, time, threading, webbrowser, argparse, tempfile, re, warnings, shutil, atexit, signal, subprocess
 import numpy as np
 import nibabel as nib
 import h5py
@@ -39,6 +39,56 @@ _DWI_JS   = _read_web_file('dwi.js')
 
 
 # ── file discovery ─────────────────────────────────────────────────────────────
+
+def kill_other_instances():
+    """Find and kill other running cortical_browser.py processes (not self)."""
+    script_name = os.path.basename(__file__)
+    self_pid = os.getpid()
+    out = subprocess.run(['ps', '-eo', 'pid,cmd'], capture_output=True, text=True).stdout
+    victims = []
+    for line in out.splitlines()[1:]:
+        line = line.strip()
+        if not line:
+            continue
+        parts = line.split(None, 1)
+        if len(parts) != 2:
+            continue
+        pid_str, cmd = parts
+        if script_name not in cmd or 'grep' in cmd:
+            continue
+        try:
+            pid = int(pid_str)
+        except ValueError:
+            continue
+        if pid == self_pid:
+            continue
+        victims.append((pid, cmd))
+
+    if not victims:
+        print('No other cortical_browser.py instances found.')
+        return
+
+    for pid, cmd in victims:
+        print(f'Killing pid {pid}: {cmd}')
+        try:
+            os.kill(pid, signal.SIGTERM)
+        except ProcessLookupError:
+            continue
+        except PermissionError:
+            print(f'  [WARN] no permission to kill pid {pid}')
+
+    time.sleep(1.0)
+    for pid, cmd in victims:
+        try:
+            os.kill(pid, 0)   # still alive?
+        except ProcessLookupError:
+            continue
+        print(f'  pid {pid} still alive, sending SIGKILL')
+        try:
+            os.kill(pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+
 
 def find_files(subj_dir, template=TEMPLATE):
     mri_dir  = os.path.join(subj_dir, 'mri')
@@ -841,7 +891,13 @@ def main():
                     default='/home/lconcha/fs-edmonton')
     ap.add_argument('subj_id',      nargs='?', default='sub-Mcd005')
     ap.add_argument('--port', type=int, default=8787)
+    ap.add_argument('--killall', action='store_true',
+                    help='Kill any other running cortical_browser.py instances and exit')
     args = ap.parse_args()
+
+    if args.killall:
+        kill_other_instances()
+        sys.exit(0)
 
     subj_dir = os.path.join(args.subjects_dir, args.subj_id)
     if not os.path.isdir(subj_dir):
