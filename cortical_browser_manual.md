@@ -182,7 +182,7 @@ toggle with **Rad**.
 | **LH / RH / Asym surf** | Per‑panel surface geometry (white, pial, inflated, very‑inflated, average_*) |
 | **Rad** | Radiological vs neurological orthoslice orientation |
 | **X‑hair** | Show/hide the orthoslice crosshair |
-| **WM** / **pial** | Overlay white‑matter / pial surface contours on the orthoslices (loaded on first use) |
+| **WM** / **pial** | Overlay white‑matter / pial surface contours on the orthoslices (loaded on first use — also loaded lazily by Shift/Ctrl‑click vertex picking on the orthoslices, see *Interacting with the surfaces*) |
 | **3D cutaway** / **Invert** | Carve the octant nearest the crosshair out of the orthoslice viewer's 3‑D volume render, revealing the three slice surfaces in 3‑D (shortcut `c`); **Invert** removes the opposite octant instead (see *Orthoslice volume*) |
 | **Volume** | Choose which volume the orthoslices show; **other…** opens a file picker to load an extra volume (see *Orthoslice volume*) |
 | **cmap** | Colormap for the orthoslice volume (a colorbar is drawn on the ortho view) |
@@ -204,7 +204,17 @@ toggle with **Rad**.
 
 ## Interacting with the surfaces
 
-- **Click** any of the three surface panels (or the orthoslices) to select the nearest vertex.
+- **Click** any of the three 3‑D surface panels to select the nearest vertex on whatever
+  surface that panel currently shows.
+- On the **orthoslices**, a plain click only moves the crosshair (and updates the
+  world/voxel position and intensity readout) — it does **not** change the vertex selection.
+  - **Shift‑click** selects the nearest **white**‑surface vertex to the clicked position.
+  - **Ctrl‑click** selects the nearest **pial**‑surface vertex to the clicked position.
+  - Both search only the white/pial contour geometry (the same one loaded by the **WM**/
+    **pial** contour checkboxes) — inflated/very‑inflated surfaces don't occupy real
+    anatomical space, so "nearest" wouldn't mean anything there. Either modifier also
+    switches the **LH/RH/Asym surf** dropdowns to the surface you clicked, so the 3‑D panels,
+    crosshair, and markers all end up showing that same surface.
 - The selected vertex is marked with a sphere on every panel; neighbor‑ring vertices get
   smaller markers.
 - The orthoslices **snap** to the selected vertex's world coordinate.
@@ -406,7 +416,10 @@ require a real numeric keypad with NumLock on.
 ### Mouse
 | Action | Effect |
 | --- | --- |
-| Click (surface or orthoslice) | Select the nearest vertex |
+| Click (surface panel) | Select the nearest vertex on that panel's current surface |
+| Click (orthoslices) | Move the crosshair only — no vertex change |
+| Shift + click (orthoslices) | Select the nearest **white**‑surface vertex |
+| Ctrl + click (orthoslices) | Select the nearest **pial**‑surface vertex |
 | Scroll over a surface | Zoom that 3‑D surface |
 | Drag on a surface | Rotate the 3‑D view |
 | Ctrl + scroll on orthoslices | Zoom the orthoslice view |

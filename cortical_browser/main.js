@@ -1642,6 +1642,65 @@ async function pickOnSurface(canvas, mouseX, mouseY, nvInst) {
   await selectVertex(vertIdx, nvInst)
 }
 
+// Nearest-vertex lookup for shift/ctrl-click-on-orthoslice picking. kind is
+// 'wm' (white, shift-click) or 'pial' (ctrl-click) — restricted to a single
+// contour mesh (real anatomical world coordinates, loaded on demand via
+// ensureSliceContour) rather than whatever geometry the LH/RH panels
+// currently show — inflated/very_inflated surfaces don't occupy real
+// anatomical space, so "nearest" wouldn't mean anything there.
+async function nearestSurfaceVertex(mm, kind) {
+  const surf = await ensureSliceContour(kind)
+  // ensureSliceContour() loads meshes at full opacity; normally it's only ever
+  // called right after sliceContourVisible[kind] is set and immediately
+  // followed by applySliceContourVisibility() (see toggleSliceContour()).
+  // Called standalone here for picking, so re-assert its checkbox's actual
+  // on/off state — otherwise a shift/ctrl-click would silently turn the
+  // contour overlay visible even with its checkbox unchecked.
+  applySliceContourVisibility(kind)
+  let bestD2 = Infinity, bestIdx = -1, bestHemi = 'lh'
+  for (const [hemi, mesh] of [['lh', surf.lh], ['rh', surf.rh]]) {
+    if (!mesh?.pts) continue
+    const pts = mesh.pts
+    const n = pts.length / 3
+    for (let i = 0; i < n; i++) {
+      const dx = pts[i*3] - mm[0], dy = pts[i*3+1] - mm[1], dz = pts[i*3+2] - mm[2]
+      const d2 = dx*dx + dy*dy + dz*dz
+      if (d2 < bestD2) { bestD2 = d2; bestIdx = i; bestHemi = hemi }
+    }
+  }
+  return bestIdx >= 0 ? { vertIdx: bestIdx, hemi: bestHemi } : null
+}
+
+// selectVertex() derives the orthoslice crosshair and every 3-D marker from
+// nvInst.meshes[0].pts, i.e. whatever surface the LH/RH/Asym panels currently
+// display — it has no notion of "the surface the vertex was actually picked
+// from". So a pial pick made while the panels still show white would snap
+// the crosshair (and every marker) to that vertex's WHITE position, not its
+// pial one. Switch the panels to the picked kind first — the same lhSurfUrl/
+// rhSurfUrl/asymSurfUrl + loadXPanel() reload used by the surface-type
+// dropdowns (see their 'change' handlers below) — so everything selectVertex
+// places ends up on the surface that was actually clicked.
+async function selectVertexOnSurface(vertIdx, hemi, kind) {
+  const surfType = SLICE_CONTOUR_SURF[kind]   // 'wm' -> 'white', 'pial' -> 'pial'
+  const lhSel = document.getElementById('lhSurfSel')
+  const rhSel = document.getElementById('rhSurfSel')
+  const asymSel = document.getElementById('asymSurfSel')
+  if (SURF_TYPES[surfType]?.lh) {
+    lhSurfUrl = SURF_TYPES[surfType].lh
+    asymSurfUrl = SURF_TYPES[surfType].lh
+    lhVertexAreas = null   // geometry changed — per-vertex area must be recomputed
+    if (lhSel)   lhSel.value = surfType
+    if (asymSel) asymSel.value = surfType
+  }
+  if (SURF_TYPES[surfType]?.rh) {
+    rhSurfUrl = SURF_TYPES[surfType].rh
+    rhVertexAreas = null
+    if (rhSel) rhSel.value = surfType
+  }
+  await Promise.all([loadLhPanel(currentMetric), loadRhPanel(currentMetric), loadAsymPanel(currentMetric)])
+  await selectVertex(vertIdx, hemi === 'rh' ? nvRhL : nvLhL)
+}
+
 function setupSurfacePicker(canvasId, nvInst) {
   const canvas = document.getElementById(canvasId)
   let downX=0, downY=0
@@ -1671,6 +1730,33 @@ function setupSurfaceZoom(canvasId, nvInst) {
 setupSurfaceZoom('gl-lh',   nvLhL)
 setupSurfaceZoom('gl-rh',   nvRhL)
 setupSurfaceZoom('gl-asym', nvAsym)
+
+// Shift-click / ctrl-click on the orthoslices: select the nearest white
+// (shift) or pial (ctrl) surface vertex to the clicked world position. A
+// plain click still just moves the crosshair (NiiVue's own default behavior
+// on gl-slices, untouched here); by the time our mouseup listener runs,
+// NiiVue's own mousedown/mouseup handling has already updated
+// nvSlices.scene.crosshairPos, so frac2mm on it gives exactly the clicked
+// world position without needing to hook onLocationChange.
+function setupOrthoslicePicker(canvasId) {
+  const canvas = document.getElementById(canvasId)
+  let downX=0, downY=0, downKind=null
+  canvas.addEventListener('mousedown', e => {
+    downX=e.clientX; downY=e.clientY
+    downKind = e.shiftKey ? 'wm' : e.ctrlKey ? 'pial' : null
+  })
+  canvas.addEventListener('mouseup', async e => {
+    if (!downKind) return
+    const dx=e.clientX-downX, dy=e.clientY-downY
+    if (dx*dx+dy*dy > 25) return   // treat as a drag, not a click
+    if (typeof nvSlices.frac2mm !== 'function') return
+    const mm = nvSlices.frac2mm([...nvSlices.scene.crosshairPos])
+    if (!mm) return
+    const hit = await nearestSurfaceVertex(mm, downKind)
+    if (hit) await selectVertexOnSurface(hit.vertIdx, hit.hemi, downKind)
+  })
+}
+setupOrthoslicePicker('gl-slices')
 
 // ── vertex ID text entry ──────────────────────────────────────────────────────
 document.getElementById('vtxInput').addEventListener('keydown', e => {

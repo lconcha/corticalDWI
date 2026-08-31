@@ -5,3 +5,6 @@ launch.json
 *oldstyle
 __pycache__/
 cortical_browser_2_config.m
+*.snake
+*.log
+.snakemake/metadata/
