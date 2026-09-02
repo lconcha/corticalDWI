@@ -146,6 +146,21 @@ def discover(cortical_dwi_dir, subject):
         # (same gotcha as real local runs — see reference_snakemake_cores_vs_jobs_flag
         # memory), so a rule's true declared threads: would silently read back as 1.
         "--cores", "64",
+        # This call only ever introspects rule shape (never executes anything
+        # for real), but it's still a genuine DAG build, so Snakemake applies
+        # its full safety checks regardless — including refusing to proceed
+        # at all if it sees a file some job has started writing but not yet
+        # confirmed complete (IncompleteFilesException). That's the right
+        # call before actually *running* something (don't want to silently
+        # treat a partial/corrupted file as done), but every caller of
+        # discover() here is read-only — --status, --subject-outputs, plain
+        # rule listing, etc. — so it shouldn't be blocked just because some
+        # OTHER job (possibly for a different subject entirely) happens to
+        # be mid-flight on the cluster right now (confirmed 2026-09-02: a
+        # live --all-subjects --cluster recompute made even --status fail
+        # outright). --ignore-incomplete is safe here specifically because
+        # nothing gets executed off the back of this call.
+        "--ignore-incomplete",
         "-s", os.path.join(cortical_dwi_dir, "Snakefile"),
         "--directory", study_dir,
         "--config", f'subjects=["{subject}"]',
