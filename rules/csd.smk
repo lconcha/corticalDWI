@@ -16,15 +16,64 @@ layer — flagged here rather than silently patched, per the port's "wrap
 as-is" scope.
 """
 
+import sys
+
 RESPONSE_TISSUES = ["wm", "gm", "csf"]
+
+
+def _validate_csd_snapshot_subjects(subjects):
+    """Cross-check each snapshot subject against the raw files
+    csd_individual_response actually needs. csd_average_response's input
+    list is NOT scoped by --config subjects=[...] the way most other rules
+    are (it sits upstream of every subject's own csd_compute_fod ->
+    tcksamplefixels_afd, and is wired directly off this snapshot, not the
+    main SUBJECTS/skip-filtered list) — so one bad line here used to break
+    DAG-building for every subject, anyone's cortical_snakerun.py call
+    included, with a deep, unhelpful MissingInputException (confirmed
+    2026-08-28: a stale entry for a subject with no dwi/ dir at all broke
+    every single cortical_snakerun.py invocation, even -h).
+    A problematic entry is dropped (with a loud warning printed on every
+    invocation, not just a failing one) rather than left in to blow up the
+    DAG. A skip-flagged-but-otherwise-valid subject is kept (the skip file
+    doesn't apply to this snapshot at all — see module docstring above) but
+    still flagged, since silently averaging in a subject the rest of the
+    pipeline is skipping could be a surprise."""
+    usable = []
+    for subject in subjects:
+        required = {
+            "dwi.nii.gz": f"{SUBJECTS_DIR}/{subject}/dwi/dwi.nii.gz",
+            "dwi.scheme": f"{SUBJECTS_DIR}/{subject}/dwi/dwi.scheme",
+            "mask.nii.gz": f"{SUBJECTS_DIR}/{subject}/dwi/mask.nii.gz",
+        }
+        missing = [name for name, path in required.items() if not os.path.exists(path)]
+        if missing:
+            print(
+                f"WARNING: {CSD_SNAPSHOT_FILE} lists '{subject}' for the CSD group "
+                f"average, but it's missing {', '.join(missing)} — excluding it from "
+                "csd_average_response's dependencies so this doesn't break the DAG for "
+                "every other subject. Fix or remove that line from the snapshot file.",
+                file=sys.stderr,
+            )
+            continue
+        if os.path.exists(f"{SUBJECTS_DIR}/{subject}/skip"):
+            print(
+                f"NOTE: {CSD_SNAPSHOT_FILE} lists '{subject}' for the CSD group average, "
+                "but it has a skip file (excluded from the main pipeline elsewhere) — "
+                "keeping it in the average anyway since skip doesn't apply to this "
+                "snapshot; remove it from the snapshot too if that's not what you want.",
+                file=sys.stderr,
+            )
+        usable.append(subject)
+    return usable
+
 
 CSD_SNAPSHOT_FILE = f"{STUDY_DIR}/csd_average_response_subjects.txt"
 if os.path.exists(CSD_SNAPSHOT_FILE):
-    CSD_SNAPSHOT_SUBJECTS = [
+    CSD_SNAPSHOT_SUBJECTS = _validate_csd_snapshot_subjects([
         line.strip()
         for line in open(CSD_SNAPSHOT_FILE)
         if line.strip() and not line.strip().startswith("#")
-    ]
+    ])
 else:
     # No snapshot yet for this dataset — csd_average_response simply has no
     # input to depend on until one is created (see that file's own header,
@@ -86,6 +135,21 @@ rule csd_compute_fod:
     output:
         csd_compute_fod_outputs("{subject}"),
     shell:
+        # Snakemake auto-creates the parent directory of every declared output
+        # file before running the shell command — including csd_fixels/ and
+        # csd_fixels_singletissue/ (the parent dirs of afd_fixels.mif etc.
+        # above). But fod2fixel (called inside cortical_CSD_compute_fod.sh)
+        # creates those directories itself and refuses to run if they already
+        # exist, even empty: "output file ... already exists (use -force
+        # option to force overwrite)". Confirmed 2026-09-01: every real run
+        # failed with MissingOutputException for exactly this reason, and
+        # Snakemake then deleted the rule's other, successfully-created
+        # outputs (fod_wm.mif etc.) as "possibly corrupted" on top of it. Fix:
+        # remove Snakemake's just-created empty directories immediately before
+        # invoking the script, so fod2fixel finds nothing there and can create
+        # them itself as it expects to.
+        f"rm -rf {SUBJECTS_DIR}/{{wildcards.subject}}/dwi/csd/csd_fixels "
+        f"{SUBJECTS_DIR}/{{wildcards.subject}}/dwi/csd/csd_fixels_singletissue; " +
         JITTER + MRTRIX_ENV + "cortical_CSD_compute_fod.sh {wildcards.subject}"
 
 
