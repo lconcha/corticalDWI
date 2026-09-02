@@ -1,53 +1,70 @@
 #!/usr/bin/env python3
 """
-cortical_snakerun.py
+\033[1mcortical_snakerun.py\033[0m
 
-Run the corticalDWI pipeline through Snakemake. rule for a single
-subject, without needing to know or remember its exact target output path.
+Run or reset the corticalDWI pipeline through Snakemake.
 
-Unlike a hand-maintained lookup table, this interrogates the Snakefile fresh
-on every invocation (via `snakemake -n --forceall`), so the rule/target list
-can never drift out of sync with rules/*.smk — it reflects whatever the rules
-currently declare, automatically.
+Every rule's shape (pattern, threads, inputs, outputs) is discovered live on each invocation,
+via `snakemake -n --forceall`, so it can never drift out of sync with rules/*.smk 
 
-Prerequisites (same as any other corticalDWI script/the Snakefile itself):
-  module load freesurfer/8.1 mrtrix/3.0.4 workbench_con/2.0.1 ANTs/2.4.4 mrds/1.2.0
-  conda activate corticalDWI
-  export SUBJECTS_DIR=/path/to/freesurfer/subjects
 
-Usage:
-  cortical_snakerun.py                                # list every rule + its target pattern
-  cortical_snakerun.py --for-subject sub-X             #   (discover using a specific subject)
+\033[1mUsage:\033[0m
+  cortical_snakerun.py        # list every rule + its target pattern
   cortical_snakerun.py <rule> <subject> [extra snakemake args...]
-  cortical_snakerun.py <rule> --all-subjects [extra snakemake args...]
-  cortical_snakerun.py <rule>                          # only for rules with no {subject} in their pattern
-  cortical_snakerun.py <rule> <subject> --cluster      # submit via $SUBJECTS_DIR/.corticalDWI/snakemake_profile
-  cortical_snakerun.py <rule> <subject> --dry-run      # (also -n) show what would run, run nothing —
-                                                        # works with any run-a-rule invocation below too
-                                                        # (--rules/--skip/--all-rules, --all-subjects, --cluster)
-  cortical_snakerun.py <rule> --all-subjects --dry-run --quiet  # (also -q) just the job-count summary,
-                                                        # not every per-job input/output/reason block —
-                                                        # works with any run-a-rule invocation too
-  cortical_snakerun.py --rules dti,mrds,dki <subject|--all-subjects> [extra]  # run just this list
-  cortical_snakerun.py --skip mrds,noddi <subject|--all-subjects> [extra]     # every rule except these
-  cortical_snakerun.py --all-rules [subject|--all-subjects] [extra]          # whole pipeline, same
-                                                        # as plain snakemake (uses rule all's own
-                                                        # targets rather than an explicit list)
-  cortical_snakerun.py --subject-outputs sub-X [--under mri]    # every declared output for sub-X
-  cortical_snakerun.py --subject-raw-inputs sub-X [--under dwi] # files read but never produced by any rule
-  cortical_snakerun.py --subject-status sub-X                   # per-rule check/cross for one subject
-  cortical_snakerun.py --status [sub-X sub-Y ...]                # cortical_status.sh-style table, all subjects by default
-  cortical_snakerun.py --delete sub-X [--dry-run]      # reset sub-X: delete every rule output for it
-                                                        # (see cortical_delete_everything.sh for the
-                                                        # older, hand-maintained-glob equivalent — kept
-                                                        # deliberately Snakemake-free)
-  cortical_snakerun.py --delete-rule <rule> <subject|--all-subjects> [--dry-run]
-                                                        # delete just one rule's declared outputs
-                                                        # (exact files only, never a directory sweep —
-                                                        # safe even when the output dir is shared with
-                                                        # another rule, e.g. mrds_fixels/{modsel}/)
+  cortical_snakerun.py <rule> --all-subjects
+  cortical_snakerun.py <rule> # only for rules with no {subject} in their pattern
+  
+\033[1mOptions:\033[0m
+  --all-subjects    Run all subjects within $SUBJECTS_DIR
+  --dry-run/-n      Show what would run, run nothing
+  --rules <list>    Run just this comma-separated list of rules
+  --skip <list>     Skip these comma-separated rules
+  --all-rules       Run all rules in the pipeline
+  --cluster         Submit to cluster instead of running locally
 
-Examples:
+\033[1mNotes on running a rule:\033[0m
+  - \033[1mBy default this runs locally\033[0m, sized to just the one job's threads.
+  - \033[1mTo run on the cluster instead, add --cluster\033[0m . It submits via whatever
+    profile is currently deployed at $SUBJECTS_DIR/.corticalDWI/snakemake_profile/
+    (copy a different profile config.yaml there to target a different cluster).
+  - To run locally with more than one job's worth of cores (e.g. for
+    --all-subjects), pass your own --cores N.
+  - To use a hand-picked profile instead of the deployed one, pass --profile <dir>.
+  - --dry-run/-n and --quiet/-q (above) work with any run-a-rule invocation,
+    including --rules/--skip/--all-rules, --all-subjects, and --cluster.
+
+\033[1mIntrospection:\033[0m
+  --status [sub-X sub-Y ...]
+          cortical_status.sh-style table: one row per subject, one numbered
+          column per rule (a footnote below the table maps numbers back to
+          rule names), check/cross/! (partial). Defaults to every non-skipped
+          sub-* subject if none are given. Rules with no {subject} in their
+          outputs (e.g. csd_average_response) get their own "Group-wise
+          rules" section below the table instead.
+  --subject-status sub-X
+          one line per subject-scoped rule, check/cross + n/m outputs
+          present for sub-X
+  --subject-outputs sub-X [--under mri]
+          every file some rule declares as output for sub-X
+  --subject-raw-inputs sub-X [--under dwi]
+          files some rule reads but no rule ever produces (i.e. raw data)
+
+\033[1mCleanup:\033[0m
+  --delete sub-X [--dry-run]
+          reset sub-X: delete every rule output for it (mri/ by exact
+          declared output, dwi/ by everything-except-raw-inputs, surf/ also
+          sweeps undeclared .gii/.spec byproducts) — see
+          cortical_delete_everything.sh for the older, hand-maintained-glob
+          equivalent, kept deliberately Snakemake-free. --dry-run/-n prints
+          what would be removed without deleting anything.
+  --delete-rule <rule> <subject|--all-subjects> [--dry-run]
+          delete just one rule's declared outputs, exact files only — never
+          a directory sweep, so it's safe even when the output dir is shared
+          with another rule (e.g. mrds_fixels/{modsel}/ holds both mrds's
+          and tcksamplefixels_mrds's outputs). --dry-run/-n previews without
+          deleting.
+
+\033[1mExamples:\033[0m
   cortical_snakerun.py dti sub-79291
   cortical_snakerun.py mrds sub-79291 -R              # force rerun even if already done
   cortical_snakerun.py dti --all-subjects             # run for every non-skipped sub-* subject
@@ -56,9 +73,17 @@ Examples:
                                                         # profile is currently deployed there)
   cortical_snakerun.py dti --all-subjects --dry-run    # preview what would run for every subject
 
---cluster uses whatever profile is currently sitting in $SUBJECTS_DIR/.corticalDWI/snakemake_profile/ 
-To target a different cluster, copy a different profile config.yaml there;
-this script never hardcodes which cluster that is.
+————————————————————————————
+\033[1mTO RUN ON A CLUSTER:\033[0m
+  --cluster uses whatever profile is currently sitting in $SUBJECTS_DIR/.corticalDWI/snakemake_profile/
+          To target a different cluster, copy a different profile config.yaml in that location.
+————————————————————————————
+
+LU15 (0N(H4 (and Claude)
+INB-UNAM
+Sep 2026
+lconcha@unam.mx
+
 """
 import glob
 import os
@@ -71,6 +96,7 @@ GREEN = "\033[32m"
 RED = "\033[31m"
 YELLOW = "\033[33m"
 BOLD_YELLOW = "\033[1;33m"
+GRAY = "\033[90m"
 NC = "\033[0m"
 GREEN_CHECK = f"{GREEN}✓{NC}"
 RED_CROSS = f"{RED}✗{NC}"
@@ -545,7 +571,6 @@ def print_targets(cortical_dwi_dir, subjects_dir, for_subject):
     subject = for_subject or find_a_subject(subjects_dir)
     if not subject:
         sys.exit(f"No sub-* directories found in {subjects_dir} to discover rules against.")
-    print(f"(discovering rule targets using subject '{subject}' as an example)\n")
     rules, text = discover(cortical_dwi_dir, subject)
     if not rules:
         sys.exit(
@@ -553,67 +578,22 @@ def print_targets(cortical_dwi_dir, subjects_dir, for_subject):
             f"'{subject}' didn't resolve cleanly. Try --for-subject with a "
             f"subject that has all its raw prerequisites in place. Raw output:\n\n{text}"
         )
+    # Everything else (usage, examples, introspection/cleanup flags) lives in
+    # this module's own docstring at the top of the file — printed here
+    # rather than duplicated into a second hand-maintained string, which is
+    # exactly what let the two drift out of sync (and, at one point, broke
+    # outright) in the first place.
+    print(__doc__)
+
+    # The live-discovered rule list prints last, dimmed gray — it's
+    # reference material (what rule names/threads/patterns currently exist),
+    # not the primary thing someone reading -h is looking for.
     name_w = max(len(r) for r in rules) + 2
+    print(f"{GRAY}(Rules in the pipeline (discovered using subject '{subject}'){NC}\n")
     for name in sorted(rules):
         info = rules[name]
         threads = info.get("threads", 1)
-        print(f"  {name:<{name_w}} threads={threads:<3} {info['pattern']}")
-    print(
-        "\nUsage: cortical_snakerun.py <rule> <subject> [extra snakemake args]\n"
-        "       cortical_snakerun.py <rule>              (only for rules with no {subject} above)\n"
-        "       cortical_snakerun.py <rule> --all-subjects   (run for every non-skipped sub-*)\n"
-        "       cortical_snakerun.py --rules r1,r2,r3 <subject|--all-subjects>   (just these rules)\n"
-        "       cortical_snakerun.py --skip r1,r2 <subject|--all-subjects>       (every discovered\n"
-        "                                                                        rule except these)\n"
-        "       cortical_snakerun.py --all-rules [subject|--all-subjects]        (the whole\n"
-        "                                                     pipeline — same as plain snakemake)\n"
-        "\n"
-        "- By default this runs locally, sized to just the one job's threads.\n"
-        "- To run on the cluster instead, add --cluster:\n"
-        "  cortical_snakerun.py <rule> <subject> --cluster\n"
-        "  --cluster submits via whatever profile is currently deployed at\n"
-        "          $SUBJECTS_DIR/.corticalDWI/snakemake_profile/\n"
-        "- To point at a different cluster, copy a different profile config.yaml there.\n"
-        "- To run locally with more than one job's worth of cores yourself (e.g.\n"
-        "  for --all-subjects), pass your own --cores N.\n"
-        "- To use a hand-picked profile instead of the deployed one, pass --profile <dir>\n"
-        "- Add --dry-run (also -n) to any of the above to show what would run\n"
-        "  (rules, targets, MRTRIX_NTHREADS/threads:) without actually running it —\n"
-        "  works with --rules/--skip/--all-rules, --all-subjects, and --cluster too.\n"
-        "- Add --quiet (also -q) to cut the per-job rule/input/output/reason\n"
-        "  blocks down to just the job-count summary table (great paired with\n"
-        "  --dry-run: 'how many jobs would run' instead of every file detail).\n"
-        "  Real errors and progress messages still print — only the routine\n"
-        "  per-rule chatter is suppressed.\n"
-        "\n"
-        "Introspection / cleanup (read the rules, don't run anything):\n"
-        "  cortical_snakerun.py --subject-outputs sub-X [--under mri]\n"
-        "          every file some rule declares as output for sub-X\n"
-        "  cortical_snakerun.py --subject-raw-inputs sub-X [--under dwi]\n"
-        "          files some rule reads but no rule ever produces (i.e. raw data)\n"
-        "  cortical_snakerun.py --subject-status sub-X\n"
-        "          one line per subject-scoped rule, check/cross + n/m outputs\n"
-        "          present for sub-X\n"
-        "  cortical_snakerun.py --status [sub-X sub-Y ...]\n"
-        "          cortical_status.sh-style table: one row per subject, one\n"
-        "          numbered column per rule (a footnote below the table maps\n"
-        "          numbers back to rule names), check/cross/! (partial).\n"
-        "          Defaults to every non-skipped sub-* subject if none are given.\n"
-        "          Rules with no {subject} in their outputs (e.g.\n"
-        "          csd_average_response) aren't per-subject, so they get their\n"
-        "          own \"Group-wise rules\" section below the table instead.\n"
-        "  cortical_snakerun.py --delete sub-X [--dry-run]\n"
-        "          reset sub-X: delete every rule output for it (mri/ by exact\n"
-        "          declared output, dwi/ by everything-except-raw-inputs, surf/\n"
-        "          also sweeps undeclared .gii/.spec byproducts). --dry-run/-n\n"
-        "          prints what would be removed without deleting anything.\n"
-        "  cortical_snakerun.py --delete-rule <rule> <subject|--all-subjects> [--dry-run]\n"
-        "          delete just one rule's declared outputs, exact files only —\n"
-        "          never a directory sweep, so it's safe even when the output\n"
-        "          dir is shared with another rule (e.g. mrds_fixels/{modsel}/\n"
-        "          holds both mrds's and tcksamplefixels_mrds's outputs).\n"
-        "          --dry-run/-n previews without deleting.\n"
-    )
+        print(f"{GRAY}  {name:<{name_w}} threads={threads:<3} {info['pattern']}{NC}")
 
 
 def main():
