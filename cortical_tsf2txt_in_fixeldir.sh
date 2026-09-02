@@ -24,12 +24,18 @@ fi
 
 fixel_dir=$1
 
-
+echolor cyan "[INFO] Will convert all tsf files in $fixel_dir to txt files."
 
 
 for f in $fixel_dir/*.tsf
 do
-  my_do_cmd tsf2txt $f ${f%.tsf}.txt
+  txt=${f%.tsf}.txt
+  if [ -f $txt ]
+  then
+    echolor green "[WARN] $txt exists, skipping."
+  else
+    my_do_cmd tsf2txt $f $txt
+  fi
 done
 
 

@@ -46,63 +46,80 @@ subjID=$1
 [ -n "$5" ] && target_type=$5
 
 
-isOK=1
+scriptFailed=0
 
-fixel_dir=${SUBJECTS_DIR}/${subjID}/dwi/mrds/${mrds_fixel_dir}
-if [ ! -d $fixel_dir ]
-then
-  echolor red "[ERROR] Fixel directory does not exist: $fixel_dir"
-  isOK=0
-  #exit 2
-fi
-
-
-for hemi in lh rh
+for modsel in FTest BIC
 do
-  tck=${SUBJECTS_DIR}/${subjID}/dwi/${hemi}_${target_type}_laplace-wm-streamlines_dwispace.tck
-  for v in FA MD COMP_SIZE
+  isOK=1
+
+  # Each modsel has its own fixel subdirectory (its own index.mif/
+  # directions.mif) written by cortical_MRDS.sh -- FTest and BIC can pick a
+  # different number of tensor components per voxel, so their fixel layouts
+  # aren't interchangeable.
+  fixel_dir=${SUBJECTS_DIR}/${subjID}/dwi/mrds/${mrds_fixel_dir}/${modsel}
+  if [ ! -d $fixel_dir ]
+  then
+    echolor red "[ERROR] Fixel directory does not exist: $fixel_dir"
+    echolor red "        Skipping ${modsel}."
+    continue
+  fi
+
+
+  for hemi in lh rh
   do
-      this_f=${fixel_dir}/MRDS_Diff_FTest_${v}.mif
-      for f in $tck $this_f
-      do
-      if [ ! -f $f ]
-      then
-          echolor red "[ERROR] Cannot find file: $f"
-          isOK=0
-      else
-          echolor green "[INFO] Found file: $f"
-      fi
-      done
+    tck=${SUBJECTS_DIR}/${subjID}/dwi/${hemi}_${target_type}_laplace-wm-streamlines_dwispace.tck
+    for v in FA MD COMP_SIZE
+    do
+        this_f=${fixel_dir}/MRDS_Diff_${modsel}_${v}.mif
+        for f in $tck $this_f
+        do
+        if [ ! -f $f ]
+        then
+            echolor red "[ERROR] Cannot find file: $f"
+            isOK=0
+        else
+            echolor green "[INFO] Found file: $f"
+        fi
+        done
 
 
-      fcheck=${fixel_dir}/${hemi}_${target_type}_${v}-par-perp-indices.tsf
-      echo "looking for $fcheck"
-      if [ -f $fcheck ]
-      then
-      echolor green "[WARN] File exists, will not overwrite: $fcheck"
-      exit 0
-      fi
+        fcheck=${fixel_dir}/${hemi}_${target_type}_${v}-par-perp-indices.tsf
+        if [ -f $fcheck ]
+        then
+          echolor green "[WARN] File exists, will not overwrite: $fcheck"
+          continue
+        fi
 
 
-      if [ $isOK -eq 1 ]
-      then
-      my_do_cmd tcksamplefixels \
-      -angle $angle \
-      $this_f \
-      $tck \
-      ${fixel_dir}/${hemi}_${target_type}_${v}-par-perp-indices.tsf \
-      ${fixel_dir}/${hemi}_${target_type}_${v}-par.tsf \
-      ${fixel_dir}/${hemi}_${target_type}_${v}-perp.tsf \
-      ${fixel_dir}/${hemi}_${target_type}_${v}-perp-av.tsf
-      else
-      echolor red "[ERROR] Cannot continue, see above errors"
-      exit 2
-      fi
+        if [ $isOK -eq 1 ]
+        then
+        my_do_cmd tcksamplefixels \
+        -angle $angle \
+        $this_f \
+        $tck \
+        ${fixel_dir}/${hemi}_${target_type}_${v}-par-perp-indices.tsf \
+        ${fixel_dir}/${hemi}_${target_type}_${v}-par.tsf \
+        ${fixel_dir}/${hemi}_${target_type}_${v}-perp.tsf \
+        ${fixel_dir}/${hemi}_${target_type}_${v}-perp-av.tsf
+        else
+        # Don't exit here: that would abort the whole script mid-way,
+        # discarding a modsel/hemi/metric combination that already
+        # succeeded earlier in this same run. Record the failure and keep
+        # going; exit 2 only after every combination has been attempted.
+        echolor red "[ERROR] Skipping ${modsel} ${hemi} ${v} sampling, see above errors"
+        scriptFailed=1
+        fi
+    done
   done
+
+  cortical_tsf2txt_in_fixeldir.sh $fixel_dir $nDepths
 done
 
-
-cortical_tsf2txt_in_fixeldir.sh $fixel_dir $nDepths
+if [ $scriptFailed -eq 1 ]
+then
+  echolor red "[ERROR] One or more (modsel, hemisphere, metric) combinations failed, see above."
+  exit 2
+fi
 
 
 

@@ -94,33 +94,44 @@ if [ $isOK -eq 0 ]; then exit 2; fi
 
 
 
-nVoxels=$(mrstats -ignorezero $mask -output count)
-echolor green "[INFO] Will fit MRDS in $nVoxels voxels"
 
 
 
-doComputeMRDS=1
-fcheck=$(ls ${outbase}_MRDS_Diff_FTest_FA.ni*)
-if [ ! -z ${fcheck} ]
-then
-  echolor green "[INFO] File found $fcheck"
-  doComputeMRDS=0
-fi
+
+
+# If any of the MRDS outputs does not exist, recompute all MRDS outputs.
+doComputeMRDS=0
+for modsel in FTest BIC
+do
+  for v in FA MD COMP_SIZE
+  do
+    fcheck=${outbase}_MRDS_Diff_${modsel}_${v}.nii.gz
+    if [ ! -f $fcheck ]
+    then
+      echolor green "[INFO] File not found, will compute: $fcheck"
+      doComputeMRDS=1
+    else
+      echolor green "[INFO] File found, will not overwrite: $fcheck"
+    fi
+  done
+done
 
 
 
 if [ $doComputeMRDS -eq 1 ]
 then
+  nVoxels=$(mrstats -ignorezero $mask -output count)
+  echolor green "[INFO] Will fit MRDS in $nVoxels voxels"
   mkdir -pv $outdir
-    my_do_cmd dti \
-      -mask $mask \
-      -response 0 \
-      -correction 0 \
-      -fa -md \
-      $dwi \
-      $scheme \
-      ${outbase}
-    nAnisoVoxels=`fslstats ${outbase}_DTInolin_ResponseAnisotropicMask.nii -V | awk '{print $1}'`
+  my_do_cmd dti \
+    -mask $mask \
+    -response 0 \
+    -correction 0 \
+    -fa -md \
+    $dwi \
+    $scheme \
+    ${outbase}
+  nAnisoVoxels=`fslstats ${outbase}_DTInolin_ResponseAnisotropicMask.nii -V | awk '{print $1}'`
   if [ $nAnisoVoxels -lt 1 ]
   then
     echolor red "[ERROR] Not enough anisotropic voxels found for estimation of response. Found $nAnisoVoxels"
@@ -147,53 +158,54 @@ then
   echo "$cmd" > ${outbase}_MRDS_cmd.txt
   my_do_cmd $cmd
 
+  gzip -v ${outbase}_DTInolin*.nii ${outbase}_MRDS_*.nii
 else
   echolor green "[INFO] Will not run MRDS"
 fi
 
-gzip -v ${outbase}_DTInolin*.nii ${outbase}_MRDS_*.nii
 
 
-doFixels=1
-fcheck=${outdir}/mrds_fixels/index.mif
-if [ -f $fcheck ]
-then
-  echolor green "[INFO] File found $fcheck"
-  echolor green "       Will not overwrite."
-  doFixels=0
-fi
-
-
-for f in ${outbase}_MRDS_Diff_FTest_{PDDs_CARTESIAN,COMP_SIZE,FA,MD}.ni*
+for modsel in FTest BIC
 do
-  if [ ! -f $f ]
+  haveFixelInputs=1
+  for f in ${outbase}_MRDS_Diff_${modsel}_{PDDs_CARTESIAN,COMP_SIZE,FA,MD}.ni*
+  do
+    if [ ! -f $f ]
+    then
+      echolor red "[ERROR] File not found: $f "
+      haveFixelInputs=0
+    fi
+  done
+
+
+  if [ $haveFixelInputs -eq 1 ]
   then
-    echolor red "[ERROR] File not found: $f "
-    doFixels=0
-  fi 
+    # Each modsel gets its own fixel subdirectory
+    mkdir -pv ${outdir}/mrds_fixels/${modsel}
+    for v in FA MD COMP_SIZE
+    do
+      fcheck=${outdir}/mrds_fixels/${modsel}/MRDS_Diff_${modsel}_${v}.mif
+      if [ -f $fcheck ]
+      then
+        echolor green "[INFO] File found, will not overwrite: $fcheck"
+        continue
+      fi
+      tmpDir=$(mktemp -u)
+      my_do_cmd inb_mrds_scalePDDs.sh \
+          -e 0.0000000000000001 \
+          ${outbase}_MRDS_Diff_${modsel}_PDDs_CARTESIAN.nii.gz \
+          ${outbase}_MRDS_Diff_${modsel}_${v}.nii.gz \
+          ${outbase}_MRDS_Diff_${modsel}_PDDs_CARTESIAN_scaled-by-${v}.nii.gz
+
+      my_do_cmd peaks2fixel \
+          ${outbase}_MRDS_Diff_${modsel}_PDDs_CARTESIAN_scaled-by-${v}.nii.gz \
+          $tmpDir
+      cp -v ${tmpDir}/amplitudes.mif \
+          ${outdir}/mrds_fixels/${modsel}/MRDS_Diff_${modsel}_${v}.mif
+      cp -v ${tmpDir}/{directions,index}.mif ${outdir}/mrds_fixels/${modsel}/
+      my_do_cmd rm -fR $tmpDir
+      done
+  fi
 done
-
-
-if [ $doFixels -eq 1 ]
-then
-   mkdir -pv ${outdir}/mrds_fixels
-   for v in FA MD COMP_SIZE
-   do
-   tmpDir=$(mktemp -u)
-    my_do_cmd inb_mrds_scalePDDs.sh \
-        -e 0.0000000000000001 \
-        ${outbase}_MRDS_Diff_FTest_PDDs_CARTESIAN.nii.gz \
-        ${outbase}_MRDS_Diff_FTest_${v}.nii.gz \
-        ${outbase}_MRDS_Diff_FTest_PDDs_CARTESIAN_scaled-by-${v}.nii.gz
-
-    my_do_cmd peaks2fixel \
-        ${outbase}_MRDS_Diff_FTest_PDDs_CARTESIAN_scaled-by-${v}.nii.gz \
-        $tmpDir
-    cp -v ${tmpDir}/amplitudes.mif \
-        ${outdir}/mrds_fixels/MRDS_Diff_FTest_${v}.mif
-    cp -v ${tmpDir}/{directions,index}.mif ${outdir}/mrds_fixels/
-    my_do_cmd rm -fR $tmpDir
-    done
-fi
 
 echolor green "[INFO] Finished MRDS for $sID"
