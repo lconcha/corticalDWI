@@ -26,11 +26,13 @@ subjects: []
 # `dti` response-fitting tool (both called inside cortical_MRDS.sh) link
 # libgomp directly -> OMP_NUM_THREADS; dipy_fit_dki/AMICO (cortical_DKI.sh,
 # cortical_NODDI.sh) link OpenBLAS's pthreads build -> OPENBLAS_NUM_THREADS
-# (OMP_NUM_THREADS set too, as OpenBLAS's own fallback). Everything else in
-# the pipeline (ANTs' N4BiasFieldCorrection/DenoiseImage/antsIntroduction/
-# WarpImageMultiTransform, every MRtrix tool) is NOT OpenMP-linked and
-# ITK_GLOBAL_DEFAULT_NUMBER_OF_THREADS is unset on this host, so those already
-# use all available cores by default — no threads: needed on those rules.
+# (OMP_NUM_THREADS set too, as OpenBLAS's own fallback). ANTs tools
+# (N4BiasFieldCorrection/DenoiseImage/antsIntroduction/WarpImageMultiTransform)
+# are NOT OpenMP-linked and ITK_GLOBAL_DEFAULT_NUMBER_OF_THREADS is unset on
+# this host, so those already use all available cores by default. These four
+# families below get their own dedicated threads: line per rule, because
+# each is tuned/benchmarked separately (see reference_omp_threads_pinned_to_1
+# and reference_snakemake_cores_vs_jobs_flag memories for mrds/dki/noddi).
 #
 # mrds_threads doubles as the SGE slot request for cortical_MRDS.sh (see
 # profiles/sge_don_clusterio/) — kept at 18 to match established real-world
@@ -40,8 +42,22 @@ subjects: []
 # throughput closely enough to trust over hands-on experience (short-window
 # sampling likely doesn't amortize mdtmrds's per-run setup phase fairly across
 # thread counts) — see reference_omp_threads_pinned_to_1 memory for the detail.
-mrds_threads: 18
-python_threads: 4
+mrds_threads: 12
+python_threads: 7
+
+# Global default MRTRIX_NTHREADS/threads: for every OTHER rule (the vast
+# majority — a rule that's just a few MRtrix calls, no OMP/OpenBLAS tool of
+# its own) that doesn't declare a threads: line of its own. Applied
+# automatically in the Snakefile, once, right after every rules/*.smk is
+# loaded — see the loop there for exactly which rules that is (anything
+# still sitting at Snakemake's own implicit threads: 1 default, i.e. every
+# rule above this comment's four families did NOT already claim). Safe to
+# apply blanket: compute_streamlines' tckedit -nthreads 1 is a hardcoded CLI
+# flag directly in that script (not controlled by MRTRIX_NTHREADS at all),
+# and MRtrix CLI flags always take precedence over the env var regardless —
+# confirmed via MRtrix's own docs — so this can never touch that rule's
+# deliberate single-threaded determinism guarantee.
+mrtrix_threads: 7
 
 # cortical_register_t1_to_dwi.sh calls the external inb_synthreg.sh (not part
 # of this repo), which auto-detects a thread count via `nproc - 2` and passes
@@ -53,4 +69,4 @@ python_threads: 4
 # inb_synthreg.sh's own missing clamp (a separate, real bug in that repo), but
 # requesting a real slot count here means nproc never returns something that
 # breaks its arithmetic in the first place.
-register_threads: 8
+register_threads: 7

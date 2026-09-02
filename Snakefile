@@ -132,13 +132,11 @@ JITTER = "sleep $((RANDOM % 45)); "
 # found only after grepping --help output and binary strings came up empty)
 # overrides MRtrix's auto-detection; explicit -nthreads CLI flags in a wrapped
 # script still take precedence over it per MRtrix's own docs, so this is safe
-# to apply blanket. Using each rule's own threads: (1 for every rule that
-# doesn't declare one) makes Snakemake's accounting finally match what MRtrix
-# tools actually do inside a job, closing a real oversubscription gap: e.g.
-# cortical_compute_streamlines.sh's tckedit call relies on staying
-# single-threaded for deterministic streamline ordering (flagged directly by
-# the pipeline's author) — that rule has no threads: override, so this makes
-# MRTRIX_NTHREADS=1 apply there too, not just to the explicitly-threaded rules.
+# to apply blanket — including on cortical_compute_streamlines.sh's tckedit
+# call, whose deterministic-ordering requirement is protected by a hardcoded
+# `-nthreads 1` CLI flag directly in that script (not by this rule staying at
+# Snakemake's own threads: 1), so raising its MRTRIX_NTHREADS same as every
+# other rule below can never touch that guarantee.
 MRTRIX_ENV = "MRTRIX_NTHREADS={threads} "
 
 include: f"{CORTICAL_DWI_DIR}/rules/streamline_prep.smk"
@@ -148,6 +146,23 @@ include: f"{CORTICAL_DWI_DIR}/rules/mrds.smk"
 include: f"{CORTICAL_DWI_DIR}/rules/dki.smk"
 include: f"{CORTICAL_DWI_DIR}/rules/noddi.smk"
 include: f"{CORTICAL_DWI_DIR}/rules/structural.smk"
+
+# One global default thread count for the "just a few MRtrix calls" majority
+# of rules, so a new rule doesn't need its own threads: line added by hand
+# for MRTRIX_ENV above to actually give it more than Snakemake's own
+# implicit default of 1. Runs once, right here, after every rules/*.smk
+# above has registered its rules on `workflow.rules` — mrds/dki/noddi/
+# register_t1_to_dwi already claimed their own dedicated threads: (see
+# config.yaml's comment on why those four stay separate), so this only
+# touches whatever's still sitting at the untouched default of 1. Mutating
+# rule.resources["_cores"] directly like this is exactly what Snakemake's
+# own --set-threads CLI flag does internally (confirmed in its source,
+# snakemake/workflow.py — see reference_snakemake_mrtrix_threads_default
+# memory) — this is the same mechanism, just applied programmatically
+# instead of needing RULE=N spelled out on the command line for every rule.
+for _rule in workflow.rules:
+    if _rule.name != "all" and _rule.resources.get("_cores", 1) == 1:
+        _rule.resources["_cores"] = config["mrtrix_threads"]
 
 
 def final_outputs(subject):
