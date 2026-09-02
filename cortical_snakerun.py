@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """
-cortical_snakerun.py — run a single corticalDWI Snakemake rule for a single
+cortical_snakerun.py
+
+Run the corticalDWI pipeline through Snakemake. rule for a single
 subject, without needing to know or remember its exact target output path.
 
 Unlike a hand-maintained lookup table, this interrogates the Snakefile fresh
@@ -39,6 +41,11 @@ Usage:
                                                         # (see cortical_delete_everything.sh for the
                                                         # older, hand-maintained-glob equivalent — kept
                                                         # deliberately Snakemake-free)
+  cortical_snakerun.py --delete-rule <rule> <subject|--all-subjects> [--dry-run]
+                                                        # delete just one rule's declared outputs
+                                                        # (exact files only, never a directory sweep —
+                                                        # safe even when the output dir is shared with
+                                                        # another rule, e.g. mrds_fixels/{modsel}/)
 
 Examples:
   cortical_snakerun.py dti sub-79291
@@ -274,6 +281,24 @@ def subject_rule_status(rules, subject):
     return sorted(results)
 
 
+def group_rule_status(rules):
+    """One (rule_name, n_existing, n_total) tuple per *group-wise* rule —
+    one with declared outputs but no {subject} in any of them, e.g.
+    csd_average_response (a group-level CSD response averaged across
+    subjects, see rules/csd.smk). Not tied to any one subject, so it doesn't
+    belong in --status's per-subject grid — reported in its own section
+    instead. Currently just csd_average_response, but written generically
+    so any future group-wise rule shows up here automatically."""
+    results = []
+    for name, info in rules.items():
+        outs = info.get("outputs", [])
+        if not outs or subject_scoped(outs):
+            continue
+        n_existing = sum(1 for p in outs if os.path.exists(p))
+        results.append((name, n_existing, len(outs)))
+    return sorted(results)
+
+
 def compute_rule_deps(rules):
     """name -> set of rule names whose declared output this rule's input
     directly consumes, matched by exact string equality on the already-
@@ -396,6 +421,20 @@ def print_status_table(rules, subjects_dir, subjects):
     for h, name in zip(headers, names):
         print(f"  {h}. {name}")
 
+    group_status = group_rule_status(rules)
+    if group_status:
+        print("-" * (subj_w + col_w * len(names)))
+        print("Group-wise rules (not tied to any one subject):")
+        name_w = max(len(name) for name, _, _ in group_status) + 2
+        for name, n_existing, n_total in group_status:
+            if n_existing == n_total:
+                symbol, color = "✓", GREEN
+            elif n_existing == 0:
+                symbol, color = "✗", RED
+            else:
+                symbol, color = "!", YELLOW
+            print(f"  {color}{symbol}{NC} {name:<{name_w}} {n_existing}/{n_total}")
+
     print("-" * (subj_w + col_w * len(names)))
     n_total_cells = len(subjects) * len(names)
     print(f"Total: {GREEN}{n_full}{NC} / {n_total_cells} rules fully complete "
@@ -471,6 +510,37 @@ def delete_subject(cortical_dwi_dir, subjects_dir, subject, dry_run):
             do_rm(path, is_dir=os.path.isdir(path) and not os.path.islink(path))
 
 
+def delete_rule_outputs(rules, rule_name, subject, dry_run):
+    """Delete exactly one rule's declared outputs for one subject (or, for a
+    rule with no {subject} in its outputs, its one global output set —
+    `subject` is None in that case).
+
+    Deliberately exact-declared-outputs only, unlike delete_subject()'s
+    blanket dwi/ sweep: several rules share an output *directory* with
+    another rule (mrds_fixels/{modsel}/ holds both mrds's .mif files and
+    tcksamplefixels_mrds's .tsf files; csd_fixels/ similarly holds
+    csd_compute_fod's and tcksamplefixels_afd's outputs) — a directory-wide
+    delete here would take out a sibling rule's outputs too, which
+    "delete just this rule's outputs" should never do."""
+    info = rules[rule_name]
+    if subject is not None:
+        outs = [p.format(subject=subject) for p in subject_scoped(info.get("outputs", []))]
+    else:
+        outs = info.get("outputs", [])
+
+    label = subject or "(global)"
+    if not outs:
+        print(f"(rule '{rule_name}' has no outputs to delete for {label})")
+        return
+
+    for f in sorted(outs):
+        if os.path.exists(f):
+            verb = "would rm " if dry_run else "rm "
+            print(verb + f)
+            if not dry_run:
+                os.remove(f)
+
+
 def print_targets(cortical_dwi_dir, subjects_dir, for_subject):
     subject = for_subject or find_a_subject(subjects_dir)
     if not subject:
@@ -529,11 +599,20 @@ def print_targets(cortical_dwi_dir, subjects_dir, for_subject):
         "          numbered column per rule (a footnote below the table maps\n"
         "          numbers back to rule names), check/cross/! (partial).\n"
         "          Defaults to every non-skipped sub-* subject if none are given.\n"
+        "          Rules with no {subject} in their outputs (e.g.\n"
+        "          csd_average_response) aren't per-subject, so they get their\n"
+        "          own \"Group-wise rules\" section below the table instead.\n"
         "  cortical_snakerun.py --delete sub-X [--dry-run]\n"
         "          reset sub-X: delete every rule output for it (mri/ by exact\n"
         "          declared output, dwi/ by everything-except-raw-inputs, surf/\n"
         "          also sweeps undeclared .gii/.spec byproducts). --dry-run/-n\n"
         "          prints what would be removed without deleting anything.\n"
+        "  cortical_snakerun.py --delete-rule <rule> <subject|--all-subjects> [--dry-run]\n"
+        "          delete just one rule's declared outputs, exact files only —\n"
+        "          never a directory sweep, so it's safe even when the output\n"
+        "          dir is shared with another rule (e.g. mrds_fixels/{modsel}/\n"
+        "          holds both mrds's and tcksamplefixels_mrds's outputs).\n"
+        "          --dry-run/-n previews without deleting.\n"
     )
 
 
@@ -556,6 +635,59 @@ def main():
                 dry_run = True
                 argv.remove(flag)
         delete_subject(cortical_dwi_dir, subjects_dir, subject, dry_run)
+        return
+
+    if "--delete-rule" in argv:
+        i = argv.index("--delete-rule")
+        rule_name = argv[i + 1]
+        del argv[i : i + 2]
+
+        dry_run = False
+        for flag in ("--dry-run", "-n"):
+            if flag in argv:
+                dry_run = True
+                argv.remove(flag)
+
+        all_subjects_flag = "--all-subjects" in argv
+        if all_subjects_flag:
+            argv.remove("--all-subjects")
+
+        subject = argv[0] if argv else None
+        if subject and all_subjects_flag:
+            sys.exit("Give either a specific subject or --all-subjects, not both.")
+
+        discovery_subject = subject or find_a_subject(subjects_dir)
+        if not discovery_subject:
+            sys.exit(f"No sub-* directories found in {subjects_dir} to discover rule '{rule_name}' against.")
+        rules, text = discover(cortical_dwi_dir, discovery_subject)
+        if not rules:
+            sys.exit(f"Dry-run against '{discovery_subject}' didn't resolve cleanly:\n\n{text}")
+        if rule_name not in rules:
+            sys.exit(f"Unknown rule '{rule_name}'. Available rules: {', '.join(sorted(rules))}")
+
+        needs_subject = bool(subject_scoped(rules[rule_name].get("outputs", [])))
+        if not needs_subject:
+            if subject or all_subjects_flag:
+                print(f"(note: rule '{rule_name}' doesn't take a subject — "
+                      f"ignoring {'--all-subjects' if all_subjects_flag else repr(subject)})")
+            delete_rule_outputs(rules, rule_name, None, dry_run)
+            return
+
+        if not subject and not all_subjects_flag:
+            sys.exit(
+                f"Rule '{rule_name}' needs a subject: cortical_snakerun.py --delete-rule {rule_name} <subject> "
+                f"(or --all-subjects to clear it for every subject)"
+            )
+
+        if all_subjects_flag:
+            targets = find_all_subjects(subjects_dir)
+            if not targets:
+                sys.exit(f"No sub-* directories found in {subjects_dir}.")
+        else:
+            targets = [subject]
+
+        for s in targets:
+            delete_rule_outputs(rules, rule_name, s, dry_run)
         return
 
     if "--status" in argv:
