@@ -167,7 +167,7 @@ def discover(cortical_dwi_dir, subject):
             print(line, file=sys.stderr)
 
     def generalize(path):
-        # Matched on path *shape* (any /sub-.../ path component), not on the
+        # Matched on token *shape* (any sub-<label> token), not on the
         # literal `subject` string passed to this call — some rules' printed
         # job blocks belong to a *different* subject than the one discovery
         # was scoped to (csd_individual_response is the confirmed case: with
@@ -178,7 +178,21 @@ def discover(cortical_dwi_dir, subject):
         # broke targeting for any subject not in the snapshot (found
         # 2026-08-28: `cortical_snakerun.py csd_individual_response sub-X`
         # for an unsnapshotted sub-X actually targeted the snapshot subject).
-        return re.sub(r"/sub-[^/]+/", "/{subject}/", path)
+        #
+        # Matches the token wherever it appears, not just as a whole /-bounded
+        # path component: mrds_outputs()'s .nii.gz marker embeds the subject
+        # ID as a filename *prefix* (sub-79113_MRDS_Diff_BIC_FA.nii.gz), which
+        # the old /sub-[^/]+/ pattern (slash-bounded on both sides) never
+        # matched, silently leaving one discovery subject's literal ID baked
+        # into that pattern — invisible for --subject-outputs/--subject-status
+        # (which always discover using the very subject they display), but
+        # wrong for every other subject when --status reuses one discovery
+        # subject's rules dict across a whole table (confirmed 2026-09-02:
+        # sub-79291/sub-79864 showed spurious partial mrds/tcksamplefixels_mrds
+        # status whenever a *different* subject came first in the table).
+        # [A-Za-z0-9]+ stops at the next "_"/"."/non-alnum, matching BIDS-style
+        # labels (alphanumeric only, no embedded "_"/"." within one entity).
+        return re.sub(r"sub-[A-Za-z0-9]+", "{subject}", path)
 
     rules = {}
     current = None
