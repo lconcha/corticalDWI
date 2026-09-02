@@ -20,8 +20,21 @@ Usage:
   cortical_snakerun.py <rule> --all-subjects [extra snakemake args...]
   cortical_snakerun.py <rule>                          # only for rules with no {subject} in their pattern
   cortical_snakerun.py <rule> <subject> --cluster      # submit via $SUBJECTS_DIR/.corticalDWI/snakemake_profile
+  cortical_snakerun.py <rule> <subject> --dry-run      # (also -n) show what would run, run nothing —
+                                                        # works with any run-a-rule invocation below too
+                                                        # (--rules/--skip/--all-rules, --all-subjects, --cluster)
+  cortical_snakerun.py <rule> --all-subjects --dry-run --quiet  # (also -q) just the job-count summary,
+                                                        # not every per-job input/output/reason block —
+                                                        # works with any run-a-rule invocation too
+  cortical_snakerun.py --rules dti,mrds,dki <subject|--all-subjects> [extra]  # run just this list
+  cortical_snakerun.py --skip mrds,noddi <subject|--all-subjects> [extra]     # every rule except these
+  cortical_snakerun.py --all-rules [subject|--all-subjects] [extra]          # whole pipeline, same
+                                                        # as plain snakemake (uses rule all's own
+                                                        # targets rather than an explicit list)
   cortical_snakerun.py --subject-outputs sub-X [--under mri]    # every declared output for sub-X
   cortical_snakerun.py --subject-raw-inputs sub-X [--under dwi] # files read but never produced by any rule
+  cortical_snakerun.py --subject-status sub-X                   # per-rule check/cross for one subject
+  cortical_snakerun.py --status [sub-X sub-Y ...]                # cortical_status.sh-style table, all subjects by default
   cortical_snakerun.py --delete sub-X [--dry-run]      # reset sub-X: delete every rule output for it
                                                         # (see cortical_delete_everything.sh for the
                                                         # older, hand-maintained-glob equivalent — kept
@@ -34,6 +47,7 @@ Examples:
   cortical_snakerun.py csd_average_response           # global rule, no subject needed
   cortical_snakerun.py mrds sub-79291 --cluster        # submit to Don Clusterio (or whatever
                                                         # profile is currently deployed there)
+  cortical_snakerun.py dti --all-subjects --dry-run    # preview what would run for every subject
 
 --cluster uses whatever profile is currently sitting in $SUBJECTS_DIR/.corticalDWI/snakemake_profile/ 
 To target a different cluster, copy a different profile config.yaml there;
@@ -46,8 +60,36 @@ import shutil
 import subprocess
 import sys
 
-GREEN_CHECK = "\033[32m✓\033[0m"
-RED_CROSS = "\033[31m✗\033[0m"
+GREEN = "\033[32m"
+RED = "\033[31m"
+YELLOW = "\033[33m"
+BOLD_YELLOW = "\033[1;33m"
+NC = "\033[0m"
+GREEN_CHECK = f"{GREEN}✓{NC}"
+RED_CROSS = f"{RED}✗{NC}"
+YELLOW_BANG = f"{YELLOW}!{NC}"
+
+# Boilerplate --quiet still can't touch: snakemake's own --quiet flag (see
+# the "rules"/"progress" levels used below) only controls per-job rule
+# blocks — these lines print regardless, at every level short of "all" (which
+# also nukes the job-stats summary we actually want to keep, so it's not a
+# usable substitute). Filtered out line-by-line only under --quiet, never
+# otherwise, so nothing here can hide a real error.
+QUIET_NOISE_EXACT = {"Building DAG of jobs..."}
+QUIET_NOISE_PATTERNS = [
+    re.compile(r"^Config file .* is extended by additional config specified via the command line\.$"),
+    re.compile(r"RequestsDependencyWarning"),  # unrelated missing-optional-dep warning from `requests`
+    re.compile(r"pkg_resources is deprecated"),  # unrelated deprecation warning from `stopit`
+    re.compile(r"^\s*warnings\.warn\("),  # the source-line stopit/requests print under their warning
+    re.compile(r"^\s*import pkg_resources$"),
+]
+
+
+def is_quiet_noise(line):
+    stripped = line.rstrip("\n")
+    if stripped in QUIET_NOISE_EXACT:
+        return True
+    return any(p.search(stripped) for p in QUIET_NOISE_PATTERNS)
 
 
 def marked(path):
@@ -79,6 +121,24 @@ def discover(cortical_dwi_dir, subject):
     """Run `snakemake -n --forceall` scoped to one subject; parse rule name ->
     {pattern, threads} from the dry-run's own "rule X: ... output: ... threads: ..."
     blocks. Returns (rules_dict, raw_output_text)."""
+    # --directory is $SUBJECTS_DIR/.corticalDWI, not the repo: snakemake
+    # always creates its own .snakemake/ state (locks, metadata, logs)
+    # relative to --directory, and putting that under the repo (the old
+    # behavior) meant every run left snakemake-internal state inside the
+    # corticalDWI git checkout. Safe to relocate: the Snakefile/rules/*.smk
+    # only ever use absolute SUBJECTS_DIR/CORTICAL_DWI_DIR-prefixed paths
+    # (never anything relative to --directory), and every wrapped
+    # cortical_*.sh script — plus its own bare `source cortical_load_params.sh`
+    # — is found via $PATH (see path_corticalDWI() in ~/.bashrc), not CWD, so
+    # nothing here depends on --directory being the repo. Pre-create the
+    # target dir ourselves rather than relying on the Snakefile's own
+    # os.makedirs(STUDY_DIR) for it (rules/*.smk line ~84) — that only runs
+    # once Snakemake has already parsed the Snakefile, which happens *after*
+    # it chdirs into --directory, so on a brand-new dataset --directory
+    # itself wouldn't exist yet without this.
+    subjects_dir = os.environ["SUBJECTS_DIR"].rstrip("/")
+    study_dir = os.path.join(subjects_dir, ".corticalDWI")
+    os.makedirs(study_dir, exist_ok=True)
     cmd = [
         "snakemake", "-n", "--forceall",
         # --cores matters here, not just for a real run: without it, Snakemake
@@ -87,14 +147,38 @@ def discover(cortical_dwi_dir, subject):
         # memory), so a rule's true declared threads: would silently read back as 1.
         "--cores", "64",
         "-s", os.path.join(cortical_dwi_dir, "Snakefile"),
-        "--directory", cortical_dwi_dir,
+        "--directory", study_dir,
         "--config", f'subjects=["{subject}"]',
     ]
     result = subprocess.run(cmd, capture_output=True, text=True)
     text = result.stdout + result.stderr
 
+    # Surface Snakefile-level data-hygiene warnings (e.g. a bad line in
+    # csd_average_response_subjects.txt — see rules/csd.smk) here, once,
+    # regardless of whether discovery itself succeeds or fails — every
+    # caller of discover() gets this for free rather than needing to
+    # remember to check `text` themselves, and it doesn't just get silently
+    # dropped on the success path the way a plain "check text on failure
+    # only" approach would.
+    for line in text.splitlines():
+        if line.startswith("WARNING:"):
+            print(f"{BOLD_YELLOW}{line}{NC}", file=sys.stderr)
+        elif line.startswith("NOTE:"):
+            print(line, file=sys.stderr)
+
     def generalize(path):
-        return path.replace(subject, "{subject}") if subject in path else path
+        # Matched on path *shape* (any /sub-.../ path component), not on the
+        # literal `subject` string passed to this call — some rules' printed
+        # job blocks belong to a *different* subject than the one discovery
+        # was scoped to (csd_individual_response is the confirmed case: with
+        # --forceall, its only printed instance is whichever subject is in
+        # the frozen CSD snapshot — see rules/csd.smk — not the discovery
+        # subject). A literal-string replace would leave that path hardcoded
+        # to the wrong subject instead of generalizing it, which silently
+        # broke targeting for any subject not in the snapshot (found
+        # 2026-08-28: `cortical_snakerun.py csd_individual_response sub-X`
+        # for an unsnapshotted sub-X actually targeted the snapshot subject).
+        return re.sub(r"/sub-[^/]+/", "/{subject}/", path)
 
     rules = {}
     current = None
@@ -144,6 +228,149 @@ def subject_outputs(rules, subject, under=None):
     if under:
         paths = {p for p in paths if f"/{subject}/{under}/" in p}
     return sorted(paths)
+
+
+def subject_rule_status(rules, subject):
+    """One (rule_name, n_existing, n_total) tuple per subject-scoped rule —
+    the per-rule analogue of subject_outputs' per-file listing. A rule with
+    no {subject} in its outputs (a global rule, e.g. csd_average_response)
+    is skipped: it isn't this subject's to report on."""
+    results = []
+    for name, info in rules.items():
+        outs = [p.format(subject=subject) for p in subject_scoped(info.get("outputs", []))]
+        if not outs:
+            continue
+        n_existing = sum(1 for p in outs if os.path.exists(p))
+        results.append((name, n_existing, len(outs)))
+    return sorted(results)
+
+
+def compute_rule_deps(rules):
+    """name -> set of rule names whose declared output this rule's input
+    directly consumes, matched by exact string equality on the already-
+    {subject}-generalized paths in `rules` (no real subject needed)."""
+    output_owner = {}
+    for name, info in rules.items():
+        for out in info.get("outputs", []):
+            output_owner[out] = name
+
+    deps = {name: set() for name in rules}
+    for name, info in rules.items():
+        for inp in info.get("inputs", []):
+            producer = output_owner.get(inp)
+            if producer and producer != name:
+                deps[name].add(producer)
+    return deps
+
+
+def compute_rule_dependents(rules):
+    """name -> set of rule names whose input directly consumes this rule's
+    output — the reverse of compute_rule_deps, i.e. "who breaks if this rule
+    doesn't run"."""
+    deps = compute_rule_deps(rules)
+    dependents = {name: set() for name in rules}
+    for name, needed in deps.items():
+        for dep in needed:
+            dependents[dep].add(name)
+    return dependents
+
+
+def transitive_rule_dependents(dependents, name):
+    """Every rule (recursively) that needs `name`'s output, directly or via
+    some other rule in between."""
+    seen = set()
+    stack = list(dependents.get(name, ()))
+    while stack:
+        dep = stack.pop()
+        if dep in seen:
+            continue
+        seen.add(dep)
+        stack.extend(dependents.get(dep, ()))
+    return seen
+
+
+def rule_dependency_order(rules):
+    """Topologically sort rule names so each rule comes after every other
+    rule whose output it consumes as input — matched by exact string equality
+    on the already-{subject}-generalized paths in `rules`, so this doesn't
+    need a real subject to reason about the DAG shape. Independent branches
+    (no dependency either way) keep their original discovery order, so the
+    result is deterministic without an arbitrary alphabetical tiebreak."""
+    deps = compute_rule_deps(rules)
+
+    order = []
+    done = set()
+    in_progress = set()
+
+    def visit(name):
+        if name in done or name in in_progress:
+            return
+        in_progress.add(name)
+        for dep in deps.get(name, ()):
+            visit(dep)
+        in_progress.discard(name)
+        done.add(name)
+        order.append(name)
+
+    for name in rules:
+        visit(name)
+    return order
+
+
+def print_status_table(rules, subjects_dir, subjects):
+    """cortical_status.sh-style table: one row per subject, one column per
+    subject-scoped rule. Reuses a single `rules` dict (one snakemake dry-run,
+    already paid for by the caller) against every subject's real files —
+    subject_rule_status itself is pure os.path.exists, so this scales to any
+    number of subjects without extra snakemake subprocess calls.
+
+    Columns are labeled 1, 2, 3... rather than by rule name — rule names are
+    long enough that spelling them out as column headers overflows the row
+    (a subject can have 15-20 rules) — with a numbered footnote below the
+    table mapping each number back to its rule name. Column order follows
+    the pipeline's own DAG (upstream rules first), not alphabetical, so
+    reading left-to-right roughly matches the order steps actually run in."""
+    subject_scoped_names = {name for name, info in rules.items() if subject_scoped(info.get("outputs", []))}
+    names = [n for n in rule_dependency_order(rules) if n in subject_scoped_names]
+    if not names:
+        sys.exit("No subject-scoped rules discovered.")
+
+    headers = [str(i + 1) for i in range(len(names))]
+    subj_w = max([len(s) for s in subjects] + [len("SUBJECT")]) + 2
+    col_w = max([len(h) for h in headers] + [1]) + 2
+
+    print("SUBJECT".ljust(subj_w) + "".join(h.ljust(col_w) for h in headers))
+    print("-" * (subj_w + col_w * len(names)))
+
+    n_full = 0
+    for subject in subjects:
+        if os.path.exists(os.path.join(subjects_dir, subject, "skip")):
+            continue
+        if not os.path.isdir(os.path.join(subjects_dir, subject)):
+            print(f"{YELLOW}{subject.ljust(subj_w)}(directory not found){NC}")
+            continue
+        status = {name: (e, t) for name, e, t in subject_rule_status(rules, subject)}
+        row = subject.ljust(subj_w)
+        for name in names:
+            n_existing, n_total = status.get(name, (0, 0))
+            if n_existing == n_total:
+                symbol, color = "✓", GREEN
+                n_full += 1
+            elif n_existing == 0:
+                symbol, color = "✗", RED
+            else:
+                symbol, color = "!", YELLOW
+            row += f"{color}{symbol}{NC}" + " " * (col_w - 1)
+        print(row)
+
+    print("-" * (subj_w + col_w * len(names)))
+    for h, name in zip(headers, names):
+        print(f"  {h}. {name}")
+
+    print("-" * (subj_w + col_w * len(names)))
+    n_total_cells = len(subjects) * len(names)
+    print(f"Total: {GREEN}{n_full}{NC} / {n_total_cells} rules fully complete "
+          f"across {len(subjects)} subject(s)  ({GREEN}✓{NC}=done  {RED}✗{NC}=missing  {YELLOW}!{NC}=partial)")
 
 
 def subject_raw_inputs(rules, subject, under=None):
@@ -236,6 +463,11 @@ def print_targets(cortical_dwi_dir, subjects_dir, for_subject):
         "\nUsage: cortical_snakerun.py <rule> <subject> [extra snakemake args]\n"
         "       cortical_snakerun.py <rule>              (only for rules with no {subject} above)\n"
         "       cortical_snakerun.py <rule> --all-subjects   (run for every non-skipped sub-*)\n"
+        "       cortical_snakerun.py --rules r1,r2,r3 <subject|--all-subjects>   (just these rules)\n"
+        "       cortical_snakerun.py --skip r1,r2 <subject|--all-subjects>       (every discovered\n"
+        "                                                                        rule except these)\n"
+        "       cortical_snakerun.py --all-rules [subject|--all-subjects]        (the whole\n"
+        "                                                     pipeline — same as plain snakemake)\n"
         "\n"
         "- By default this runs locally, sized to just the one job's threads.\n"
         "- To run on the cluster instead, add --cluster:\n"
@@ -246,12 +478,28 @@ def print_targets(cortical_dwi_dir, subjects_dir, for_subject):
         "- To run locally with more than one job's worth of cores yourself (e.g.\n"
         "  for --all-subjects), pass your own --cores N.\n"
         "- To use a hand-picked profile instead of the deployed one, pass --profile <dir>\n"
+        "- Add --dry-run (also -n) to any of the above to show what would run\n"
+        "  (rules, targets, MRTRIX_NTHREADS/threads:) without actually running it —\n"
+        "  works with --rules/--skip/--all-rules, --all-subjects, and --cluster too.\n"
+        "- Add --quiet (also -q) to cut the per-job rule/input/output/reason\n"
+        "  blocks down to just the job-count summary table (great paired with\n"
+        "  --dry-run: 'how many jobs would run' instead of every file detail).\n"
+        "  Real errors and progress messages still print — only the routine\n"
+        "  per-rule chatter is suppressed.\n"
         "\n"
         "Introspection / cleanup (read the rules, don't run anything):\n"
         "  cortical_snakerun.py --subject-outputs sub-X [--under mri]\n"
         "          every file some rule declares as output for sub-X\n"
         "  cortical_snakerun.py --subject-raw-inputs sub-X [--under dwi]\n"
         "          files some rule reads but no rule ever produces (i.e. raw data)\n"
+        "  cortical_snakerun.py --subject-status sub-X\n"
+        "          one line per subject-scoped rule, check/cross + n/m outputs\n"
+        "          present for sub-X\n"
+        "  cortical_snakerun.py --status [sub-X sub-Y ...]\n"
+        "          cortical_status.sh-style table: one row per subject, one\n"
+        "          numbered column per rule (a footnote below the table maps\n"
+        "          numbers back to rule names), check/cross/! (partial).\n"
+        "          Defaults to every non-skipped sub-* subject if none are given.\n"
         "  cortical_snakerun.py --delete sub-X [--dry-run]\n"
         "          reset sub-X: delete every rule output for it (mri/ by exact\n"
         "          declared output, dwi/ by everything-except-raw-inputs, surf/\n"
@@ -279,6 +527,34 @@ def main():
                 dry_run = True
                 argv.remove(flag)
         delete_subject(cortical_dwi_dir, subjects_dir, subject, dry_run)
+        return
+
+    if "--status" in argv:
+        argv.remove("--status")
+        given_subjects = [a for a in argv if not a.startswith("-")]
+        subjects = given_subjects or find_all_subjects(subjects_dir)
+        if not subjects:
+            sys.exit(f"No sub-* directories found in {subjects_dir}.")
+        rules, text = discover(cortical_dwi_dir, subjects[0])
+        if not rules:
+            sys.exit(f"Dry-run against '{subjects[0]}' didn't resolve cleanly:\n\n{text}")
+        print_status_table(rules, subjects_dir, subjects)
+        return
+
+    if "--subject-status" in argv:
+        i = argv.index("--subject-status")
+        subject = argv[i + 1]
+        del argv[i : i + 2]
+        rules, text = discover(cortical_dwi_dir, subject)
+        if not rules:
+            sys.exit(f"Dry-run against '{subject}' didn't resolve cleanly:\n\n{text}")
+        results = subject_rule_status(rules, subject)
+        if not results:
+            sys.exit(f"No subject-scoped rules discovered for '{subject}'.")
+        name_w = max(len(name) for name, _, _ in results) + 2
+        for name, n_existing, n_total in results:
+            mark = GREEN_CHECK if n_existing == n_total else RED_CROSS
+            print(f"{mark} {name:<{name_w}} {n_existing}/{n_total}")
         return
 
     for mode in ("--subject-outputs", "--subject-raw-inputs"):
@@ -313,12 +589,51 @@ def main():
     if cluster_flag:
         argv.remove("--cluster")
 
-    if not argv or argv[0] in ("-h", "--help"):
+    quiet_flag = False
+    for flag in ("--quiet", "-q"):
+        if flag in argv:
+            quiet_flag = True
+            argv.remove(flag)
+
+    dry_run_flag = False
+    for flag in ("--dry-run", "-n"):
+        if flag in argv:
+            dry_run_flag = True
+            argv.remove(flag)
+
+    all_rules_flag = "--all-rules" in argv
+    if all_rules_flag:
+        argv.remove("--all-rules")
+
+    rules_arg = None
+    if "--rules" in argv:
+        i = argv.index("--rules")
+        rules_arg = argv[i + 1]
+        del argv[i : i + 2]
+
+    skip_arg = None
+    if "--skip" in argv:
+        i = argv.index("--skip")
+        skip_arg = argv[i + 1]
+        del argv[i : i + 2]
+
+    if sum(x is not None for x in (all_rules_flag or None, rules_arg, skip_arg)) > 1:
+        sys.exit("Give at most one of --all-rules, --rules, or --skip.")
+
+    if "-h" in argv or "--help" in argv:
         print_targets(cortical_dwi_dir, subjects_dir, for_subject)
         return
 
-    rule = argv[0]
-    rest = argv[1:]
+    mode = "all" if all_rules_flag else "list" if rules_arg is not None else "skip" if skip_arg is not None else "single"
+
+    if mode == "single":
+        if not argv:
+            print_targets(cortical_dwi_dir, subjects_dir, for_subject)
+            return
+        rule = argv[0]
+        rest = argv[1:]
+    else:
+        rest = argv
 
     subject = None
     extra_args = rest
@@ -331,41 +646,120 @@ def main():
 
     discovery_subject = subject or for_subject or find_a_subject(subjects_dir)
     if not discovery_subject:
-        sys.exit(f"No sub-* directories found in {subjects_dir} to discover rule '{rule}' against.")
+        sys.exit(f"No sub-* directories found in {subjects_dir} to discover rules against.")
 
     rules, text = discover(cortical_dwi_dir, discovery_subject)
-    if rule not in rules:
-        available = ", ".join(sorted(rules)) if rules else "(none discovered)"
-        sys.exit(f"Unknown rule '{rule}'. Available rules: {available}")
+    if not rules:
+        sys.exit(f"Dry-run against '{discovery_subject}' didn't resolve cleanly:\n\n{text}")
 
-    pattern = rules[rule]["pattern"]
-    threads = rules[rule].get("threads", 1)
-    needs_subject = "{subject}" in pattern
-
-    if needs_subject and not subject and not all_subjects_flag:
-        sys.exit(
-            f"Rule '{rule}' needs a subject: cortical_snakerun.py {rule} <subject> "
-            f"(or --all-subjects to run it for every subject)"
-        )
-    if not needs_subject and (subject or all_subjects_flag):
-        print(f"(note: rule '{rule}' doesn't take a subject — ignoring {'--all-subjects' if all_subjects_flag else repr(subject)})")
-
-    if needs_subject and all_subjects_flag:
-        all_subjects = find_all_subjects(subjects_dir)
-        if not all_subjects:
-            sys.exit(f"No sub-* directories found in {subjects_dir}.")
-        targets = [pattern.format(subject=s) for s in all_subjects]
-        print(f"(--all-subjects: {len(all_subjects)} subjects — {', '.join(all_subjects)})")
-    elif needs_subject:
-        targets = [pattern.format(subject=subject)]
+    if mode == "single":
+        if rule not in rules:
+            sys.exit(f"Unknown rule '{rule}'. Available rules: {', '.join(sorted(rules))}")
+        selected = [rule]
+    elif mode == "list":
+        names = [n.strip() for n in rules_arg.split(",") if n.strip()]
+        unknown = [n for n in names if n not in rules]
+        if unknown:
+            sys.exit(f"Unknown rule(s): {', '.join(unknown)}. Available: {', '.join(sorted(rules))}")
+        selected = names
+    elif mode == "skip":
+        skip_names = [n.strip() for n in skip_arg.split(",") if n.strip()]
+        unknown = [n for n in skip_names if n not in rules]
+        if unknown:
+            sys.exit(f"Unknown rule(s) to skip: {', '.join(unknown)}. Available: {', '.join(sorted(rules))}")
+        # Skipping a rule only drops its own target from the request — if
+        # another still-selected rule needs its output as an input (e.g.
+        # tcksamplefixels_mrds needs mrds), Snakemake would pull it back in
+        # as a dependency regardless. So walk the DAG forward from each
+        # skipped rule via compute_rule_dependents and skip everything
+        # downstream of it too, rather than silently failing to skip it.
+        dependents = compute_rule_dependents(rules)
+        full_skip = set(skip_names)
+        for name in skip_names:
+            full_skip |= transitive_rule_dependents(dependents, name)
+        auto_skipped = sorted(full_skip - set(skip_names))
+        selected = [n for n in sorted(rules) if n not in full_skip]
+        if not selected:
+            sys.exit("Skipping every discovered rule (directly or via its downstream dependents) leaves nothing to run.")
     else:
-        targets = [pattern]
+        selected = None  # --all-rules: no explicit target list, let snakemake run its own default (rule all)
+
+    if mode == "all":
+        targets = []
+        threads = max((info.get("threads", 1) for info in rules.values()), default=1)
+        if not quiet_flag:
+            if subject:
+                print(f"(--all-rules: running the full pipeline for subject '{subject}')")
+            else:
+                print("(--all-rules: running the full pipeline for every non-skipped subject — same as plain snakemake)")
+    else:
+        all_subjects_list = None
+        if all_subjects_flag:
+            all_subjects_list = find_all_subjects(subjects_dir)
+            if not all_subjects_list:
+                sys.exit(f"No sub-* directories found in {subjects_dir}.")
+
+        targets = []
+        missing_subject = []
+        no_subject_needed = []
+        for name in selected:
+            pattern = rules[name]["pattern"]
+            needs_subject = "{subject}" in pattern
+            if needs_subject and all_subjects_flag:
+                targets += [pattern.format(subject=s) for s in all_subjects_list]
+            elif needs_subject and subject:
+                targets.append(pattern.format(subject=subject))
+            elif needs_subject:
+                missing_subject.append(name)
+            else:
+                targets.append(pattern)
+                if subject or all_subjects_flag:
+                    no_subject_needed.append(name)
+
+        if missing_subject:
+            sys.exit(
+                "These selected rules need a subject: " + ", ".join(missing_subject) +
+                " — pass a subject or --all-subjects."
+            )
+        if no_subject_needed and not quiet_flag:
+            print(f"(note: rule(s) {', '.join(no_subject_needed)} don't take a subject — "
+                  f"ignoring {'--all-subjects' if all_subjects_flag else repr(subject)} for them)")
+        if not quiet_flag:
+            if mode == "list":
+                print(f"(--rules: {len(selected)} rule(s) — {', '.join(selected)})")
+            elif mode == "skip":
+                print(f"(--skip {', '.join(skip_names)}: running {len(selected)} of {len(rules)} discovered rules — {', '.join(selected)})")
+                if auto_skipped:
+                    print(f"(note: also skipping {', '.join(auto_skipped)} — downstream of a skipped rule, "
+                          "would otherwise be pulled back in as a dependency)")
+            if all_subjects_flag:
+                print(f"(--all-subjects: {len(all_subjects_list)} subjects — {', '.join(all_subjects_list)})")
+
+        threads = max((rules[n].get("threads", 1) for n in selected), default=1)
 
     cmd = [
         "snakemake",
         "-s", os.path.join(cortical_dwi_dir, "Snakefile"),
-        "--directory", cortical_dwi_dir,
+        # $SUBJECTS_DIR/.corticalDWI, not the repo — see discover()'s comment
+        # for why. Already exists by now: discover() (called above to look up
+        # this rule) creates it as a side effect.
+        "--directory", os.path.join(subjects_dir, ".corticalDWI"),
     ]
+    if mode == "all" and subject:
+        cmd += ["--config", f'subjects=["{subject}"]']
+    if dry_run_flag:
+        cmd.append("-n")
+    if quiet_flag:
+        # snakemake's own --quiet takes an optional {progress,rules,all}
+        # list (nargs='*') — greedily placing it right before the bare
+        # target-path list at the end of cmd would make argparse swallow the
+        # first target as an "invalid choice" for --quiet instead of a
+        # target, so this must sit here, immediately followed by another
+        # --flag (--profile/--cluster or --cores below), never directly by
+        # extra_args/targets. "rules" hides the per-job rule/input/output/
+        # reason blocks but keeps the job-count summary table and any real
+        # errors — exactly "how many jobs would run", not every file detail.
+        cmd += ["--quiet", "rules"]
 
     profile_given = any(a in ("--profile",) for a in extra_args)
     if cluster_flag:
@@ -392,7 +786,36 @@ def main():
         cmd += ["--cores", str(threads)]
     cmd += extra_args + targets
 
+    if quiet_flag:
+        # Can't os.execvp() here: process replacement hands the terminal
+        # straight to snakemake with no way to filter its output afterward.
+        # --quiet rules/progress can't suppress "Building DAG of jobs...",
+        # the "Config file ... extended by ..." notices, or unrelated
+        # dependency warnings (confirmed empirically — no combination short
+        # of "all" removes them, and "all" also removes the job-stats table
+        # this flag exists to keep) — see QUIET_NOISE_* above. So this
+        # streams the real subprocess's combined output line-by-line and
+        # drops only those known-boilerplate lines; anything else (job
+        # stats, real errors, the wrapped scripts' own stdout) passes
+        # through untouched, and the real exit code still propagates.
+        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
+        try:
+            for line in proc.stdout:
+                if not is_quiet_noise(line):
+                    print(line, end="")
+        except KeyboardInterrupt:
+            pass
+        finally:
+            proc.wait()
+        sys.exit(proc.returncode)
+
     print("+ " + " ".join(cmd))
+    # os.execvp() replaces this process image directly (execve syscall) — it
+    # never goes through Python's normal exit/flush machinery, so any stdout
+    # buffered so far (every print() above, all the "(--rules/--skip/...)"
+    # notes) would otherwise be silently lost whenever stdout isn't a TTY
+    # (piped, redirected, or captured — e.g. inside an SGE job's -o log).
+    sys.stdout.flush()
     os.execvp(cmd[0], cmd)
 
 
