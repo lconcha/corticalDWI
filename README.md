@@ -5,6 +5,7 @@ Functions and scripts not included here can be found at https://github.com/lconc
 
 Please note that this pipeline uses a custom module for mrtrix,  which should be [downloaded](https://github.com/lconcha/inb_mrtrix_modules) and compiled first.
 
+Other auxiliary tools can be downloaded from [here](https://github.com/lconcha/inb_tools)
 
 ## Tutorial
 Please see [here](./tutorial.md).
