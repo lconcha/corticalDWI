@@ -8,6 +8,8 @@ Please note that this pipeline uses a custom module for mrtrix,  which should be
 Other auxiliary tools can be downloaded from [here](https://github.com/lconcha/inb_tools)
 
 ## Tutorial
+
+:smiley: 
 Please see [here](./tutorial.md).
 
 ![cover](images/cover.png)
