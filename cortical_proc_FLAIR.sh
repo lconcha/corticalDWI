@@ -147,10 +147,25 @@ if [ ! -f $t1_proc ]
 then
   echolor red "[ERROR] File does not exist: $t1_proc"
 else
+  # flair_proc is exactly zero outside the brain mask, so a plain division
+  # produces NaN (x/0) or 0/0 there. tcksample would later pick these up for
+  # any streamline point near that boundary, and a NaN sample is
+  # indistinguishable from the tsf format's own streamline delimiter,
+  # silently corrupting the sampled output. Sanitize to -1, matching the
+  # "no value" sentinel tcksamplefixels/cortical_browser.py already use.
+  raw_ratio=${tmpDir}/t1_over_flair_raw.nii
   my_do_cmd mrcalc \
     $t1_proc \
     $flair_proc \
     -div \
+    $raw_ratio
+
+  my_do_cmd mrcalc \
+    $raw_ratio \
+    -finite \
+    $raw_ratio \
+    -1 \
+    -if \
     $t1_over_flair
 
 fi

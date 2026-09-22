@@ -76,7 +76,7 @@ do
       echolor red "[ERROR] File does not exist: $map"
       exit 2
     fi
-    my_do_cmd   tcksample  $tck $map $tsfout
+    my_do_cmd   cortical_tcksample_safe.sh  $tck $map $tsfout
   done
 
 done

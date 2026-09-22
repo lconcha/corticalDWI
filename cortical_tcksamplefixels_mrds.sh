@@ -93,7 +93,7 @@ do
 
         if [ $isOK -eq 1 ]
         then
-        my_do_cmd tcksamplefixels \
+        my_do_cmd cortical_tcksamplefixels_safe.sh \
         -angle $angle \
         $this_f \
         $tck \
