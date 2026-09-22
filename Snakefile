@@ -165,17 +165,32 @@ for _rule in workflow.rules:
         _rule.resources["_cores"] = config["mrtrix_threads"]
 
 
+def has_dwi(subject):
+    return os.path.exists(f"{SUBJECTS_DIR}/{subject}/dwi/dwi.nii.gz")
+
+
 def final_outputs(subject):
     """Every leaf (terminal) output for one subject. Nothing downstream
-    depends on these, so requesting them pulls in the whole DAG behind them."""
-    return (
-        tcksample_dti_outputs(subject)
-        + tcksamplefixels_afd_outputs(subject)
-        + tcksamplefixels_mrds_outputs(subject)
-        + tcksample_dki_outputs(subject)
-        + tcksample_noddi_outputs(subject)
-        + tcksample_mri_outputs(subject)
-    )
+    depends on these, so requesting them pulls in the whole DAG behind them.
+
+    dwi.nii.gz is the one raw input no rule in rules/*.smk ever produces, so
+    its presence is what distinguishes "has dwi data" from "T1/FLAIR only" —
+    every DTI/CSD/MRDS/DKI/NODDI output below depends on it, directly or
+    transitively, and is skipped entirely for a subject without one. Nothing
+    else in this pipeline needs dwi/ at all: laplacian, resample_surface_ico6_sym,
+    compute_streamlines, proc_t1 (and, if flair.nii.gz is present, proc_flair —
+    see has_flair() in rules/structural.smk) still run and are pulled in via
+    tcksample_mri_outputs() below regardless."""
+    outputs = tcksample_mri_outputs(subject)
+    if has_dwi(subject):
+        outputs += (
+            tcksample_dti_outputs(subject)
+            + tcksamplefixels_afd_outputs(subject)
+            + tcksamplefixels_mrds_outputs(subject)
+            + tcksample_dki_outputs(subject)
+            + tcksample_noddi_outputs(subject)
+        )
+    return outputs
 
 
 rule all:
