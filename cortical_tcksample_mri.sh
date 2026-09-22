@@ -3,16 +3,21 @@ source `which my_do_cmd`
 
 help() {
   echo "
-  Usage: $(basename $0) <subjID> <nDepths> <target_type>
-  
+  Usage: $(basename $0) <subjID> <nDepths> <target_type> [metrics]
+
   <subjID>    subject ID in the form of sub-74277
   <nDepths>   number of depth points to keep in the txt file.
-              This is in steps, not mm, 
+              This is in steps, not mm,
               and has to be less than or equal to the number of depth points in the tsf file.
   <target_type>  target type, e.g. fsLR-32k or ico6_sym
+  [metrics]   optional space-separated list of metrics to sample (quoted as one
+              argument), e.g. \"T1w_proc T1w_proc_grad\". Defaults to all four:
+              T1w_proc flair_proc T1w_proc_grad T1_over_FLAIR. Use this to
+              sample just the T1-only metrics for a subject with no
+              flair.nii.gz/flair_proc.nii.gz.
   This script samples mri/ conventional images from a tck file and saves them in tsf format.
   It expects images like mri/T1w_proc.nii.gz and mri/flair_proc.nii.gz to exist in the subject's directory.
- 
+
   "
 }
 
@@ -27,10 +32,12 @@ fi
 # ── Defaults / config / CLI args ──────────────────────────────────────────────
 nDepths=30
 target_type=ico6_sym
+metrics="T1w_proc flair_proc T1w_proc_grad T1_over_FLAIR"
 source cortical_load_params.sh 2>/dev/null || true
 subjID=$1
 [ -n "$2" ] && nDepths=$2
 [ -n "$3" ] && target_type=$3
+[ -n "$4" ] && metrics=$4
 
 
 fcheck=${SUBJECTS_DIR}/${subjID}/dwi/mri/lh_${target_type}_T1w_proc.tsf
@@ -40,8 +47,6 @@ then
   exit 0
 fi
 
-    
-metrics="T1w_proc flair_proc T1w_proc_grad T1_over_FLAIR"
 
 for hemi in lh rh
 do

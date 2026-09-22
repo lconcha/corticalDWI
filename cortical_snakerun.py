@@ -145,9 +145,34 @@ def find_all_subjects(subjects_dir):
     )
 
 
-def find_a_subject(subjects_dir):
-    subjects = find_all_subjects(subjects_dir)
-    return subjects[0] if subjects else None
+def find_a_subject(subjects_dir, candidates=None):
+    """Pick a subject to run rule discovery against. Defaults to every
+    non-skipped sub-* in subjects_dir; pass `candidates` to instead choose
+    among a specific subset (e.g. --status's own subject list).
+
+    Since discover() only ever sees the rule blocks a --forceall dry-run
+    actually prints for the ONE subject it's scoped to (see its docstring),
+    and rules/*.smk's DAG now varies by subject — DTI/CSD/MRDS/DKI/NODDI
+    outputs are skipped for a subject with no dwi/dwi.nii.gz, and
+    tcksample_mri's FLAIR half is skipped for one with no mri/flair.nii.gz
+    (see has_dwi()/has_flair() in Snakefile/rules/structural.smk) — picking
+    a thin subject here would silently hide whole rule families from
+    everything that reuses this (bare listing, -h, --status): confirmed
+    2026-09-21 that a --forceall dry-run scoped to a dwi-less subject prints
+    no dti/mrds/dki/noddi/csd_* rule blocks at all. So prefer a subject with
+    both dwi and flair, then just dwi, then any — maximizing how much of the
+    rule set a single dry-run can actually discover. Ties keep the
+    candidates' original (alphabetical, for the default case) order."""
+    subjects = candidates if candidates is not None else find_all_subjects(subjects_dir)
+    if not subjects:
+        return None
+
+    def richness(s):
+        has_dwi = os.path.exists(os.path.join(subjects_dir, s, "dwi", "dwi.nii.gz"))
+        has_flair = os.path.exists(os.path.join(subjects_dir, s, "mri", "flair.nii.gz"))
+        return (has_dwi and has_flair, has_dwi)
+
+    return max(subjects, key=richness)
 
 
 def discover(cortical_dwi_dir, subject):
@@ -676,9 +701,10 @@ def main():
         subjects = given_subjects or find_all_subjects(subjects_dir)
         if not subjects:
             sys.exit(f"No sub-* directories found in {subjects_dir}.")
-        rules, text = discover(cortical_dwi_dir, subjects[0])
+        discovery_subject = find_a_subject(subjects_dir, candidates=subjects)
+        rules, text = discover(cortical_dwi_dir, discovery_subject)
         if not rules:
-            sys.exit(f"Dry-run against '{subjects[0]}' didn't resolve cleanly:\n\n{text}")
+            sys.exit(f"Dry-run against '{discovery_subject}' didn't resolve cleanly:\n\n{text}")
         print_status_table(rules, subjects_dir, subjects)
         return
 
