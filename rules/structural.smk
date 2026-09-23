@@ -16,7 +16,7 @@ a subject with no dwi/ data at all.
 """
 
 STRUCTURAL_METRICS_T1 = ["T1w_proc", "T1w_proc_grad"]
-STRUCTURAL_METRICS_FLAIR = ["flair_proc", "T1_over_FLAIR"]
+STRUCTURAL_METRICS_FLAIR = ["flair_proc", "T1_over_FLAIR", "t1_to_flair_affine"]
 
 
 def has_flair(subject):
@@ -45,6 +45,7 @@ rule proc_flair:
     output:
         flair_proc=f"{SUBJECTS_DIR}/{{subject}}/mri/flair_proc.nii.gz",
         t1_over_flair=f"{SUBJECTS_DIR}/{{subject}}/mri/T1_over_FLAIR.nii.gz",
+        t1_to_flair_affine=f"{SUBJECTS_DIR}/{{subject}}/mri/ants_Affine_FLAIR_to_T1.txt",
     shell:
         MRTRIX_ENV + "cortical_proc_FLAIR.sh {wildcards.subject}"
 

@@ -75,6 +75,9 @@ my_do_cmd WarpImageMultiTransform 3 \
   --use-NN
 my_do_cmd fslcpgeom $flair $brainmasknii_flairspace
 
+# save the transformation matrix (FLAIR --> T1) for later use
+cp ${tmpDir}/ants_Affine.txt ${SUBJECTS_DIR}/${sID}/mri/ants_Affine_FLAIR_to_T1.txt
+
 # Perform N4
 flairN4=${tmpDir}/flair_N4.nii
 my_do_cmd N4BiasFieldCorrection \
