@@ -47,6 +47,23 @@ _subjects_dir = os.environ.get('SUBJECTS_DIR')
 if _subjects_dir:
     _params.update(_parse_conf(os.path.join(_subjects_dir, 'corticalDWI_params.conf')))
 
+# Per-dataset overrides in $SUBJECTS_DIR/.corticalDWI/config.yaml (the same file
+# the Snakefile merges over the repo defaults) take precedence over the .conf files.
+# browser_metrics may be a comma-separated string or a YAML list.
+if _subjects_dir:
+    _yaml_path = os.path.join(_subjects_dir, '.corticalDWI', 'config.yaml')
+    if os.path.isfile(_yaml_path):
+        try:
+            import yaml
+            with open(_yaml_path, encoding='utf-8') as f:
+                _yaml = yaml.safe_load(f) or {}
+            for _k in ('target_type', 'browser_metrics'):
+                if _yaml.get(_k):
+                    _v = _yaml[_k]
+                    _params[_k] = ','.join(map(str, _v)) if isinstance(_v, (list, tuple)) else str(_v)
+        except Exception as e:
+            print(f'WARNING: could not read {_yaml_path}: {e}')
+
 # ── Surface template / naming convention ──────────────────────────────────────
 # Which surface template's files to search for and display. All TSF and surface
 # files are expected to follow the {hemi}_{...}_{TEMPLATE}... naming convention
