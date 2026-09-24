@@ -16,7 +16,7 @@ a subject with no dwi/ data at all.
 """
 
 STRUCTURAL_METRICS_T1 = ["T1w_proc", "T1w_proc_grad"]
-STRUCTURAL_METRICS_FLAIR = ["flair_proc", "T1_over_FLAIR", "t1_to_flair_affine"]
+STRUCTURAL_METRICS_FLAIR = ["flair_proc", "T1_over_FLAIR"]
 
 
 def has_flair(subject):
