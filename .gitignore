@@ -9,3 +9,4 @@ cortical_browser_2_config.m
 *.log
 .snakemake/metadata/
 .snakemake/
+.vscode/
