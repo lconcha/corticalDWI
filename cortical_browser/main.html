@@ -22,11 +22,18 @@ body {
   padding: 6px 8px 14px; display: flex; flex-direction: column; gap: 6px;
 }
 #main { flex: 1; min-width: 0; height: 100vh; display: flex; flex-direction: column; }
-.ctl-group { display: flex; flex-direction: column; gap: 4px; padding-top: 5px; border-top: 1px solid #3a3a3a; }
+.ctl-group { display: flex; flex-direction: column; gap: 4px; margin-top: 10px; padding-top: 10px; border-top: 1px solid #3a3a3a; }
 .ctl-h {
   color: var(--accent-yellow); font-size: 9px; letter-spacing: 0.8px;
   text-transform: uppercase; font-weight: bold; opacity: 0.9; margin: 1px 0;
 }
+/* nested subsections inside a control group: indented under a hairline rail */
+.ctl-sub, .ctl-subsub { display: flex; flex-direction: column; gap: 4px; }
+.ctl-sub { margin-top: 8px; padding-left: 8px; border-left: 1px solid #3a3a3a; }
+.ctl-subsub { margin-top: 4px; padding-left: 8px; border-left: 1px solid #333333; }
+.ctl-h2, .ctl-h3 { margin: 0; font-size: 9px; letter-spacing: 0.6px; text-transform: uppercase; font-weight: bold; }
+.ctl-h2 { color: #c9c9c9; }
+.ctl-h3 { color: #999999; }
 .ctl-row { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; }
 #sidebar select { max-width: 100%; }
 .apptitle { font-weight: bold; color: var(--accent-yellow); font-size: 12px; letter-spacing: 0.5px; white-space: nowrap; }
@@ -65,7 +72,6 @@ button.cbtn {
 }
 button.cbtn:hover { background: #484848; }
 #depth-label { color: #d1d1d1; min-width: 40px; }
-#pos-display  { color: #999999; font-size: 11px; max-width: 100%; white-space: pre-line; font-family: monospace; }
 .vtx-display  {
   color: #ccc; font-size: 11px; font-family: monospace; font-weight: bold;
   background: #262626; border: 1px solid #555555; border-radius: 3px;
@@ -105,6 +111,20 @@ canvas.nv-canvas { display: block; width: 100% !important; height: 100% !importa
   padding: 1px 5px; border-radius: 3px; pointer-events: none;
 }
 .cell-span3 { grid-column: 1 / -1; }
+/* panel header bar (top-left): title + optional controls in a flex row.
+   The bar itself ignores pointer events so canvas gestures pass through;
+   controls inside re-enable them. Right edge leaves room for the maxbtn. */
+.chead {
+  position: absolute; top: 3px; left: 6px; right: 28px; z-index: 12;
+  display: flex; align-items: center; gap: 5px; pointer-events: none;
+}
+.chead .clabel { position: static; }
+.panel-sel {
+  pointer-events: auto; height: 18px; font-size: 10px; color: #cfcfcf;
+  background: rgba(0,0,0,0.55); border: 1px solid #555555; border-radius: 3px;
+  padding: 0 2px; cursor: pointer;
+}
+.panel-sel:hover { color: var(--accent-yellow); border-color: var(--accent-yellow); }
 /* per-panel maximize/restore button (top-right corner) */
 .maxbtn {
   position: absolute; top: 3px; right: 3px; z-index: 15;
@@ -132,6 +152,39 @@ canvas.nv-canvas { display: block; width: 100% !important; height: 100% !importa
   display: block; text-align: center;
   font-size: 11px; color: var(--plot-text); margin-bottom: 2px; font-family: monospace;
 }
+/* colormap controls beside the colorbars. The LH colorbar's right end and the
+   RH colorbar's left end are pulled in to make room for the shared control
+   that straddles the LH|RH boundary; the asym control sits at the right end
+   of its own colorbar. */
+/* Grid item, not a cell: it spans columns 1-2 of row 1 and centres itself,
+   which (equal 1fr columns) is exactly the LH|RH boundary. The three surface
+   cells therefore need explicit columns so this overlay doesn't push them. */
+.cell-lh { grid-column: 1; } .cell-rh { grid-column: 2; } .cell-asym { grid-column: 3; }
+.cmap-shared {
+  grid-row: 1; grid-column: 1 / 3; justify-self: center; align-self: end;
+  position: relative; z-index: 20; margin-bottom: 5px;
+  display: flex; flex-direction: column; align-items: center; gap: 3px;
+  font-size: 10px; color: #999999;
+}
+.cmap-side {
+  position: absolute; z-index: 20; right: 6px; bottom: 5px;
+  display: flex; flex-direction: column; align-items: flex-start; gap: 3px;
+  font-size: 10px; color: #999999;
+}
+.cmap-shared label, .cmap-side label { display: flex; align-items: center; gap: 3px; }
+/* orthoslice panel: canvas on top, a controls strip beneath NiiVue's colorbar */
+.cell-ortho { display: flex; flex-direction: column; }
+.cell-ortho canvas.nv-canvas { flex: 1 1 0; min-height: 0; height: auto !important; }
+.cfoot {
+  flex: 0 0 auto; display: flex; justify-content: center; align-items: center;
+  gap: 10px; padding: 3px 0 4px; font-size: 10px; color: #999999;
+}
+.cmap-row, .cmap-rng { display: flex; align-items: center; gap: 4px; }
+.cmap-rng input[type=number] { width: 58px; }
+.cell-lh .cbar { right: 110px; }   /* LH */
+.cell-rh .cbar { left: 110px; }    /* RH */
+.cell-asym .cbar { right: 200px; }   /* asym */
+#grid.has-max > .cmap-shared { display: none; }
 .cbar-g {
   height: 8px; border-radius: 2px; border: 1px solid rgba(255,255,255,0.08);
 }
@@ -172,79 +225,45 @@ canvas.nv-canvas { display: block; width: 100% !important; height: 100% !importa
   <section class="ctl-group">
     <h3 class="ctl-h">Surfaces</h3>
     <div class="ctl-row">
-      <span class="glab">Data</span>
-      <input type="number" id="climMin" step="0.001" title="Color min">
-      <span style="color:#999999">–</span>
-      <input type="number" id="climMax" step="0.001" title="Color max">
-      <button class="cbtn" id="climAuto">Auto</button>
-    </div>
-    <div class="ctl-row">
-      <label>cmap <select id="cmapSel"></select></label>
-      <label><input type="checkbox" id="cmapInv"> Inv</label>
       <label>Ov <input type="range" id="ovOp" min="0" max="100" value="100"></label>
-    </div>
-    <div class="ctl-row">
-      <span class="glab">Asym</span>
-      <input type="number" id="asymMin" step="0.001" title="Asym color min">
-      <span style="color:#999999">–</span>
-      <input type="number" id="asymMax" step="0.001" title="Asym color max">
-      <button class="cbtn" id="asymAuto">Auto</button>
-    </div>
-    <div class="ctl-row">
-      <label>cmap <select id="cmapAsymSel">
-        <option value="bwr">blue-white-red</option>
-        <option value="cwr">cyan-white-red</option>
-        <option value="gwr">green-white-red</option>
-        <option value="blue2red">blue2red (hue)</option>
-        <option value="blue2magenta">blue2magenta</option>
-        <option value="hsv">hsv</option>
-        <option value="jet">jet</option>
-      </select></label>
-      <label><input type="checkbox" id="cmapAsymInv"> Inv</label>
     </div>
     <div class="ctl-row"><label>Shader <select id="shaderSel">
       <option value="Matte">Matte</option>
       <option value="Phong">Phong</option>
       <option value="Diffuse" selected>Diffuse</option>
     </select></label></div>
-    <div class="ctl-row">
-      <label>LH surf <select id="lhSurfSel"></select></label>
-      <label>RH surf <select id="rhSurfSel"></select></label>
-      <label>Asym surf <select id="asymSurfSel"></select></label>
-    </div>
-    <div class="ctl-row">
-      <label>Vertex <input type="number" id="vtxInput" min="0" step="1" title="Jump to vertex ID"></label>
-      <label>Rings <input type="number" id="ringsInput" min="0" step="1" value="0" title="Neighbor rings to average around the selected vertex"></label>
-    </div>
-    <div class="ctl-row">
-      <button class="cbtn" id="loadVertexIdsBtn" title="Load a .txt file of vertex indices (one per line). While loaded, this set replaces interactive vertex/rings selection everywhere — plots, streamlines, and the DWI-space link.">Load vertex IDs</button>
-      <button class="cbtn" id="saveVertexIdsBtn" title="Save the current selection (however it was made) as a .txt file, one vertex ID per line — the same format Load vertex IDs reads">Save vertex IDs</button>
-      <button class="cbtn" id="unloadVertexIdsBtn" disabled title="Discard the loaded vertex ID list and return to interactive click/Vertex/Rings selection">Unload vertex IDs</button>
-    </div>
-    <input type="file" id="vertexIdsFile" accept=".txt" style="display:none">
-    <div class="ctl-row"><span id="vertexIdsStatus" class="glab"></span></div>
-    <div class="ctl-row">
-      <label><input type="checkbox" id="pivotAtVertexChk"> Pivot@vertex</label>
-      <button class="cbtn" id="resetPivotBtn" title="Reset 3D view rotation pivot to the whole-brain center">Reset pivot</button>
-    </div>
-    <div class="ctl-row">
-      <span class="glab">LH</span><span id="vtx-display-lh" class="vtx-display">—, —, — mm</span>
-    </div>
-    <div class="ctl-row">
-      <span class="glab">RH</span><span id="vtx-display-rh" class="vtx-display">—, —, — mm</span>
+    <div class="ctl-sub">
+      <h4 class="ctl-h2">Vertices</h4>
+      <div class="ctl-row">
+        <label>Vertex <input type="number" id="vtxInput" min="0" step="1" title="Jump to vertex ID"></label>
+        <label>Rings <input type="number" id="ringsInput" min="0" step="1" value="0" title="Neighbor rings to average around the selected vertex"></label>
+      </div>
+      <div class="ctl-row">
+        <label><input type="checkbox" id="pivotAtVertexChk"> Pivot@vertex</label>
+        <button class="cbtn" id="resetPivotBtn" title="Reset 3D view rotation pivot to the whole-brain center">Reset pivot</button>
+      </div>
+      <div class="ctl-row">
+        <span class="glab">LH</span><span id="vtx-display-lh" class="vtx-display">—, —, — mm</span>
+      </div>
+      <div class="ctl-row">
+        <span class="glab">RH</span><span id="vtx-display-rh" class="vtx-display">—, —, — mm</span>
+      </div>
+      <div class="ctl-subsub">
+        <h5 class="ctl-h3">Vertex IDs</h5>
+        <div class="ctl-row">
+          <button class="cbtn" id="loadVertexIdsBtn" title="Load a .txt file of vertex indices (one per line). While loaded, this set replaces interactive vertex/rings selection everywhere — plots, streamlines, and the DWI-space link.">Load</button>
+          <button class="cbtn" id="saveVertexIdsBtn" title="Save the current selection (however it was made) as a .txt file, one vertex ID per line — the same format Load vertex IDs reads">Save</button>
+          <button class="cbtn" id="unloadVertexIdsBtn" disabled title="Discard the loaded vertex ID list and return to interactive click/Vertex/Rings selection">Unload</button>
+        </div>
+        <input type="file" id="vertexIdsFile" accept=".txt" style="display:none">
+        <div class="ctl-row"><span id="vertexIdsStatus" class="glab"></span></div>
+      </div>
     </div>
   </section>
 
   <section class="ctl-group">
     <h3 class="ctl-h">Orthoslices</h3>
     <div class="ctl-row"><label title="Volume shown in the orthoslices">Volume <select id="volSel"></select></label></div>
-    <div class="ctl-row"><label title="Colormap for the orthoslice volume">cmap <select id="volCmapSel"></select></label></div>
-    <div class="ctl-row">
-      <input type="number" id="volClipMin" step="any" title="Orthoslice color min (clip)">
-      <span style="color:#999999">–</span>
-      <input type="number" id="volClipMax" step="any" title="Orthoslice color max (clip)">
-      <button class="cbtn" id="volClipAuto" title="Reset the orthoslice color range to the volume default">Auto</button>
-    </div>
     <input type="file" id="volFile" accept=".nii,.nii.gz,.gz,.mgz,.mgh,.hdr,.img" style="display:none">
     <div class="ctl-row">
       <label><input type="checkbox" id="radioConv" checked> Rad</label>
@@ -259,7 +278,9 @@ canvas.nv-canvas { display: block; width: 100% !important; height: 100% !importa
       <label title="In the 3-D panel, cut away the octant nearest the crosshair so the volume render is opened up along the three orthogonal slice planes, instead of showing an opaque whole-brain render — shortcut: c"><input type="checkbox" id="cutaway3DChk"> 3D cutaway</label>
       <label title="Flip which octant the 3D cutaway removes"><input type="checkbox" id="cutawayInvertChk"> Invert</label>
     </div>
-    <div class="ctl-row"><span id="pos-display"></span></div>
+    <div class="ctl-row"><span class="glab">Pos</span><span id="pos-mm" class="vtx-display" title="Crosshair position, world coordinates">—, —, — mm</span></div>
+    <div class="ctl-row"><span class="glab">Vox</span><span id="pos-vox" class="vtx-display" title="Crosshair position, voxel indices">—, —, —</span></div>
+    <div class="ctl-row"><span class="glab">Val</span><span id="pos-val" class="vtx-display" title="Intensity of the shown volume at the crosshair">—</span></div>
   </section>
 
   <section class="ctl-group">
@@ -293,47 +314,85 @@ canvas.nv-canvas { display: block; width: 100% !important; height: 100% !importa
       <span id="normativeLoading" class="loading-badge" style="display:none">calculating…</span></div>
     <div class="ctl-row"><label><input type="checkbox" id="showMultivariateChk" title="Compute the Mahalanobis distance / radar / z-score panels — off by default because the Mahalanobis fit gets more expensive as the cohort grows"> Show multivariate</label>
       <span id="multivariateLoading" class="loading-badge" style="display:none">calculating…</span></div>
-    <div class="ctl-row">
-      <label title="Max |z| shown on the radar and z-score bar panels">|z|≤ <input type="number" id="mvZlimInput" min="0.5" step="0.5" value="3"></label>
-      <label title="Max Mahalanobis distance shown on the multivariate depth panel">Mahal≤ <input type="number" id="mvMahalInput" min="0" step="1" value="50"></label>
-    </div>
   </section>
 </aside>
 <main id="main">
 
 <div id="grid">
+  <!-- shared metric cmap: sits on the boundary between the LH and RH panels -->
+  <div class="cmap-shared">
+    <div class="cmap-row">
+      <select id="cmapSel" class="panel-sel" title="Colormap for the metric (LH and RH)"></select>
+      <label><input type="checkbox" id="cmapInv"> Inv</label>
+    </div>
+    <div class="cmap-rng">
+      <input type="number" id="climMin" step="0.001" title="Color min">
+      <span>–</span>
+      <input type="number" id="climMax" step="0.001" title="Color max">
+      <button class="cbtn" id="climAuto">Auto</button>
+    </div>
+  </div>
   <!-- Row 1: surface 3-D renders -->
-  <div class="cell grow1">
+  <div class="cell grow1 cell-lh">
     <canvas id="gl-lh" class="nv-canvas"></canvas>
-    <span class="clabel">LH lateral</span>
+    <div class="chead"><span class="clabel">LH lateral</span><select id="lhSurfSel" class="panel-sel" title="Surface type for this panel"></select></div>
     <div class="cbar">
       <span class="cbar-title" id="cbtitle-lh"></span>
       <div class="cbar-g" id="cbgrad-lh"></div>
       <div class="cbar-ll"><span id="cblbl-lh-min">0</span><span id="cblbl-lh-max">1</span></div>
     </div>
   </div>
-  <div class="cell grow1">
+  <div class="cell grow1 cell-rh">
     <canvas id="gl-rh" class="nv-canvas"></canvas>
-    <span class="clabel">RH lateral</span>
+    <div class="chead"><span class="clabel">RH lateral</span><select id="rhSurfSel" class="panel-sel" title="Surface type for this panel"></select></div>
     <div class="cbar">
       <span class="cbar-title" id="cbtitle-rh"></span>
       <div class="cbar-g" id="cbgrad-rh"></div>
       <div class="cbar-ll"><span id="cblbl-rh-min">0</span><span id="cblbl-rh-max">1</span></div>
     </div>
   </div>
-  <div class="cell grow1">
+  <div class="cell grow1 cell-asym">
     <canvas id="gl-asym" class="nv-canvas"></canvas>
-    <span class="clabel">Asymmetry index (LH geom)</span>
+    <div class="chead"><span class="clabel">Asymmetry index</span><select id="asymSurfSel" class="panel-sel" title="Surface type for this panel"></select></div>
     <div class="cbar">
       <span class="cbar-title" id="cbtitle-asym"></span>
       <div class="cbar-g" id="cbgrad-asym"></div>
       <div class="cbar-ll"><span id="cblbl-asym-min">-1</span><span id="cblbl-asym-max">1</span></div>
     </div>
+    <div class="cmap-side">
+      <div class="cmap-row">
+      <select id="cmapAsymSel" class="panel-sel" title="Colormap for the asymmetry index">
+        <option value="bwr">blue-white-red</option>
+                <option value="cwr">cyan-white-red</option>
+                <option value="gwr">green-white-red</option>
+                <option value="blue2red">blue2red (hue)</option>
+                <option value="blue2magenta">blue2magenta</option>
+                <option value="hsv">hsv</option>
+                <option value="jet">jet</option>
+      </select>
+      <label><input type="checkbox" id="cmapAsymInv"> Inv</label>
+      </div>
+      <div class="cmap-rng">
+      <input type="number" id="asymMin" step="0.001" title="Asym color min">
+      <span>–</span>
+      <input type="number" id="asymMax" step="0.001" title="Asym color max">
+      <button class="cbtn" id="asymAuto">Auto</button>
+    </div>
+    </div>
   </div>
 
   <!-- Row 2: single multiplanar orthoslice (row layout = axial/coronal/sagittal side by side) -->
-  <div class="cell cell-span3 grow2">
+  <div class="cell cell-span3 grow2 cell-ortho">
     <canvas id="gl-slices" class="nv-canvas" title="Shift-click: select nearest white-surface vertex. Ctrl-click: select nearest pial-surface vertex."></canvas>
+    <div class="cfoot">
+      <select id="volCmapSel" class="panel-sel" title="Colormap for the orthoslice volume"></select>
+      <div class="cmap-rng">
+        <input type="number" id="volClipMin" step="any" title="Orthoslice color min (clip)">
+        <span>–</span>
+        <input type="number" id="volClipMax" step="any" title="Orthoslice color max (clip)">
+        <button class="cbtn" id="volClipAuto" title="Reset the orthoslice color range to the volume default">Auto</button>
+      </div>
+    </div>
   </div>
 
   <!-- Row 3: depth-profile charts -->
@@ -358,11 +417,13 @@ canvas.nv-canvas { display: block; width: 100% !important; height: 100% !importa
     <span class="clabel" id="clabel-mahal">Mahalanobis distance</span>
     <button class="svgbtn" id="svgBtnMahal" title="Save this chart as a vector SVG file">SVG</button>
     <div class="chart-wrap"><div id="chart-mahal" class="plotly-chart"></div></div>
+    <div class="cfoot"><label title="Max Mahalanobis distance shown on the multivariate depth panel">Mahal≤ <input type="number" id="mvMahalInput" min="0" step="1" value="50"></label></div>
   </div>
   <div class="cell plot-cell grow4">
     <span class="clabel" id="clabel-radar">|Z-score| radar</span>
     <button class="svgbtn" id="svgBtnRadar" title="Save this chart as a vector SVG file">SVG</button>
     <div class="chart-wrap"><div id="chart-radar" class="plotly-chart"></div></div>
+    <div class="cfoot"><label title="Max |z| shown on the radar and z-score bar panels">|z|≤ <input type="number" id="mvZlimInput" min="0.5" step="0.5" value="3"></label></div>
   </div>
   <div class="cell plot-cell grow4">
     <span class="clabel" id="clabel-zbar">Z-scores</span>

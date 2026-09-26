@@ -573,12 +573,10 @@ if (nvSlices.volumes.length) {
 // shown volume's intensity value there.
 nvSlices.onLocationChange = d => {
   const mm = d.mm, vox = d.vox
-  const lines = []
-  if (mm)  lines.push(`${mm[0].toFixed(1)},${mm[1].toFixed(1)},${mm[2].toFixed(1)} mm`)
-  if (vox) lines.push(`${Math.round(vox[0])},${Math.round(vox[1])},${Math.round(vox[2])} vox`)
   const v = d.values && d.values[0]
-  if (v && isFinite(v.value)) lines.push(`value=${(+v.value).toPrecision(4)}`)
-  document.getElementById('pos-display').textContent = lines.join('\n')
+  document.getElementById('pos-mm').textContent  = mm  ? Array.from(mm.slice(0, 3), x => x.toFixed(1)).join(', ') + ' mm' : '—, —, — mm'
+  document.getElementById('pos-vox').textContent = vox ? Array.from(vox.slice(0, 3), x => Math.round(x)).join(', ') : '—, —, —'
+  document.getElementById('pos-val').textContent = (v && isFinite(v.value)) ? (+v.value).toPrecision(4) : '—'
   updateCutawayClipPlanes()   // keep the 3-D cutaway centered on the crosshair; no-op unless enabled
 }
 
@@ -1208,7 +1206,9 @@ document.getElementById('metricSel').addEventListener('change', async e => {
   } else {
     document.getElementById('vtx-display-lh').textContent = '—, —, — mm'
     document.getElementById('vtx-display-rh').textContent = '—, —, — mm'
-    document.getElementById('pos-display').textContent = ''
+    document.getElementById('pos-mm').textContent  = '—, —, — mm'
+    document.getElementById('pos-vox').textContent = '—, —, —'
+    document.getElementById('pos-val').textContent = '—'
     resetPivot(nvLhL); resetPivot(nvRhL); resetPivot(nvAsym)
     for (const chart of [chartLH, chartRH, chartAsym]) {
       Plotly.restyle(chart, { x: [[], [], [], [], [], []], y: [[], [], [], [], [], []] }, [0, 1, 2, 3, 4, 5])
@@ -2395,6 +2395,10 @@ function setProfiles(lhStat, rhStat, asymStat, count, lhArea, rhArea, normStat) 
     [chartRH,   rhStat,   rhArea,  normStat?.rh],
     [chartAsym, asymStat, null,    normStat?.asym],
   ]
+  // LH and RH share one x range (covering both, bands and normative included)
+  // so the two profiles are directly comparable; asym is pinned separately to
+  // the asym colormap limits (applyAsymValueLimits).
+  let lo = Infinity, hi = -Infinity
   for (const [chart, stat, area, norm] of entries) {
     let label = chart.baseLabel
     if (count > 1) label += ` (nVert=${count})`
@@ -2413,11 +2417,21 @@ function setProfiles(lhStat, rhStat, asymStat, count, lhArea, rhArea, normStat) 
     const normMinus = norm ? xs(norm.mean.map((m, i) => m - norm.sd[i])) : []
     const normLabel = norm ? `Normative (nSubj=${Math.max(...norm.n)})` : 'Normative'
 
+    if (chart !== chartAsym)
+      for (const arr of [mean, plus, minus, normMean, normPlus, normMinus])
+        for (const v of arr) if (v !== null) { if (v < lo) lo = v; if (v > hi) hi = v }
+
     Plotly.restyle(chart, {
       x: [mean, plus, minus, normMean, normPlus, normMinus],
       y: [depth, sdDepth, sdDepth, normDepth, normDepth, normDepth],
     }, [0, 1, 2, 3, 4, 5])
     Plotly.restyle(chart, { name: [label, normLabel] }, [0, 3])
+  }
+  if (Number.isFinite(lo) && Number.isFinite(hi)) {
+    const pad = (hi - lo) * 0.05 || 0.5
+    for (const c of [chartLH, chartRH]) Plotly.relayout(c, { 'xaxis.range': [lo - pad, hi + pad] })
+  } else {
+    for (const c of [chartLH, chartRH]) Plotly.relayout(c, { 'xaxis.autorange': true })
   }
   updateDepthMarker(currentDepth * STEP_MM)
 }
