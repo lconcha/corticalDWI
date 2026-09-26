@@ -63,6 +63,39 @@ def read_mrtrix_tsf(path):
     return header, tracks
 
 
+def write_mrtrix_tsf(path, tracks, template_path=None):
+    """Write a list of 1D float arrays as an MRtrix .tsf (Float32LE).
+
+    If template_path is given, its header (command_history etc.) is carried
+    over, with count/datatype/file rewritten. NaN is the per-track delimiter
+    and Inf terminates the file, as MRtrix expects.
+    """
+    extra = []
+    if template_path is not None:
+        with open(template_path, 'rb') as f:
+            for raw in f:
+                line = raw.decode('utf-8').rstrip('\n')
+                if line.strip() == 'END':
+                    break
+                key = line.split(':', 1)[0].strip()
+                if ':' in line and key not in ('count', 'datatype', 'file', 'mrtrix track scalars'):
+                    extra.append(line)
+    lines = ['mrtrix track scalars', 'datatype: Float32LE'] + extra + [f'count: {len(tracks)}']
+    offset = 0
+    for _ in range(3):   # offset depends on its own digit count; converges fast
+        header = '\n'.join(lines + [f'file: . {offset}', 'END']) + '\n'
+        offset = len(header.encode('utf-8'))
+    header = '\n'.join(lines + [f'file: . {offset}', 'END']) + '\n'
+    chunks = []
+    for t in tracks:
+        chunks.append(np.asarray(t, dtype='<f4'))
+        chunks.append(np.array([np.nan], dtype='<f4'))
+    chunks.append(np.array([np.inf], dtype='<f4'))
+    with open(path, 'wb') as f:
+        f.write(header.encode('utf-8'))
+        np.concatenate(chunks).tofile(f)
+
+
 def pad_to_matrix(tracks):
     """Equivalent of cortical_cell2mat.m: list of 1D arrays -> [N, maxLen] with NaN padding."""
     max_len = max(len(t) for t in tracks)
