@@ -146,6 +146,7 @@ include: f"{CORTICAL_DWI_DIR}/rules/mrds.smk"
 include: f"{CORTICAL_DWI_DIR}/rules/dki.smk"
 include: f"{CORTICAL_DWI_DIR}/rules/noddi.smk"
 include: f"{CORTICAL_DWI_DIR}/rules/structural.smk"
+include: f"{CORTICAL_DWI_DIR}/rules/zscore.smk"
 
 # One global default thread count for the "just a few MRtrix calls" majority
 # of rules, so a new rule doesn't need its own threads: line added by hand
@@ -190,6 +191,10 @@ def final_outputs(subject):
             + tcksample_dki_outputs(subject)
             + tcksample_noddi_outputs(subject)
         )
+    # z-scores against the normative data: only once that HDF5 exists, and
+    # never for the cohort subjects themselves (see rules/zscore.smk)
+    if zscore_eligible(subject):
+        outputs += zscore_outputs(subject, outputs)
     return outputs
 
 

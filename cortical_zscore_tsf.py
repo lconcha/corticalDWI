@@ -5,7 +5,9 @@ cortical_zscore_tsf.py — vertex- and depth-wise z-scores of one subject's
 
 For every metric in the normative HDF5 (templates/normative/{TEMPLATE}_multivariate.h5,
 built by cortical_create_normative_data_from_tsf.py) and each hemisphere, finds
-{hemi}_{TEMPLATE}_<metric>.tsf under the subject's directory and writes, next to it:
+<folder>/{hemi}_{TEMPLATE}_<name>.tsf under the subject's directory and writes, next to it
+(metrics are labelled <folder>/<name>, folder = the full path from the subject
+directory down, e.g. dwi/dti/fa vs dwi/dki/fa):
 
     {hemi}_{TEMPLATE}_<metric>_zscore.tsf            z per streamline point
     {hemi}_{TEMPLATE}_<metric>_zscore_absmean.func.gii   mean |z| over each vertex's streamline
@@ -23,6 +25,13 @@ left untouched, so it would be compared against itself).
 
 Usage:
     python cortical_zscore_tsf.py <subjid> [subjects_dir] [--min-n 4]
+    python cortical_zscore_tsf.py <subjid> [subjects_dir] --tsf FILE [FILE ...]
+    python cortical_zscore_tsf.py --stats-only [subjects_dir]
+
+--tsf processes exactly the given files (used by the Snakemake rule) instead
+of searching the subject's directory. --stats-only just builds/refreshes the
+normative stats cache and exits (also used by the Snakemake rule, so the cache
+is built once rather than raced for by parallel subject jobs).
 """
 import os, sys, glob, argparse, warnings
 from concurrent.futures import ProcessPoolExecutor
@@ -31,7 +40,7 @@ import h5py
 import nibabel as nib
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), 'cortical_browser'))
-from cortical_io import read_mrtrix_tsf, write_mrtrix_tsf, pad_to_matrix
+from cortical_io import read_mrtrix_tsf, write_mrtrix_tsf, pad_to_matrix, find_tsf, metric_label
 from cortical_browser_config import TEMPLATE
 
 MIN_N = 4
@@ -91,13 +100,14 @@ def _block_stats(h5_path, hemi, mi):
     return hemi, mi, mu, sd, n
 
 
-def load_normative_stats(h5_path, metrics, use_cache=True, workers=4):
+def load_normative_stats(h5_path, metrics, use_cache=True, workers=4, needed=None):
     """{(hemi, metric_index): (mu, sd, n)} for the whole normative file.
 
     Cached in <h5 stem>_zscore_stats.npz beside the HDF5 (keyed on its size and
     mtime, so it is rebuilt if the normative data changes); the HDF5 itself is
     never modified. Without a valid cache the stats are computed in parallel,
-    which is the slow part of a run (gzip decompression of the full stack)."""
+    which is the slow part of a run (gzip decompression of the full stack).
+    `needed` (set of (hemi, metric_index)) limits what is read from a valid cache."""
     st = os.stat(h5_path)
     key = np.array([st.st_size, st.st_mtime_ns], dtype=np.int64)
     cache = h5_path[:-len('.h5')] + '_zscore_stats.npz'
@@ -107,7 +117,8 @@ def load_normative_stats(h5_path, metrics, use_cache=True, workers=4):
             if np.array_equal(z['key'], key) and int(z['n_metrics']) == len(metrics):
                 print(f'Using cached normative stats: {cache}')
                 return {(h, i): (z[f'{h}_{i}_mu'], z[f'{h}_{i}_sd'], z[f'{h}_{i}_n'])
-                        for h in ('lh', 'rh') for i in range(len(metrics))}
+                        for h in ('lh', 'rh') for i in range(len(metrics))
+                        if needed is None or (h, i) in needed}
         except Exception as e:
             print(f'  cache unreadable ({e}); recomputing')
     print(f'Computing normative mean/SD/n ({2 * len(metrics)} hemisphere-metric stacks, {workers} workers) …')
@@ -124,7 +135,9 @@ def load_normative_stats(h5_path, metrics, use_cache=True, workers=4):
             out = {'key': key, 'n_metrics': np.array(len(metrics))}
             for (h, i), (mu, sd, n) in stats.items():
                 out[f'{h}_{i}_mu'], out[f'{h}_{i}_sd'], out[f'{h}_{i}_n'] = mu, sd, n
-            np.savez(cache, **out)
+            tmp = cache[:-len('.npz')] + f'.{os.getpid()}.tmp.npz'   # atomic: no reader sees a partial file
+            np.savez(tmp, **out)
+            os.replace(tmp, cache)
             print(f'Cached normative stats: {cache}')
         except OSError as e:
             print(f'  [warn] could not write cache ({e}); continuing without it')
@@ -139,29 +152,36 @@ def write_gifti(path, values):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument('subjid')
+    ap.add_argument('subjid', nargs='?')
     ap.add_argument('subjects_dir', nargs='?', default=os.environ.get('SUBJECTS_DIR'))
+    ap.add_argument('--tsf', nargs='+', metavar='FILE', help='z-score exactly these .tsf files instead of searching the subject dir')
+    ap.add_argument('--stats-only', action='store_true', help='only build/refresh the normative stats cache, then exit')
     ap.add_argument('--no-cache', action='store_true', help='do not read/write the normative stats cache')
     ap.add_argument('--workers', type=int, default=4, help='processes for computing normative stats (default 4)')
     ap.add_argument('--min-n', type=int, default=MIN_N, help='minimum controls with a valid value (default 4)')
     args = ap.parse_args()
+    if args.stats_only and args.subjid and args.subjects_dir == os.environ.get('SUBJECTS_DIR'):
+        args.subjects_dir, args.subjid = args.subjid, None   # lone positional = subjects_dir
     if not args.subjects_dir:
         sys.exit('subjects_dir not given and SUBJECTS_DIR is not set')
-
-    subj_dir = os.path.join(args.subjects_dir, args.subjid)
-    if not os.path.isdir(subj_dir):
-        sys.exit(f'Subject directory not found: {subj_dir}')
-    subjects_file = os.path.join(args.subjects_dir, 'templates', 'subjects_to_average.txt')
-    with open(subjects_file) as f:
-        cohort = [l.strip() for l in f if l.strip()]
-    if args.subjid in cohort:
-        sys.exit(f'{args.subjid} is in {subjects_file}; z-scores are only for subjects outside the normative cohort')
+    if not args.stats_only and not args.subjid:
+        ap.error('subjid is required (unless --stats-only)')
 
     h5_path = os.path.join(args.subjects_dir, 'templates', 'normative', f'{TEMPLATE}_multivariate.h5')
     if not os.path.isfile(h5_path):
         sys.exit(f'Normative data not found: {h5_path}')
 
-    print(f'Subject : {args.subjid} ({subj_dir})')
+    if not args.stats_only:
+        subj_dir = os.path.join(args.subjects_dir, args.subjid)
+        if not os.path.isdir(subj_dir):
+            sys.exit(f'Subject directory not found: {subj_dir}')
+        subjects_file = os.path.join(args.subjects_dir, 'templates', 'subjects_to_average.txt')
+        with open(subjects_file) as f:
+            cohort = [l.strip() for l in f if l.strip()]
+        if args.subjid in cohort:
+            sys.exit(f'{args.subjid} is in {subjects_file}; z-scores are only for subjects outside the normative cohort')
+        print(f'Subject : {args.subjid} ({subj_dir})')
+
     print(f'Loading normative data: {h5_path}')
     with h5py.File(h5_path, 'r') as h5f:
         metrics = [m.decode() if isinstance(m, bytes) else m for m in h5f['metrics'][:]]
@@ -171,30 +191,63 @@ def main():
         for hemi in ('lh', 'rh'):
             print(f'  {hemi}_M shape (nVerts, nDepths, nSubjects, nMetrics): {h5f[f"{hemi}_M"].shape}')
         print(f'Minimum controls per point: {args.min_n}')
-    stats = load_normative_stats(h5_path, metrics, use_cache=not args.no_cache, workers=args.workers)
-    for hemi in ('lh', 'rh'):
-        for mi, metric in enumerate(metrics):
-            fname = f'{hemi}_{TEMPLATE}_{metric}.tsf'
-            hits = [p for p in glob.glob(os.path.join(subj_dir, '**', fname), recursive=True)]
-            if not hits:
-                print(f'  [skip] {hemi} {metric}: {fname} not found under {subj_dir}')
-                continue
-            path = hits[0]
-            _, tracks = read_mrtrix_tsf(path)
-            mu, sd, n = stats[(hemi, mi)]
-            if mu.shape[0] != len(tracks):
-                print(f'  [skip] {hemi} {metric}: {len(tracks)} streamlines vs {mu.shape[0]} normative vertices')
-                continue
-            if max(len(t) for t in tracks) > mu.shape[1]:
-                print(f'  [warn] {hemi} {metric}: subject has streamlines deeper than normative data; extra points set to -1')
-            z_tracks, abs_mean, abs_sum = zscore_tracks(tracks, mu, sd, n, args.min_n)
+        old = [m for m in metrics if '/' not in m]
+        if old:
+            sys.exit(f'Normative file uses unqualified metric names ({", ".join(old)}); it predates <folder>/<name> labels. '
+                     f'Rebuild it with cortical_create_normative_data_from_tsf.py.')
 
-            base = path[:-len('.tsf')]
-            write_mrtrix_tsf(base + '_zscore.tsf', z_tracks, template_path=path)
-            write_gifti(base + '_zscore_absmean.func.gii', abs_mean)
-            write_gifti(base + '_zscore_abssum.func.gii', abs_sum)
-            print(f'  {hemi} {metric}: wrote {os.path.basename(base)}_zscore.tsf / _absmean / _abssum .func.gii '
-                  f'(mean|z| over {np.isfinite(abs_mean).sum()}/{len(abs_mean)} vertices)')
+    if args.stats_only:
+        load_normative_stats(h5_path, metrics, use_cache=True, workers=args.workers)
+        return
+
+    # (hemi, metric) -> tsf path: explicit --tsf files, else a search of the subject dir
+    files = {}
+    if args.tsf:
+        for path in args.tsf:
+            for hemi in ('lh', 'rh'):
+                if os.path.basename(path).startswith(f'{hemi}_{TEMPLATE}_'):
+                    if os.path.basename(path).endswith('_zscore.tsf'):
+                        sys.exit(f'{path} is itself a z-score file')
+                    files[(hemi, metric_label(path, hemi, TEMPLATE, subj_dir))] = path
+                    break
+            else:
+                sys.exit(f'Cannot parse hemisphere from {os.path.basename(path)} (expected lh|rh_{TEMPLATE}_<name>.tsf)')
+    else:
+        for hemi in ('lh', 'rh'):
+            for metric in metrics:
+                hits = find_tsf(subj_dir, hemi, TEMPLATE, metric)
+                if len(hits) > 1:
+                    print(f'  [warn] {hemi} {metric}: {len(hits)} files found, using {hits[0]}')
+                if hits:
+                    files[(hemi, metric)] = hits[0]
+                else:
+                    print(f'  [skip] {hemi} {metric}: no such .tsf under {subj_dir}')
+
+    todo = []
+    for (hemi, metric), path in files.items():
+        if metric in metrics:
+            todo.append((hemi, metric, path))
+        else:
+            print(f'  [skip] {hemi} {metric}: not in the normative data')
+    needed = {(h, metrics.index(m)) for h, m, _ in todo}
+    stats = load_normative_stats(h5_path, metrics, use_cache=not args.no_cache, workers=args.workers, needed=needed)
+
+    for hemi, metric, path in todo:
+        _, tracks = read_mrtrix_tsf(path)
+        mu, sd, n = stats[(hemi, metrics.index(metric))]
+        if mu.shape[0] != len(tracks):
+            print(f'  [skip] {hemi} {metric}: {len(tracks)} streamlines vs {mu.shape[0]} normative vertices')
+            continue
+        if max(len(t) for t in tracks) > mu.shape[1]:
+            print(f'  [warn] {hemi} {metric}: subject has streamlines deeper than normative data; extra points set to -1')
+        z_tracks, abs_mean, abs_sum = zscore_tracks(tracks, mu, sd, n, args.min_n)
+
+        base = path[:-len('.tsf')]
+        write_mrtrix_tsf(base + '_zscore.tsf', z_tracks, template_path=path)
+        write_gifti(base + '_zscore_absmean.func.gii', abs_mean)
+        write_gifti(base + '_zscore_abssum.func.gii', abs_sum)
+        print(f'  {hemi} {metric}: wrote {os.path.basename(base)}_zscore.tsf / _absmean / _abssum .func.gii '
+              f'(mean|z| over {np.isfinite(abs_mean).sum()}/{len(abs_mean)} vertices)')
 
 
 if __name__ == '__main__':

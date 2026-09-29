@@ -5,6 +5,7 @@ read_mrtrix_tsf     -> read_mrtrix_tsf()   for MRtrix track-scalar files
 cortical_cell2mat   -> pad_to_matrix()
 buildVolGeom        -> build_vol_geom()
 """
+import os, glob
 import numpy as np
 import nibabel as nib
 
@@ -61,6 +62,55 @@ def read_mrtrix_tsf(path):
     if len(tracks) != count:
         raise ValueError(f'Expected {count} tracks, parsed {len(tracks)} from {path}')
     return header, tracks
+
+
+# ── Metric labels ─────────────────────────────────────────────────────────────
+# A metric is identified by "<folder>/<name>", e.g. dwi/dti/fa, dwi/dki/fa,
+# mri/T1w_proc, dwi/mrds/mrds_fixels/BIC/FA-par. <folder> is the FULL path,
+# every directory name from the subject directory down, of the directory that
+# holds the .tsf; <name> is the metric part of the file name
+# {hemi}_{template}_<name>.tsf. The folder is what tells apart metrics that
+# several methods (or, for MRDS, the same method's different model-selection
+# variants) produce under the same name — fa from both dwi/dti and dwi/dki,
+# FA-par from both .../mrds_fixels/BIC and .../mrds_fixels/FTest. Being the
+# full path (not just the immediate parent directory) means a metric can sit
+# however many folders deep and still be looked up unambiguously, with no
+# guessing about how many of the leading directories to include.
+
+def split_metric(label):
+    folder, _, name = label.rpartition('/')
+    if not folder or not name:
+        raise ValueError(f"Metric '{label}' must be written as <folder>/<name>, e.g. dwi/dti/fa "
+                         f"(folder = the full path, from the subject directory down, to the "
+                         f"directory holding the .tsf)")
+    return folder, name
+
+
+def metric_label(tsf_path, hemi, template, subj_dir):
+    """Inverse of find_tsf: label for a {hemi}_{template}_<name>.tsf path,
+    folder = its full path relative to subj_dir."""
+    fname = os.path.basename(tsf_path)
+    prefix = f'{hemi}_{template}_'
+    if not (fname.startswith(prefix) and fname.endswith('.tsf')):
+        raise ValueError(f'{fname} is not a {prefix}<name>.tsf file')
+    folder = os.path.relpath(os.path.dirname(tsf_path), subj_dir)
+    return f'{folder}/{fname[len(prefix):-len(".tsf")]}'
+
+
+def metric_id(label):
+    """File-name / URL-safe form of a metric label (dwi/dti/fa -> dwi__dti__fa)."""
+    return label.replace('/', '__')
+
+
+def find_tsf(subj_dir, hemi, template, label):
+    """Path of {subj_dir}/{folder}/{hemi}_{template}_{name}.tsf, as a single-item
+    list if it exists (else empty), where {folder} is the label's full,
+    exact directory path relative to subj_dir. Returned as a list (rather than
+    a plain path-or-None) to keep this a drop-in for callers written against
+    the old glob-based multi-match version."""
+    folder, name = split_metric(label)
+    path = os.path.join(subj_dir, folder, f'{hemi}_{template}_{name}.tsf')
+    return [path] if os.path.isfile(path) else []
 
 
 def write_mrtrix_tsf(path, tracks, template_path=None):

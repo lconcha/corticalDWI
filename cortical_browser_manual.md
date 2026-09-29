@@ -42,7 +42,7 @@ nDepths=30                     # cortical depth points to extract
 angle=45                       # max fixel–streamline angle (degrees)
 csd_fixel_dir=csd_fixels_singletissue  # CSD fixel directory name (relative to dwi/)
 mrds_fixel_dir=mrds_fixels             # MRDS fixel directory name (relative to dwi/mrds/)
-browser_metrics=fa,md,ad,rd,afd-par,afd-perp,mk,ak,rk
+browser_metrics=dwi/dti/fa,dwi/dki/fa,dwi/dti/md,dwi/dti/ad,dwi/dti/rd,dwi/csd_fixels_singletissue/afd-par,dwi/csd_fixels_singletissue/afd-perp,dwi/dki/mk,dwi/dki/ak,dwi/dki/rk,dwi/mrds/mrds_fixels/BIC/FA-par
 ```
 
 Relevant for the browser and normative data creation are `target_type` and `browser_metrics`
@@ -51,7 +51,7 @@ Relevant for the browser and normative data creation are `target_type` and `brow
 | Setting | Meaning |
 |---|---|
 | `target_type` | Which surface template's files to look for. All TSF and surface files are expected to follow the `{hemi}_{…}_{TEMPLATE}…` naming convention (e.g. `lh_ico6_sym_fa.tsf`, `lh_white_ico6_sym.surf.gii`). Change this one string to retarget the whole toolchain (`ico6_sym` ↔ `fsLR-32k`). |
-| `browser_metrics` | The allow‑list of metrics to search for, show in the **Metric** dropdown, and include in the normative dataset — in the order they should appear. Each metric `<m>` maps to per‑hemisphere files `{hemi}_{TEMPLATE}_<m>.tsf`. |
+| `browser_metrics` | The allow‑list of metrics to search for, show in the **Metric** dropdown, and include in the normative dataset — in the order they should appear. Each metric is written `<folder>/<name>` (e.g. `dwi/dti/fa`, `dwi/dki/fa`, `mri/T1w_proc`, `dwi/mrds/mrds_fixels/BIC/FA-par`), where `<folder>` is the *full* path — every directory name from the subject directory down — of the directory that holds the `.tsf` files, however many folders deep. This is what tells apart metrics that several methods (or, for MRDS, different model‑selection variants) produce under the same name. It maps to the exact file `<folder>/{hemi}_{TEMPLATE}_<name>.tsf` under the subject. A bare name such as `fa` is rejected. Normative files built before this labelling must be rebuilt. |
 
 Because this file is the single source of truth, the browser and the normative builder
 always agree on the template and metric set. Edit it in one place; there are no other

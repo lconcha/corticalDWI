@@ -32,15 +32,17 @@ import numpy as np
 import h5py
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'cortical_browser'))
-from cortical_io import read_mrtrix_tsf, pad_to_matrix
-from cortical_browser_config import TEMPLATE, METRICS   # shared with cortical_browser.py
+from cortical_io import read_mrtrix_tsf, pad_to_matrix, find_tsf
+from cortical_browser_config import TEMPLATE, METRICS, print_config_report   # shared with cortical_browser.py
 
 
-def find_one_subject_file(subjects_dir, subject, filename):
-    """Recursively search one subject's directory for a file with the given
-    exact basename (mirrors cortical_find_subject_files.m, but per-subject
-    so a missing file can be reported/handled individually)."""
-    matches = glob.glob(os.path.join(subjects_dir, subject, '**', filename), recursive=True)
+def find_one_subject_file(subjects_dir, subject, hemi, template, metric):
+    """Path of one subject's {hemi} tsf for a <folder>/<name> metric, or None.
+    The folder in the label makes the match unambiguous; if the same folder
+    name still occurs twice under the subject, the first (sorted) is used."""
+    matches = find_tsf(os.path.join(subjects_dir, subject), hemi, template, metric)
+    if len(matches) > 1:
+        print(f'    [warn] {subject} {hemi} {metric}: {len(matches)} matches, using {matches[0]}')
     return matches[0] if matches else None
 
 
@@ -53,18 +55,18 @@ def load_subject_matrix(tsf_path):
     return M
 
 
-def stack_subjects(subjects_dir, subjects, filename):
+def stack_subjects(subjects_dir, subjects, hemi, template, metric):
     """(nVerts, maxDepth, nSubjects) NaN-padded stack for one metric/hemi,
     aligned to `subjects` by index. A subject missing this file contributes
     an all-NaN slice, keeping the subject axis consistent across metrics."""
     per_subj = [None] * len(subjects)
     n_found = 0
     for i, subj in enumerate(subjects):
-        path = find_one_subject_file(subjects_dir, subj, filename)
+        path = find_one_subject_file(subjects_dir, subj, hemi, template, metric)
         if path is not None:
             per_subj[i] = load_subject_matrix(path)
             n_found += 1
-    print(f'    {filename}: {n_found}/{len(subjects)} subjects found')
+    print(f'    {hemi} {metric}: {n_found}/{len(subjects)} subjects found')
 
     n_verts = next((m.shape[0] for m in per_subj if m is not None), 0)
     max_len = max((m.shape[1] for m in per_subj if m is not None), default=0)
@@ -81,8 +83,7 @@ def build_normative_stack(subjects_dir, subjects, metrics, hemi, template=TEMPLA
     trimmed of any trailing depth columns that are all-NaN everywhere."""
     per_metric_stacks = []
     for metric in metrics:
-        filename = f'{hemi}_{template}_{metric}.tsf'
-        per_metric_stacks.append(stack_subjects(subjects_dir, subjects, filename))
+        per_metric_stacks.append(stack_subjects(subjects_dir, subjects, hemi, template, metric))
 
     n_verts   = per_metric_stacks[0].shape[0]
     n_subj    = len(subjects)
@@ -103,13 +104,14 @@ def main():
     if not args.subjects_dir:
         sys.exit('subjects_dir not given and SUBJECTS_DIR is not set')
 
+    print_config_report(args.subjects_dir)
+
     subjects_file = os.path.join(args.subjects_dir, 'templates', 'subjects_to_average.txt')
     if not os.path.isfile(subjects_file):
         sys.exit(f'Subject list not found: {subjects_file}')
     with open(subjects_file) as f:
         subjects = [line.strip() for line in f if line.strip()]
     print(f'Cohort  : {len(subjects)} subjects from {subjects_file}')
-    print(f'Metrics : {METRICS}')
 
     out_dir = os.path.join(args.subjects_dir, 'templates', 'normative')
     os.makedirs(out_dir, exist_ok=True)
