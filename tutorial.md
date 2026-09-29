@@ -36,6 +36,10 @@ This tutorial will show all the steps necessary to run the entire pipeline for t
     - [MRDS](#mrds)
     - [Sample fixels](#sample-fixels)
     - [Other DWi models](#other-dwi-models)
+- [Explore results](#explore-results)
+  - [Interactive browser](#interactive-browser)
+  - [Normative (cohort) data](#normative-cohort-data)
+  - [Z-scoring a subject against the normative data](#z-scoring-a-subject-against-the-normative-data)
 
 # Requirements
 ## Software
@@ -461,4 +465,48 @@ Some DWI metrics are not fixel-based (e.g., DTI, DKI metrics), and therefore do 
 cortical_tcksample_dti.sh $subjid $nDepths
 cortical_tcksample_dki.sh $subjid
 ```
+
+# Explore results
+
+Once a subject's `.tsf` files exist (via the steps above, or the Snakemake pipeline), three tools build on them: an interactive viewer, a normative (cohort) dataset, and per‑subject z‑scores against that cohort.
+
+## Interactive browser
+
+`cortical_browser.py` is a browser‑based viewer: bilateral hemisphere surfaces with overlay metrics, an MRI orthoslice view, per‑hemisphere depth‑profile charts, and (once normative data exists — see below) a cohort‑comparison and multivariate/z‑score explorer.
+
+```bash
+[micromamba|conda] activate corticalDWI
+cortical_browser.sh $SUBJECTS_DIR $subjid
+```
+
+Full details — including the `browser_metrics` config syntax, the expected data layout, and every panel — are in [cortical_browser_manual.md](./cortical_browser_manual.md).
+
+## Normative (cohort) data
+
+The browser's cohort‑comparison panels, and the z‑scoring step below, both need a precomputed normative dataset built from a control cohort:
+
+```bash
+# templates/subjects_to_average.txt lists the cohort, one subject ID per line
+python cortical_create_normative_data_from_tsf.py $SUBJECTS_DIR
+```
+
+This reads each cohort subject's `.tsf` files for every metric in `browser_metrics` and stacks them into `$SUBJECTS_DIR/templates/normative/<target_type>_multivariate.h5`. Re‑run it whenever `browser_metrics`, `target_type`, or the cohort list changes. See the "Pre‑computing normative data" section of [cortical_browser_manual.md](./cortical_browser_manual.md) for the full detail.
+
+## Z-scoring a subject against the normative data
+
+`cortical_zscore_tsf.py` compares one subject's `.tsf` files, metric by metric, against the normative data above, and writes the result next to each input file: a `_zscore.tsf` with a z‑score per streamline point, and two per‑vertex `.func.gii` files (mean and sum of `|z|` along each streamline).
+
+```bash
+python cortical_zscore_tsf.py $subjid $SUBJECTS_DIR
+```
+
+It only ever z‑scores a metric that both the subject and the normative data have, and it refuses to run for a subject that's *in* the cohort (a cohort subject can't be meaningfully compared against a normative distribution it's part of). A vertex/depth point with too few valid cohort values, or a zero cohort SD, is left invalid rather than divided by near‑nothing.
+
+Under Snakemake, this runs automatically as two rules — `zscore_stats` (control mean/SD/n, computed once per dataset and cached) and `zscore_tsf` (per `.tsf` file) — for every non‑cohort subject, once the normative HDF5 above exists:
+
+```bash
+snakemake --cores 4 --config 'subjects=["'$subjid'"]'
+```
+
+(`cortical_snakerun.py zscore_tsf $subjid` also works, but — since `zscore_tsf` has wildcards beyond `{subject}` — it only resolves to *one* example file, not every metric/hemisphere for that subject; use plain `snakemake` as above to get all of them.)
 

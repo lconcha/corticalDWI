@@ -28,7 +28,7 @@ version.
 
 ## Configuration file
 
-Both the browser and the normative‑data builder read their shared settings from one file: `$SUBJECTS_DIR/corticalDWI.params.conf`:
+Both the browser and the normative‑data builder read their shared settings from one file: `$SUBJECTS_DIR/corticalDWI_params.conf` (falling back to the repo's own copy of the same file for any key the study‑level one doesn't set — see that file's own header):
 
 **`corticalDWI_params.conf`**
 
@@ -57,10 +57,12 @@ Because this file is the single source of truth, the browser and the normative b
 always agree on the template and metric set. Edit it in one place; there are no other
 copies.
 
-> :information_source: The browser searches for each configured metric's TSF files **recursively**
-> under the subject directory, so files nested in sub‑folders (e.g.
-> `dwi/csd_fixels_singletissue/`) are found, not only those directly in `dwi/`. A metric
-> appears only when **both** `lh` and `rh` files are present.
+> :information_source: Each configured metric names its file's exact location — the
+> `<folder>` half of `<folder>/<name>` is the *full* path, every directory name from the
+> subject directory down (e.g. `dwi/dti`, `dwi/csd_fixels_singletissue`,
+> `dwi/mrds/mrds_fixels/BIC`), so the browser looks up `<folder>/{hemi}_{TEMPLATE}_<name>.tsf`
+> directly rather than searching the subject tree. A metric appears only when **both** `lh`
+> and `rh` files are present at that exact path.
 
 ### Expected data layout
 
@@ -74,11 +76,22 @@ copies.
 └── <subject_id>/
     ├── mri/    brain.nii.gz | brain.nii | brain.mgz   # background volume (optional)
     │           {lh,rh}_ico6_sym_laplace-wm-streamlines.tck   # T1-space streamlines (optional)
+    │           {lh,rh}_<TEMPLATE>_<name>.tsf           # metrics labelled mri/<name>, e.g. mri/T1w_proc
     ├── surf/   {lh,rh}_white_<TEMPLATE>.surf.gii, …_inflated, pial, …
-    └── dwi/    {lh,rh}_<TEMPLATE>_<metric>.tsf   (also found in sub-folders)
-                fa.nii.gz                                          # DWI-space FA map (optional)
+    └── dwi/    fa.nii.gz                                          # DWI-space FA map (optional)
                 {lh,rh}_ico6_sym_laplace-wm-streamlines_dwispace.tck  # DWI-space streamlines (optional)
+                dti/{lh,rh}_<TEMPLATE>_<name>.tsf                  # metrics labelled dwi/dti/<name>
+                dki/{lh,rh}_<TEMPLATE>_<name>.tsf                  # metrics labelled dwi/dki/<name>
+                csd_fixels_singletissue/{lh,rh}_<TEMPLATE>_<name>.tsf   # dwi/csd_fixels_singletissue/<name>
+                mrds/mrds_fixels/<modsel>/{lh,rh}_<TEMPLATE>_<name>.tsf # dwi/mrds/mrds_fixels/<modsel>/<name>
 ```
+
+Each `.tsf`'s metric label is `<folder>/<name>` — the full path from `<subject_id>/` down to
+the directory holding the file, plus the file's own `<name>` part. A method that can only
+ever produce one metric of a given name lives in a one‑segment folder (`mri/T1w_proc`,
+`dwi/dti/fa`); MRDS, which fits several model‑selection variants under the same directory
+tree, needs the deeper `dwi/mrds/mrds_fixels/<modsel>/<name>` form so `BIC` and `FTest`
+don't collide.
 
 The last three are all optional — without them, the browser still runs, just without the
 **Streamlines** panel and/or **Open DWI space** button (see *Streamlines* and *DWI space*).
@@ -126,11 +139,12 @@ SUBJECTS_DIR=/path/to/subjects  python cortical_create_normative_data_from_tsf.p
 
 **Inputs**
 - `<subjects_dir>/templates/subjects_to_average.txt` — the cohort: one subject ID per line.
-- `$SUBJECTS_DIR/corticalDWI_params.conf$` — for `browser_metrics`.
+- `$SUBJECTS_DIR/corticalDWI_params.conf` — for `browser_metrics`.
 
 **What it does**
-- For every subject in the list, it searches **recursively** for each metric's
-  `{hemi}_{TEMPLATE}_<metric>.tsf`, masking the `-1` invalid sentinel to NaN.
+- For every subject in the list and every configured `<folder>/<name>` metric, it looks up
+  `<folder>/{hemi}_{TEMPLATE}_<name>.tsf` at that exact path (same lookup the browser itself
+  uses — see *Configuration file* above), masking the `-1` invalid sentinel to NaN.
 - It stacks all subjects into a `(nVerts, nDepths, nSubjects, nMetrics)` array per hemisphere.
 
 **Output**
@@ -141,8 +155,12 @@ tick **Show normative**, and the multivariate panels are computed on demand per 
 vertex. If the file is missing, those features are shown as unavailable ("no cohort data")
 but the rest of the browser works normally.
 
-> **Re‑run the builder whenever** you change `METRICS` or `TEMPLATE`, or the cohort list —
-> otherwise the normative panels won't reflect the new configuration.
+> **Re‑run the builder whenever** you change `browser_metrics` or `target_type`, or the
+> cohort list — otherwise the normative panels won't reflect the new configuration. A
+> normative file built before metric labels became `<folder>/<name>` (full path) still
+> stores its old, bare names (`fa`, not `dwi/dti/fa`) — none of them will match a current
+> `browser_metrics` entry, so the browser just shows **no cohort data** for every metric
+> rather than an error. Rebuild it if that happens.
 
 ---
 
