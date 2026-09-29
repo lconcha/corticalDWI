@@ -15,8 +15,8 @@ import nibabel as nib
 import h5py
 
 sys.path.insert(0, os.path.dirname(__file__))
-from cortical_io import read_mrtrix_tsf, pad_to_matrix
-from cortical_browser_config import TEMPLATE, METRICS   # shared with the normative builder
+from cortical_io import read_mrtrix_tsf, pad_to_matrix, find_tsf, metric_id
+from cortical_browser_config import TEMPLATE, METRICS, print_config_report   # shared with the normative builder
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from urllib.parse import urlparse, parse_qs
 
@@ -198,10 +198,13 @@ def find_surface_types(subjects_dir, subj_dir, template=TEMPLATE):
 
 def find_tsf_metrics(subj_dir, template=TEMPLATE, metrics=METRICS, verbose=True):
     """Locate each configured metric's lh/rh TSF files anywhere under the
-    subject dir (recursive, mirroring the normative builder's search — so files
-    nested in sub-folders like dwi/csd_fixels_singletissue/ are found, not just
-    those directly in dwi/). A metric is included only when both hemispheres are
-    present as siblings, and the result preserves the config's metric order.
+    subject dir (recursive, mirroring the normative builder's search). Each metric
+    is a <folder>/<name> label (e.g. dwi/dti/fa, dwi/dki/fa, dwi/mrds/mrds_fixels/BIC/FA-par),
+    folder being the FULL path, every directory name from the subject directory down, to the
+    directory that holds the .tsf, so metrics with the same name from different methods (or,
+    for MRDS, different model-selection variants) stay distinct however many folders deep they
+    are. A metric is included only when both hemispheres are present as siblings, and the
+    result preserves the config's metric order.
 
     With verbose=True (the default) it reports, per configured metric, whether it
     was found and in which sub-folder, or why it was skipped (no file at all, or
@@ -211,25 +214,29 @@ def find_tsf_metrics(subj_dir, template=TEMPLATE, metrics=METRICS, verbose=True)
         print(f'Finding TSF files (template={template}) under {subj_dir}:')
     found = {}
     for metric in metrics:
-        lh_matches = sorted(glob.glob(os.path.join(subj_dir, '**', f'lh_{template}_{metric}.tsf'),
-                                      recursive=True))
+        lh_matches = find_tsf(subj_dir, 'lh', template, metric)
         chosen = next(((lh, rh) for lh in lh_matches
                        if os.path.isfile(rh := os.path.join(os.path.dirname(lh),
-                                                            f'rh_{template}_{metric}.tsf'))), None)
+                                                            os.path.basename(lh).replace('lh_', 'rh_', 1)))), None)
         if chosen:
             found[metric] = {'lh': chosen[0], 'rh': chosen[1]}
             if verbose:
                 rel = os.path.relpath(chosen[0], subj_dir)
-                print(f'  found    {metric:12s} {rel}')
+                print(f'  found    {metric:24s} {rel}')
         elif verbose:
             if not lh_matches:
-                print(f'\033[31m  MISSING  {metric:12s} no lh/rh .tsf found\033[0m')
+                print(f'\033[31m  MISSING  {metric:24s} no lh/rh .tsf found\033[0m')
             else:
                 rel = os.path.relpath(os.path.dirname(lh_matches[0]), subj_dir)
-                print(f'\033[31m  MISSING  {metric:12s} lh in {rel}/ but no rh sibling\033[0m')
+                print(f'\033[31m  MISSING  {metric:24s} lh in {rel}/ but no rh sibling\033[0m')
     if verbose:
         print(f'  -> {len(found)}/{len(metrics)} configured metric(s) available: {list(found) or "none"}')
     return found
+
+
+def label_from_id(mid, labels):
+    """Metric label whose file/URL-safe id is `mid` (None if unknown)."""
+    return next((l for l in labels if metric_id(l) == mid), None)
 
 
 # ── TSF → func.gii conversion ─────────────────────────────────────────────────
@@ -324,12 +331,12 @@ def scan_overlay_stats(tsf_metrics):
 def materialize_overlay(metric, lh_M, rh_M, out_dir, template=TEMPLATE):
     """Write the func.gii + binary matrix files for one metric.
     Returns a list of (url_path, file_path) pairs to merge into file_map."""
-    lh_gii   = os.path.join(out_dir, f'lh_{template}_{metric}.func.gii')
-    rh_gii   = os.path.join(out_dir, f'rh_{template}_{metric}.func.gii')
-    asym_gii = os.path.join(out_dir, f'asym_{template}_{metric}.func.gii')
-    lh_mat   = os.path.join(out_dir, f'lh_{template}_{metric}_matrix.f32')
-    rh_mat   = os.path.join(out_dir, f'rh_{template}_{metric}_matrix.f32')
-    asym_mat = os.path.join(out_dir, f'asym_{template}_{metric}_matrix.f32')
+    lh_gii   = os.path.join(out_dir, f'lh_{template}_{metric_id(metric)}.func.gii')
+    rh_gii   = os.path.join(out_dir, f'rh_{template}_{metric_id(metric)}.func.gii')
+    asym_gii = os.path.join(out_dir, f'asym_{template}_{metric_id(metric)}.func.gii')
+    lh_mat   = os.path.join(out_dir, f'lh_{template}_{metric_id(metric)}_matrix.f32')
+    rh_mat   = os.path.join(out_dir, f'rh_{template}_{metric_id(metric)}_matrix.f32')
+    asym_mat = os.path.join(out_dir, f'asym_{template}_{metric_id(metric)}_matrix.f32')
 
     write_func_gii(lh_M, lh_gii);  lh_M.tofile(lh_mat)
     write_func_gii(rh_M, rh_gii);  rh_M.tofile(rh_mat)
@@ -417,8 +424,8 @@ def materialize_normative(subjects_dir, metric, out_dir, template=TEMPLATE):
 
         arrays = {'lh': (lh_mean, lh_std), 'rh': (rh_mean, rh_std), 'asym': (asym_mean, asym_std)}
         for kind, (mean_arr, std_arr) in arrays.items():
-            mean_path = os.path.join(out_dir, f'normative_{kind}_{metric}_mean.f32')
-            std_path  = os.path.join(out_dir, f'normative_{kind}_{metric}_std.f32')
+            mean_path = os.path.join(out_dir, f'normative_{kind}_{metric_id(metric)}_mean.f32')
+            std_path  = os.path.join(out_dir, f'normative_{kind}_{metric_id(metric)}_std.f32')
             mean_arr.tofile(mean_path)
             std_arr.tofile(std_path)
             file_entries.append((f'/data/{os.path.basename(mean_path)}', mean_path))
@@ -779,8 +786,8 @@ def make_handler(html_bytes, file_map, overlay_arrays, materialized, out_dir,
 
             m = overlay_re.match(fname)
             if m:
-                metric = m.group(1)
-                if metric in materialized or metric not in overlay_arrays:
+                metric = label_from_id(m.group(1), overlay_arrays)
+                if metric is None or metric in materialized:
                     return
                 lh_M, rh_M = overlay_arrays[metric]
                 for url, fpath in materialize_overlay(metric, lh_M, rh_M, out_dir, template):
@@ -790,8 +797,8 @@ def make_handler(html_bytes, file_map, overlay_arrays, materialized, out_dir,
 
             m = normative_re.match(fname)
             if m and subjects_dir:
-                metric = m.group(1)
-                if metric in normative_materialized:
+                metric = label_from_id(m.group(1), list(overlay_arrays) + list(METRICS))
+                if metric is None or metric in normative_materialized:
                     return
                 for url, fpath in materialize_normative(subjects_dir, metric, out_dir, template):
                     file_map[url] = fpath
@@ -898,6 +905,8 @@ def main():
     if args.killall:
         kill_other_instances()
         sys.exit(0)
+
+    print_config_report(args.subjects_dir)
 
     subj_dir = os.path.join(args.subjects_dir, args.subj_id)
     if not os.path.isdir(subj_dir):

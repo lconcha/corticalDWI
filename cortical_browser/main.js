@@ -233,17 +233,20 @@ function resetPivot(nv) {
 // Split into one loader per panel + one for the orthoslice contours, so a
 // single surface-type dropdown change only reloads what actually changed
 // instead of re-fetching/re-parsing/re-uploading all three mesh panels.
+// metric labels look like dti/fa; files/URLs use the '/'-free id (dti__fa), see metric_id() in cortical_io.py
+const metricId = m => m.replace(/\//g, '__')
+
 function layerDataFor(hemi, metric) {
   const info = metric ? METRICS[metric] : null
   if (!info) return []
-  return [{ url: `${BASE_URL}/${hemi}_${TEMPLATE}_${metric}.func.gii${Q}`,
+  return [{ url: `${BASE_URL}/${hemi}_${TEMPLATE}_${metricId(metric)}.func.gii${Q}`,
             colormap: currentCmap, colormapInvert: dataInvert,
             opacity: layerOpacity, cal_min: currentClimMin, cal_max: currentClimMax }]
 }
 function layerAsymFor(metric) {
   const info = metric ? METRICS[metric] : null
   if (!info) return []
-  return [{ url: `${BASE_URL}/asym_${TEMPLATE}_${metric}.func.gii${Q}`,
+  return [{ url: `${BASE_URL}/asym_${TEMPLATE}_${metricId(metric)}.func.gii${Q}`,
             colormap: currentCmapAsym, colormapInvert: asymInvert,
             opacity: layerOpacity, cal_min: currentAsymMin, cal_max: currentAsymMax }]
 }
@@ -495,7 +498,7 @@ const matCache = {}
 async function ensureMatrix(hemi, metric) {
   const key = `${hemi}_${metric}`
   if (matCache[key]) return matCache[key]
-  const r = await fetch(`${BASE_URL}/${hemi}_${TEMPLATE}_${metric}_matrix.f32${Q}`)
+  const r = await fetch(`${BASE_URL}/${hemi}_${TEMPLATE}_${metricId(metric)}_matrix.f32${Q}`)
   matCache[key] = new Float32Array(await r.arrayBuffer())
   return matCache[key]
 }
@@ -506,7 +509,7 @@ const normCache = {}
 async function ensureNormativeMatrix(kind, metric, stat) {
   const key = `${kind}_${metric}_${stat}`
   if (normCache[key]) return normCache[key]
-  const r = await fetch(`${BASE_URL}/normative_${kind}_${metric}_${stat}.f32${Q}`)
+  const r = await fetch(`${BASE_URL}/normative_${kind}_${metricId(metric)}_${stat}.f32${Q}`)
   normCache[key] = new Float32Array(await r.arrayBuffer())
   return normCache[key]
 }
@@ -537,7 +540,7 @@ async function normativeRingStat(kind, metric, ringSet) {
   // is NOT the average of the per-vertex cohort SDs (mean-of-SDs != SD-of-
   // means), so this needs the raw per-subject stack — computed fresh from
   // the cohort h5 file on the server (see compute_normative_ring_stat).
-  const r = await fetch(`/normative_ring?metric=${metric}&kind=${kind}&vertices=${ringSet.join(',')}`)
+  const r = await fetch(`/normative_ring?metric=${encodeURIComponent(metric)}&kind=${kind}&vertices=${ringSet.join(',')}`)
   if (!r.ok) return null
   return r.json()
 }
