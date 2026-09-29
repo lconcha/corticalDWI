@@ -6,38 +6,28 @@ and the normative-dataset builder (cortical_create_normative_data_from_tsf.py),
 so the two always search for, build, and display the same metrics on the same
 surface template.
 
-Values are read from corticalDWI_params.conf — the same file the shell
-pipeline uses — with the same two-tier priority as cortical_load_params.sh,
-plus a third, higher-priority tier shared with Snakemake's own config:
+Values come from corticalDWI_params.conf — the ONE file pipeline parameters
+live in (see that file's own header) — via cortical_config.py's shared
+parser, with the same two-tier priority cortical_load_params.sh and the
+Snakefile also use:
   1. Repo defaults    — corticalDWI_params.conf at the repo root
   2. Study overrides   — $SUBJECTS_DIR/corticalDWI_params.conf, if the
      SUBJECTS_DIR environment variable is set and the file exists
-  3. Study yaml        — $SUBJECTS_DIR/.corticalDWI/config.yaml (the same file
-     the Snakefile merges over ITS repo defaults), if it exists and sets
-     target_type/browser_metrics
-
-That's 3 files actually read here — but there is a 4th place configuration
-for this pipeline lives: the repo's own config.yaml (used only by Snakemake).
-This module does NOT read it; see print_config_report() below, which says so
-explicitly rather than leaving it ambiguous.
 
 Keys consumed here:
   target_type      — surface template name -> TEMPLATE
   browser_metrics   — comma-separated metric list -> METRICS
 
 Call print_config_report(subjects_dir) from a CLI's main(), once args are
-parsed, to print exactly which of the above actually supplied TEMPLATE/METRICS
-for THIS run — never leave it to be inferred from which files happen to exist.
+parsed, to print exactly which of the two files above actually supplied
+TEMPLATE/METRICS for THIS run — never leave it to be inferred.
 """
 import os
-import re
+import sys
 
-_REPO_DIR  = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-_REPO_CONF = os.path.join(_REPO_DIR, 'corticalDWI_params.conf')
-# Snakemake's own repo-default config — NOT read by this module (see module
-# docstring / print_config_report()). Kept here only so the report below can
-# name it and say so, instead of a user having to know that on their own.
-_REPO_YAML = os.path.join(_REPO_DIR, 'config.yaml')
+_REPO_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, _REPO_DIR)
+from cortical_config import load_conf   # noqa: E402 (needs the sys.path insert above)
 
 # Fallback values, used only if a key is missing from every conf file found.
 _DEFAULT_TEMPLATE = 'ico6_sym'
@@ -46,66 +36,8 @@ _DEFAULT_METRICS  = ('dwi/dti/fa,dwi/dti/md,dwi/dti/ad,dwi/dti/rd,dwi/dti/cl,dwi
                       'dwi/dki/mk,dwi/dki/ak,dwi/dki/rk,'
                       'mri/T1w_proc,mri/flair_proc,mri/T1w_proc_grad,mri/T1_over_FLAIR')
 
-
-def _parse_conf(path):
-    params = {}
-    if not os.path.isfile(path):
-        return params
-    with open(path, encoding='utf-8') as f:
-        text = f.read()
-    # A trailing backslash joins a line to the next one — same as bash's own
-    # line-continuation, which is how this file is also read (cortical_load_params.sh
-    # sources it directly). Matches bash only when the continuation line has NO
-    # leading whitespace; an indented continuation would make bash treat it as a
-    # separate word/command instead of part of the assignment, so this file must
-    # not indent continuation lines either.
-    text = re.sub(r'\\\n', '', text)
-    for line in text.splitlines():
-        line = line.split('#', 1)[0].strip()
-        if not line or '=' not in line:
-            continue
-        key, _, val = line.partition('=')
-        params[key.strip()] = val.strip()
-    return params
-
-
 _subjects_dir = os.environ.get('SUBJECTS_DIR')
-_study_conf = os.path.join(_subjects_dir, 'corticalDWI_params.conf') if _subjects_dir else None
-_study_yaml = os.path.join(_subjects_dir, '.corticalDWI', 'config.yaml') if _subjects_dir else None
-
-_params = {}
-# key -> path of the file whose value for that key is the one actually in
-# effect (the last file, in priority order, that set it); absent from this
-# dict (checked via .get(key)) means no file set it and the built-in
-# _DEFAULT_* above was used instead.
-_provenance = {}
-
-
-def _merge_conf(path):
-    for key, val in _parse_conf(path).items():
-        _params[key] = val
-        _provenance[key] = path
-
-
-_merge_conf(_REPO_CONF)
-if _study_conf:
-    _merge_conf(_study_conf)
-
-# Per-dataset overrides in $SUBJECTS_DIR/.corticalDWI/config.yaml (the same file
-# the Snakefile merges over the repo defaults) take precedence over the .conf files.
-# browser_metrics may be a comma-separated string or a YAML list.
-if _study_yaml and os.path.isfile(_study_yaml):
-    try:
-        import yaml
-        with open(_study_yaml, encoding='utf-8') as f:
-            _yaml = yaml.safe_load(f) or {}
-        for _k in ('target_type', 'browser_metrics'):
-            if _yaml.get(_k):
-                _v = _yaml[_k]
-                _params[_k] = ','.join(map(str, _v)) if isinstance(_v, (list, tuple)) else str(_v)
-                _provenance[_k] = _study_yaml
-    except Exception as e:
-        print(f'WARNING: could not read {_study_yaml}: {e}')
+_params, _provenance, _repo_conf, _study_conf = load_conf(_REPO_DIR, _subjects_dir)
 
 # ── Surface template / naming convention ──────────────────────────────────────
 # Which surface template's files to search for and display. All TSF and surface
@@ -130,14 +62,9 @@ if _bad:
 
 
 # ── Provenance report ──────────────────────────────────────────────────────────
-# The 3 files actually consulted (in priority order — a later one, if present,
-# overrides the earlier ones key-by-key), whether each was found, and whether
-# SUBJECTS_DIR was even set (a missing SUBJECTS_DIR silently skips #2 and #3
-# entirely, which is easy to mistake for "no overrides configured").
 CONFIG_SOURCES = [
-    ('1. repo defaults',   _REPO_CONF,  os.path.isfile(_REPO_CONF)),
+    ('1. repo defaults',   _repo_conf,  os.path.isfile(_repo_conf)),
     ('2. study overrides', _study_conf, bool(_study_conf and os.path.isfile(_study_conf))),
-    ('3. study yaml',      _study_yaml, bool(_study_yaml and os.path.isfile(_study_yaml))),
 ]
 
 
@@ -147,13 +74,12 @@ def _source_label(key):
 
 
 def print_config_report(subjects_dir=None):
-    """Print exactly which config file(s) this module resolved TEMPLATE/METRICS
-    from, so which of the several places configuration can live actually applied
-    is never left to be inferred. Pass the subjects_dir this run is actually
-    using (a CLI's own positional arg, which can differ from the SUBJECTS_DIR
-    env var this module resolved against at import time) to get a loud warning
-    if the two disagree — in that case the report below reflects the wrong
-    directory's config entirely."""
+    """Print exactly which config file this module resolved TEMPLATE/METRICS
+    from. Pass the subjects_dir this run is actually using (a CLI's own
+    positional arg, which can differ from the SUBJECTS_DIR env var this
+    module resolved against at import time) to get a loud warning if the two
+    disagree — in that case the report below reflects the wrong directory's
+    config entirely."""
     print('Config sources for target_type / browser_metrics (later overrides earlier):')
     for label, path, exists in CONFIG_SOURCES:
         if path is None:
@@ -161,7 +87,6 @@ def print_config_report(subjects_dir=None):
         else:
             mark = 'x' if exists else ' '
             print(f'  [{mark}] {label:18s} {path}')
-    print(f'  (repo config.yaml at {_REPO_YAML} is Snakemake-only and is NOT read by the browser/builder)')
     print(f'  -> target_type     = {TEMPLATE!r}  from {_source_label("target_type")}')
     print(f'  -> browser_metrics = {len(METRICS)} metric(s)  from {_source_label("browser_metrics")}')
     print(f'     {", ".join(METRICS)}')
@@ -173,6 +98,7 @@ def print_config_report(subjects_dir=None):
                   f'match before running, or the study-level overrides for the actual directory '
                   f'in use are silently skipped.')
         elif not _subjects_dir:
-            print(f'  WARNING: SUBJECTS_DIR environment variable is not set, so study-level config '
-                  f'files under {subjects_dir} (#2, #3 above) were never consulted — only repo '
-                  f'defaults apply, even though a study directory was given on the command line.')
+            print(f'  WARNING: SUBJECTS_DIR environment variable is not set, so the study-level '
+                  f'corticalDWI_params.conf under {subjects_dir} (#2 above) was never consulted — '
+                  f'only repo defaults apply, even though a study directory was given on the '
+                  f'command line.')

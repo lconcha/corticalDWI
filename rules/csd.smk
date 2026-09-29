@@ -77,7 +77,7 @@ if os.path.exists(CSD_SNAPSHOT_FILE):
 else:
     # No snapshot yet for this dataset — csd_average_response simply has no
     # input to depend on until one is created (see that file's own header,
-    # written once you're ready: cp config.yaml's neighbor template or just
+    # written once you're ready: cp the neighbor template in $SUBJECTS_DIR/.corticalDWI/ or just
     # `ls "$SUBJECTS_DIR" | grep '^sub-' > "$SUBJECTS_DIR/.corticalDWI/csd_average_response_subjects.txt"`).
     CSD_SNAPSHOT_SUBJECTS = []
 

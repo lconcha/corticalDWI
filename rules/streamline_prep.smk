@@ -56,7 +56,7 @@ rule register_t1_to_dwi:
         registered=f"{SUBJECTS_DIR}/{{subject}}/dwi/t1native_to_b0_Warped.nii.gz",
     # Sizes the SGE slot request so nproc inside the job (which the external
     # inb_synthreg.sh probes to self-configure) never returns something that
-    # breaks its arithmetic — see config.yaml's register_threads comment.
+    # breaks its arithmetic — see corticalDWI_params.conf's register_threads comment.
     threads: config["register_threads"]
     shell:
         MRTRIX_ENV + "cortical_register_t1_to_dwi.sh {wildcards.subject}"

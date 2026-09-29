@@ -15,11 +15,14 @@ Prerequisites (unchanged from cortical_singlesubject_fullprocess.sh):
   path_add /misc/lauterbur2/lconcha/code/inb_mrtrix_modules/scripts
   export SUBJECTS_DIR=/path/to/freesurfer/subjects
 
-Config cascade (mirrors corticalDWI_params.conf's own repo-default ->
-study-override pattern): this repo's config.yaml supplies defaults; if
-$SUBJECTS_DIR/.corticalDWI/config.yaml exists, its keys override those
-defaults for this dataset only. Same idea for the CSD group-average
-snapshot list and cluster job logs — see rules/csd.smk and
+Config cascade: corticalDWI_params.conf at the repo root supplies defaults;
+if $SUBJECTS_DIR/corticalDWI_params.conf exists, its keys override those
+defaults for this dataset only — same file, same two-tier priority, as every
+standalone cortical_*.sh script (see cortical_load_params.sh) and the Python
+tooling (cortical_browser/cortical_browser_config.py) already use; see
+cortical_config.py for the shared parser. A CLI `--config key=val` always
+wins over both. Same repo-default -> study-override idea, but for the CSD
+group-average snapshot list and cluster job logs — see rules/csd.smk and
 profiles/sge_don_clusterio/ (a template to copy into
 $SUBJECTS_DIR/.corticalDWI/snakemake_profile/ and adjust per cluster).
 
@@ -54,6 +57,7 @@ always exclusively yours).
 """
 
 import os
+import sys
 import glob
 
 # Symlink-safe repo location, so this Snakefile can be symlinked into
@@ -83,19 +87,42 @@ SUBJECTS_DIR = SUBJECTS_DIR.rstrip("/")
 STUDY_DIR = f"{SUBJECTS_DIR}/.corticalDWI"
 os.makedirs(f"{STUDY_DIR}/logs", exist_ok=True)
 
-configfile: f"{CORTICAL_DWI_DIR}/config.yaml"
+# Load corticalDWI_params.conf (repo defaults, then study override) into
+# Snakemake's own `config` dict via cortical_config.py's shared parser — see
+# that file and corticalDWI_params.conf's own header for why there's no
+# separate YAML config here any more.
+#
+# config.setdefault(), NOT config.update(): Snakemake pre-populates `config`
+# with any CLI `--config key=val` values BEFORE this Snakefile body runs (as
+# real Python types — confirmed by testing `--config nDepths=42` and printing
+# config at the top of a Snakefile: config == {"nDepths": 42} already), so
+# setdefault() leaves those alone and only fills in keys CLI didn't set. A
+# plain config.update(parsed) was tried first, for the old YAML config, and is
+# wrong — it clobbers CLI --config values with whatever this file happens to
+# set for the same key (found 2026-08-27: --config subjects=["sub-79291"] was
+# silently ignored whenever the study file existed, because it unconditionally
+# set config["subjects"] = [] via .update()).
+sys.path.insert(0, CORTICAL_DWI_DIR)
+from cortical_config import load_conf
 
-# A second configfile: (rather than a manual config.update()) so Snakemake's
-# own provenance-aware merge applies here too: values from this study file
-# override the repo defaults above, but a CLI --config override still wins
-# over both. A plain config.update(yaml.safe_load(...)) was tried first and
-# is wrong — it clobbers CLI --config values with whatever this file
-# happens to set for the same key (found 2026-08-27: --config
-# subjects=["sub-79291"] was silently ignored whenever this file existed,
-# because it unconditionally set config["subjects"] = [] via .update()).
-study_config_file = f"{STUDY_DIR}/config.yaml"
-if os.path.exists(study_config_file):
-    configfile: study_config_file
+_conf_params, _conf_provenance, _repo_conf, _study_conf = load_conf(CORTICAL_DWI_DIR, SUBJECTS_DIR)
+
+# Keys Snakemake itself needs typed (everything else is only ever interpolated
+# into shell: command-line strings, where a plain string works identically to
+# an int/float — see corticalDWI_params.conf's own per-key comments for which
+# keys are Snakemake-only, i.e. never read by the standalone cortical_*.sh
+# scripts, which don't need this coercion at all).
+_INT_KEYS = ("nsteps", "nDepths", "max_length", "angle",
+             "mrds_threads", "python_threads", "mrtrix_threads", "register_threads")
+_FLOAT_KEYS = ("step_size", "tck_step_size")
+for _k, _v in _conf_params.items():
+    if _k == "subjects":
+        _v = [s.strip() for s in _v.split(",") if s.strip()]
+    elif _k in _INT_KEYS:
+        _v = int(_v)
+    elif _k in _FLOAT_KEYS:
+        _v = float(_v)
+    config.setdefault(_k, _v)
 
 TARGET_TYPE = config["target_type"]
 
@@ -154,7 +181,7 @@ include: f"{CORTICAL_DWI_DIR}/rules/zscore.smk"
 # implicit default of 1. Runs once, right here, after every rules/*.smk
 # above has registered its rules on `workflow.rules` — mrds/dki/noddi/
 # register_t1_to_dwi already claimed their own dedicated threads: (see
-# config.yaml's comment on why those four stay separate), so this only
+# corticalDWI_params.conf's comment on why those four stay separate), so this only
 # touches whatever's still sitting at the untouched default of 1. Mutating
 # rule.resources["_cores"] directly like this is exactly what Snakemake's
 # own --set-threads CLI flag does internally (confirmed in its source,
