@@ -12,20 +12,17 @@ try {
 <title>Cortical Browser — __SUBJ_ID__</title>
 <style>
 :root {
-  /* The NiiVue canvases' own backColor (JS, see SURF_CFG/SLIC_CFG and
-     applyNiivueTheme() in main.js) and the .cell/#grid/.rgutter backgrounds
-     immediately around them follow the theme. The floating chips that sit ON
-     TOP of the renders (panel-sel, maxbtn/svgbtn/clabel in cell-lh/cell-rh/
-     cell-asym/cell-ortho, cmap controls) stay fixed dark-translucent on
-     purpose: they can end up over actual bright brain/slice content as the
-     view rotates/pans, not just empty backColor, and a dark chip with light
-     text reads reliably over arbitrary image content either way — flipping
-     them to a light chip would hurt legibility over bright tissue. Everything
-     else — the sidebar, mv-warn, Plotly's chart panels (.plot-cell/.chart-wrap
-     below), the plotted hemisphere/asymmetry/normative colors, and the
-     colorbar text (--plot-text, which sits in the empty margin NiiVue itself
-     leaves for it) — follows the theme; see CHART_THEME in main.js for the
-     JS-side half of the chart theming.
+  /* Everything themes now, including the NiiVue canvases' own backColor (JS,
+     see SURF_CFG/SLIC_CFG and applyNiivueTheme() in main.js) and the floating
+     chips drawn on top of them (panel-sel, maxbtn, svgbtn, clabel, cmap
+     controls) via --badge-*. An earlier version kept those chips fixed
+     dark-translucent on the theory that they could end up over bright brain
+     tissue as the view rotates — but in practice they sit in the panel
+     corners, which are almost always empty backColor margin at the default
+     lateral-view framing, so matching the theme there reads far better than
+     the low-contrast gray-on-gray a fixed dark chip produced once the canvas
+     itself went light. See CHART_THEME in main.js for the JS-side half of the
+     Plotly chart theming.
   */
   --accent-yellow: #F5C842;   /* selected-vertex accent, shared by box/crosshair/plot line */
   --plot-text: #dddddd;       /* colorbar title/min/max labels over the surface/orthoslice canvases */
@@ -42,7 +39,8 @@ try {
   --vtx-bg: #262626; --vtx-border: #555555; --vtx-text: #ccc;
   /* Plotly chart cells — must match CHART_THEME.dark.bg in main.js */
   --plotcell-bg: #141414; --chart-bg: #242424;
-  --chart-badge-bg: rgba(0,0,0,0.55); --chart-badge-text: #cfcfcf; --chart-badge-border: #555555;
+  /* Floating chips over any canvas (surface/orthoslice/chart alike) */
+  --badge-bg: rgba(0,0,0,0.55); --badge-text: #cfcfcf; --badge-border: #555555;
   --warn-bg: rgba(51,38,0,0.92);
   /* Surface/orthoslice cells and the grid gaps between all panels — must
      roughly match SURF_BACK_DARK/SLIC_BACK_DARK in main.js */
@@ -60,7 +58,7 @@ try {
   --h2: #3B4252; --h3: #4C566A; --strong: #2E3440; --muted: #434C5E;
   --accent: #5E81AC; --accent-ink: #ECEFF4;
   --plotcell-bg: #E5E9F0; --chart-bg: #FFFFFF;
-  --chart-badge-bg: rgba(255,255,255,0.78); --chart-badge-text: #3B4252; --chart-badge-border: #D8DEE9;
+  --badge-bg: rgba(255,255,255,0.78); --badge-text: #3B4252; --badge-border: #D8DEE9;
   --warn-bg: rgba(255,255,255,0.92);
   --input-bg: #FFFFFF; --input-text: #2E3440; --input-border: #D8DEE9;
   --ctrl-accent: #5E81AC;
@@ -182,7 +180,7 @@ canvas.nv-canvas { display: block; width: 100% !important; height: 100% !importa
 .clabel {
   position: absolute; top: 4px; left: 6px; z-index: 10;
   font-size: 9px; letter-spacing: 0.4px; text-transform: uppercase;
-  color: #999999; background: rgba(0,0,0,0.55);
+  color: var(--badge-text); background: var(--badge-bg);
   padding: 1px 5px; border-radius: 3px; pointer-events: none;
 }
 .cell-span3 { grid-column: 1 / -1; }
@@ -195,39 +193,31 @@ canvas.nv-canvas { display: block; width: 100% !important; height: 100% !importa
 }
 .chead .clabel { position: static; }
 .panel-sel {
-  pointer-events: auto; height: 18px; font-size: 10px; color: #cfcfcf;
-  background: rgba(0,0,0,0.55); border: 1px solid #555555; border-radius: 3px;
+  pointer-events: auto; height: 18px; font-size: 10px; color: var(--badge-text);
+  background: var(--badge-bg); border: 1px solid var(--badge-border); border-radius: 3px;
   padding: 0 2px; cursor: pointer;
 }
-.panel-sel:hover { color: var(--accent-yellow); border-color: var(--accent-yellow); }
+.panel-sel:hover { color: var(--accent); border-color: var(--accent); }
 /* per-panel maximize/restore button (top-right corner) */
 .maxbtn {
   position: absolute; top: 3px; right: 3px; z-index: 15;
   width: 18px; height: 18px; line-height: 16px; text-align: center;
-  font-size: 12px; color: #cfcfcf;
-  background: rgba(0,0,0,0.5); border: 1px solid #555555; border-radius: 3px;
+  font-size: 12px; color: var(--badge-text);
+  background: var(--badge-bg); border: 1px solid var(--badge-border); border-radius: 3px;
   cursor: pointer; padding: 0; opacity: 0.45;
 }
-.maxbtn:hover { opacity: 1; color: var(--accent-yellow); border-color: var(--accent-yellow); }
+.maxbtn:hover { opacity: 1; color: var(--accent); border-color: var(--accent); }
 .svgbtn {
   position: absolute; top: 3px; right: 24px; z-index: 15;
   height: 18px; line-height: 16px; padding: 0 5px;
-  font-size: 10px; color: #cfcfcf;
-  background: rgba(0,0,0,0.5); border: 1px solid #555555; border-radius: 3px;
+  font-size: 10px; color: var(--badge-text);
+  background: var(--badge-bg); border: 1px solid var(--badge-border); border-radius: 3px;
   cursor: pointer; opacity: 0.45;
 }
-.svgbtn:hover { opacity: 1; color: var(--accent-yellow); border-color: var(--accent-yellow); }
+.svgbtn:hover { opacity: 1; color: var(--accent); border-color: var(--accent); }
 .plot-cell { display: flex; flex-direction: column; padding: 20px 5px 4px; background: var(--plotcell-bg); }
 .chart-wrap { position: relative; flex: 1; min-height: 0; background: var(--chart-bg); }
 .plotly-chart { width: 100%; height: 100%; }
-/* The clabel/svgbtn/maxbtn chips sit on the dark 3-D/orthoslice canvases
-   elsewhere (kept fixed-dark, see the :root comment above) but on a plot-cell
-   they sit on the chart's own themed background, so they follow the theme too. */
-.plot-cell .clabel { color: var(--chart-badge-text); background: var(--chart-badge-bg); }
-.plot-cell .svgbtn, .plot-cell .maxbtn {
-  color: var(--chart-badge-text); background: var(--chart-badge-bg); border-color: var(--chart-badge-border);
-}
-.plot-cell .svgbtn:hover, .plot-cell .maxbtn:hover { color: var(--accent); border-color: var(--accent); }
 .cbar {
   position: absolute; bottom: 5px; left: 10px; right: 10px; z-index: 10; pointer-events: none;
 }
@@ -247,12 +237,12 @@ canvas.nv-canvas { display: block; width: 100% !important; height: 100% !importa
   grid-row: 1; grid-column: 1 / 3; justify-self: center; align-self: end;
   position: relative; z-index: 20; margin-bottom: 5px;
   display: flex; flex-direction: column; align-items: center; gap: 3px;
-  font-size: 10px; color: #999999;
+  font-size: 10px; color: var(--badge-text);
 }
 .cmap-side {
   position: absolute; z-index: 20; right: 6px; bottom: 5px;
   display: flex; flex-direction: column; align-items: flex-start; gap: 3px;
-  font-size: 10px; color: #999999;
+  font-size: 10px; color: var(--badge-text);
 }
 .cmap-shared label, .cmap-side label { display: flex; align-items: center; gap: 3px; }
 /* orthoslice panel: canvas on top, a controls strip beneath NiiVue's colorbar */
@@ -260,9 +250,8 @@ canvas.nv-canvas { display: block; width: 100% !important; height: 100% !importa
 .cell-ortho canvas.nv-canvas { flex: 1 1 0; min-height: 0; height: auto !important; }
 .cfoot {
   flex: 0 0 auto; display: flex; justify-content: center; align-items: center;
-  gap: 10px; padding: 3px 0 4px; font-size: 10px; color: #999999;
+  gap: 10px; padding: 3px 0 4px; font-size: 10px; color: var(--badge-text);
 }
-.plot-cell .cfoot { color: var(--chart-badge-text); }
 .cmap-row, .cmap-rng { display: flex; align-items: center; gap: 4px; }
 .cmap-rng input[type=number] { width: 58px; }
 .cell-lh .cbar { right: 110px; }   /* LH */

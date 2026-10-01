@@ -45,6 +45,9 @@ window.addEventListener('storage', e => {
   nv.opts.backColor = [...(isLightTheme() ? SLIC_BACK_LIGHT : SLIC_BACK_DARK)]
   nv.setCrosshairColor(accentRgba())
   nv.drawScene()
+  // See the matching comment in main.js's applyNiivueTheme(): a bare drawScene()
+  // doesn't fully repaint the orthoslice/colorbar compositing, 'resize' does.
+  requestAnimationFrame(() => window.dispatchEvent(new Event('resize')))
 })
 // Right-drag brightness/contrast — same gesture override as the main tab's
 // orthoslices: NiiVue's default right-button gesture draws a box and

@@ -89,8 +89,8 @@ const RH_COLOR = RH_SURF ? rgba255ToHex(RH_SURF.rgba255) : '#FF854D'
 // color), the *plotted* hemisphere/asymmetry colors need a darker, more
 // saturated variant on a light background to stay legible — chartColorFor()
 // derives that variant by hue, so the plot line still reads as "the same
-// color" as the surface. The 3-D/orthoslice canvases themselves are not
-// affected by any of this; they keep the fixed dark backColor set above.
+// color" as the surface. (The 3-D/orthoslice canvases' own backColor is themed
+// separately, see SURF_CFG/SLIC_CFG/applyNiivueTheme() further down.)
 function hexToHsl(hex) {
   const n = parseInt(hex.slice(1), 16)
   const r = ((n >> 16) & 255) / 255, g = ((n >> 8) & 255) / 255, b = (n & 255) / 255
@@ -2428,6 +2428,12 @@ function applyNiivueTheme() {
   nvSlices.opts.backColor = [...slicBack]
   nvSlices.setCrosshairColor(accentRgba())
   nvSlices.drawScene()
+  // opts.backColor updates immediately (confirmed via window._nvSlice.opts.backColor),
+  // but a bare drawScene() doesn't repaint the orthoslice/colorbar compositing fully —
+  // dispatching 'resize' routes through NiiVue's own resizeListener(), which resets
+  // gl.viewport() before its drawScene() call, same trick already used elsewhere in
+  // this file (grid-gutter drag, panel maximize) to force a full NiiVue repaint.
+  requestAnimationFrame(() => window.dispatchEvent(new Event('resize')))
 }
 
 // Re-theme all six Plotly panels in place (background/grid/text/accent colors,
