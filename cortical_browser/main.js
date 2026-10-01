@@ -133,14 +133,26 @@ const CHART_THEME = {
   light: { bg: '#FFFFFF', text: '#2E3440', grid: '#D8DEE9', gridPolar: '#D8DEE9',
            zero: '#4C566A', accent: '#5E81AC',
            normative: '#3B4252', normativeFill: 'rgba(76,86,106,0.18)' },
+  // Nord Dark reuses "dark"'s canvas/chart look wholesale (same rationale as
+  // the CSS --cell-bg/--chart-bg not being overridden for it) — nord8
+  // (#88C0D0, the signature "Nord blue") is the only thing that changes here.
+  'nord-dark': { bg: '#242424', text: PLOT_TEXT, grid: '#303030', gridPolar: '#3a3a3a',
+                 zero: '#888888', accent: '#88C0D0',
+                 normative: '#ffffff', normativeFill: 'rgba(160,160,160,0.30)' },
 }
-const isLightTheme = () => document.documentElement.getAttribute('data-theme') === 'light'
+// Defaults to 'dark' when unset, matching the CSS :root default and the
+// pre-paint script in <head> (no stored localStorage value = plain dark).
+const currentTheme = () => document.documentElement.getAttribute('data-theme') || 'dark'
+// Only "light" needs the pastel hemisphere/asym colors darkened for
+// contrast (see chartColorFor) and a light NiiVue canvas — "dark" and
+// "nord-dark" both keep the original near-black canvas look.
+const isLightTheme = () => currentTheme() === 'light'
 const hexToRgba01 = hex => {
   const n = parseInt(hex.slice(1), 16)
   return [((n >> 16) & 255) / 255, ((n >> 8) & 255) / 255, (n & 255) / 255, 1]
 }
-const accentRgba = () => hexToRgba01(CHART_THEME[isLightTheme() ? 'light' : 'dark'].accent)
-let CT = CHART_THEME[isLightTheme() ? 'light' : 'dark']
+const accentRgba = () => hexToRgba01(CHART_THEME[currentTheme()].accent)
+let CT = CHART_THEME[currentTheme()]
 let chartLhColor   = chartColorFor(LH_COLOR, isLightTheme())
 let chartRhColor   = chartColorFor(RH_COLOR, isLightTheme())
 let chartAsymColor = chartColorFor(ASYM_BASE_COLOR, isLightTheme())
@@ -2457,7 +2469,7 @@ function applyNiivueTheme() {
 // render already, so replaying the last payload through them is enough.
 function applyChartTheme() {
   const light = isLightTheme()
-  CT = CHART_THEME[light ? 'light' : 'dark']
+  CT = CHART_THEME[currentTheme()]
   chartLhColor   = chartColorFor(LH_COLOR, light)
   chartRhColor   = chartColorFor(RH_COLOR, light)
   chartAsymColor = chartColorFor(ASYM_BASE_COLOR, light)

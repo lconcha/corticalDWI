@@ -6,7 +6,7 @@
 // Mirrors the main tab's theme choice (see main.html) before first paint.
 try {
   var __cbTheme = localStorage.getItem('cbTheme')
-  if (__cbTheme === 'light' || __cbTheme === 'dark') document.documentElement.setAttribute('data-theme', __cbTheme)
+  if (__cbTheme === 'light' || __cbTheme === 'dark' || __cbTheme === 'nord-dark') document.documentElement.setAttribute('data-theme', __cbTheme)
 } catch (e) {}
 </script>
 <title>CORTICAL BROWSER | DWI space — __SUBJ_ID__</title>
@@ -15,7 +15,6 @@ try {
   /* The NiiVue canvas's own backColor (see dwi.js) and this wrapper's
      background follow the theme too — must roughly match SLIC_BACK_DARK
      there. */
-  --accent-yellow: #F5C842;
   --chrome-bg: #1f1f1f; --chrome-text: #ccc;
   --hdr-bg: #2b2b2b; --hdr-border: #444444;
   --accent: #F5C842; --h3: #999999; --strong: #f0f0f0;
@@ -30,6 +29,15 @@ try {
   --input-bg: #FFFFFF; --input-text: #2E3440; --input-border: #D8DEE9;
   --btn-bg: #D8DEE9; --btn-text: #2E3440; --btn-border: #4C566A; --btn-bg-hover: #CCD4E2;
   --canvas-bg: #E5E9F0;
+}
+/* Reuses the base (plain "dark") theme's --canvas-bg, same rationale as
+   main.html's nord-dark block — only the chrome/accent differ. */
+:root[data-theme="nord-dark"] {
+  --chrome-bg: #2E3440; --chrome-text: #D8DEE9;
+  --hdr-bg: #3B4252; --hdr-border: #4C566A;
+  --accent: #88C0D0; --h3: #4C566A; --strong: #ECEFF4;
+  --input-bg: #ECEFF4; --input-text: #2E3440; --input-border: #4C566A;
+  --btn-bg: #434C5E; --btn-text: #ECEFF4; --btn-border: #4C566A; --btn-bg-hover: #4C566A;
 }
 * { box-sizing: border-box; margin: 0; padding: 0; }
 body {

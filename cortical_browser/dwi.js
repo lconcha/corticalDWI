@@ -11,14 +11,16 @@ const statusEl = document.getElementById('status')
 // if the main tab's theme is changed while this tab stays open).
 const SLIC_BACK_DARK  = [0.04, 0.04, 0.04, 1]
 const SLIC_BACK_LIGHT = [0.8980, 0.9137, 0.9412, 1]   // Nord5 #E5E9F0
-const ACCENT_DARK  = '#F5C842'
-const ACCENT_LIGHT = '#5E81AC'
-const isLightTheme = () => document.documentElement.getAttribute('data-theme') === 'light'
+// "dark" and "nord-dark" share ACCENT_DARK's canvas look (see CHART_THEME in
+// main.js); only the crosshair color differs between them.
+const ACCENT = { dark: '#F5C842', light: '#5E81AC', 'nord-dark': '#88C0D0' }
+const currentTheme = () => document.documentElement.getAttribute('data-theme') || 'dark'
+const isLightTheme = () => currentTheme() === 'light'
 const hexToRgba01 = hex => {
   const n = parseInt(hex.slice(1), 16)
   return [((n >> 16) & 255) / 255, ((n >> 8) & 255) / 255, (n & 255) / 255, 1]
 }
-const accentRgba = () => hexToRgba01(isLightTheme() ? ACCENT_LIGHT : ACCENT_DARK)
+const accentRgba = () => hexToRgba01(ACCENT[currentTheme()])
 
 const nv = new niivue.Niivue({
   backColor: isLightTheme() ? SLIC_BACK_LIGHT : SLIC_BACK_DARK, show3Dcrosshair: true,
@@ -44,7 +46,7 @@ nv.setCrosshairWidth(0.5)
 // 'storage' only fires in *other* tabs than the one that wrote the key, which
 // is exactly what's needed here — no feedback loop back to the main tab.
 window.addEventListener('storage', e => {
-  if (e.key !== 'cbTheme' || !(e.newValue === 'light' || e.newValue === 'dark')) return
+  if (e.key !== 'cbTheme' || !(e.newValue in ACCENT)) return
   document.documentElement.setAttribute('data-theme', e.newValue)
   nv.opts.backColor = [...(isLightTheme() ? SLIC_BACK_LIGHT : SLIC_BACK_DARK)]
   nv.setCrosshairColor(accentRgba())

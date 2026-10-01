@@ -6,7 +6,7 @@
 // Applied before first paint so the chosen theme never flashes dark-then-light.
 try {
   var __cbTheme = localStorage.getItem('cbTheme')
-  if (__cbTheme === 'light' || __cbTheme === 'dark') document.documentElement.setAttribute('data-theme', __cbTheme)
+  if (__cbTheme === 'light' || __cbTheme === 'dark' || __cbTheme === 'nord-dark') document.documentElement.setAttribute('data-theme', __cbTheme)
 } catch (e) {}
 </script>
 <title>Cortical Browser — __SUBJ_ID__</title>
@@ -24,7 +24,6 @@ try {
      itself went light. See CHART_THEME in main.js for the JS-side half of the
      Plotly chart theming.
   */
-  --accent-yellow: #F5C842;   /* selected-vertex accent, shared by box/crosshair/plot line */
   --plot-text: #dddddd;       /* colorbar title/min/max labels over the surface/orthoslice canvases */
 
   /* ── chrome theme (sidebar + page background) — "dark", the default ──────── */
@@ -67,6 +66,28 @@ try {
   --cell-bg: #E5E9F0; --grid-bg: #D8DEE9;
   --cbar-border: rgba(0,0,0,0.12);
   --plot-text: #3B4252;
+}
+/* "nord-dark" — Nord's Polar Night, with nord8 (#88C0D0, the signature "Nord
+   blue") as the accent instead of nord10 — nord10 is Nord's own choice for
+   *light* backgrounds, nord8 is the one meant for dark ones. Deliberately
+   reuses the base (plain "dark") theme's canvas/chart values (--plotcell-bg,
+   --chart-bg, --cell-bg, --grid-bg, --cbar-border, --plot-text, and
+   CHART_THEME.dark's bg/grid/text in main.js, and SURF_BACK_DARK/
+   SLIC_BACK_DARK for the NiiVue canvases) rather than introducing a third
+   distinct canvas shade — only the chrome and the accent-driven elements
+   (crosshair, depth-reference line) change between "Dark" and "Nord Dark". */
+:root[data-theme="nord-dark"] {
+  --chrome-bg: #2E3440; --chrome-text: #D8DEE9;
+  --sidebar-bg: #3B4252; --sidebar-border: #4C566A;
+  --rail: #434C5E; --rail-2: #3B4252;
+  --h2: #E5E9F0; --h3: #4C566A; --strong: #ECEFF4; --muted: #D8DEE9;
+  --accent: #88C0D0; --accent-ink: #2E3440;
+  --badge-bg: rgba(46,52,64,0.7); --badge-text: #E5E9F0; --badge-border: #4C566A;
+  --warn-bg: rgba(27,54,61,0.92);
+  --input-bg: #ECEFF4; --input-text: #2E3440; --input-border: #4C566A;
+  --ctrl-accent: #88C0D0;
+  --btn-bg: #434C5E; --btn-text: #ECEFF4; --btn-border: #4C566A; --btn-bg-hover: #4C566A;
+  --vtx-bg: #2E3440; --vtx-border: #4C566A; --vtx-text: #D8DEE9;
 }
 * { box-sizing: border-box; margin: 0; padding: 0; }
 body {
@@ -292,9 +313,10 @@ canvas.nv-canvas { display: block; width: 100% !important; height: 100% !importa
 
   <section class="ctl-group">
     <h3 class="ctl-h">Global</h3>
-    <div class="ctl-row"><label title="Sidebar color theme — the 3-D/orthoslice/chart panels stay dark in both">Theme
+    <div class="ctl-row"><label title="Color theme — Dark and Nord Dark share the same canvas/chart background, just different chrome and accent colors">Theme
       <select id="themeSel">
         <option value="dark">Dark</option>
+        <option value="nord-dark">Nord Dark</option>
         <option value="light">Light (Nord)</option>
       </select></label></div>
     <div class="ctl-row"><label>Metric <select id="metricSel">__METRIC_OPTIONS__</select></label></div>
