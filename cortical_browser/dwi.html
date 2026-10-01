@@ -2,43 +2,66 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
+<script>
+// Mirrors the main tab's theme choice (see main.html) before first paint.
+try {
+  var __cbTheme = localStorage.getItem('cbTheme')
+  if (__cbTheme === 'light' || __cbTheme === 'dark') document.documentElement.setAttribute('data-theme', __cbTheme)
+} catch (e) {}
+</script>
 <title>CORTICAL BROWSER | DWI space — __SUBJ_ID__</title>
 <style>
-:root { --accent-yellow: #F5C842; }
+:root {
+  /* The canvas itself stays dark in both themes, same rationale as main.html —
+     only the #hdr chrome bar (this tab's "sidebar") follows the theme. */
+  --accent-yellow: #F5C842;
+  --chrome-bg: #1f1f1f; --chrome-text: #ccc;
+  --hdr-bg: #2b2b2b; --hdr-border: #444444;
+  --accent: #F5C842; --h3: #999999; --strong: #f0f0f0;
+  --input-bg: #d9d9d9; --input-text: #1a1a1a; --input-border: #4d4d4d;
+  --btn-bg: #3a3a3a; --btn-text: #ddd; --btn-border: #555555; --btn-bg-hover: #484848;
+}
+:root[data-theme="light"] {
+  --chrome-bg: #ECEFF4; --chrome-text: #2E3440;
+  --hdr-bg: #E5E9F0; --hdr-border: #D8DEE9;
+  --accent: #5E81AC; --h3: #4C566A; --strong: #2E3440;
+  --input-bg: #FFFFFF; --input-text: #2E3440; --input-border: #D8DEE9;
+  --btn-bg: #D8DEE9; --btn-text: #2E3440; --btn-border: #4C566A; --btn-bg-hover: #CCD4E2;
+}
 * { box-sizing: border-box; margin: 0; padding: 0; }
 body {
-  background: #1f1f1f; color: #ccc;
+  background: var(--chrome-bg); color: var(--chrome-text);
   font: 11px/1.4 -apple-system, "Segoe UI", Arial, sans-serif;
   height: 100vh; overflow: hidden;
   display: flex; flex-direction: column;
 }
 #hdr {
-  flex-shrink: 0; padding: 6px 10px; background: #2b2b2b; border-bottom: 1px solid #444444;
+  flex-shrink: 0; padding: 6px 10px; background: var(--hdr-bg); border-bottom: 1px solid var(--hdr-border);
   display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px;
 }
-.apptitle { font-weight: bold; color: var(--accent-yellow); font-size: 12px; letter-spacing: 0.5px; }
-.space { color: #999; font-size: 10px; white-space: nowrap; }
-.subj { font-weight: bold; color: #f0f0f0; font-size: 12px; }
+.apptitle { font-weight: bold; color: var(--accent); font-size: 12px; letter-spacing: 0.5px; }
+.space { color: var(--h3); font-size: 10px; white-space: nowrap; }
+.subj { font-weight: bold; color: var(--strong); font-size: 12px; }
 button.cbtn {
-  background: #3a3a3a; color: #ddd; border: 1px solid #555555;
+  background: var(--btn-bg); color: var(--btn-text); border: 1px solid var(--btn-border);
   border-radius: 3px; padding: 2px 8px; font-size: 10px; cursor: pointer;
 }
-button.cbtn:hover { background: #484848; }
+button.cbtn:hover { background: var(--btn-bg-hover); }
 button.cbtn:disabled { opacity: 0.4; cursor: default; }
-label { display: flex; align-items: center; gap: 4px; color: #999999; white-space: nowrap; }
+label { display: flex; align-items: center; gap: 4px; color: var(--h3); white-space: nowrap; }
 select {
-  background: #d9d9d9; color: #1a1a1a; border: 1px solid #4d4d4d;
+  background: var(--input-bg); color: var(--input-text); border: 1px solid var(--input-border);
   border-radius: 3px; padding: 1px 3px; font-size: 10px;
 }
 input[type=number] {
-  background: #d9d9d9; color: #1a1a1a; border: 1px solid #4d4d4d;
+  background: var(--input-bg); color: var(--input-text); border: 1px solid var(--input-border);
   border-radius: 3px; padding: 1px 4px; font-size: 10px; width: 64px;
   -moz-appearance: textfield;
 }
 input[type=number]::-webkit-inner-spin-button,
 input[type=number]::-webkit-outer-spin-button { display: none; }
-#status { color: #999999; font-size: 11px; font-family: monospace; margin-left: auto; white-space: pre; }
-#canvas-wrap { flex: 1; min-height: 0; position: relative; }
+#status { color: var(--h3); font-size: 11px; font-family: monospace; margin-left: auto; white-space: pre; }
+#canvas-wrap { flex: 1; min-height: 0; position: relative; background: #0a0a0a; }
 canvas { display: block; width: 100% !important; height: 100% !important; outline: none; }
 </style>
 </head>

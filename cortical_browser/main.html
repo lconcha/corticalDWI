@@ -2,15 +2,52 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
+<script>
+// Applied before first paint so the chosen theme never flashes dark-then-light.
+try {
+  var __cbTheme = localStorage.getItem('cbTheme')
+  if (__cbTheme === 'light' || __cbTheme === 'dark') document.documentElement.setAttribute('data-theme', __cbTheme)
+} catch (e) {}
+</script>
 <title>Cortical Browser — __SUBJ_ID__</title>
 <style>
 :root {
+  /* Canvas/chart overlays (3-D renders, orthoslices, Plotly panels) stay on
+     this fixed dark palette in both themes — NiiVue's colormaps and the
+     hemisphere/asymmetry plot colors are calibrated against a dark background,
+     and the floating chips (panel-sel, maxbtn, svgbtn, cmap controls, mv-warn)
+     sit directly on top of those renders. Only the theme below.
+  */
   --accent-yellow: #F5C842;   /* selected-vertex accent, shared by box/crosshair/plot line */
   --plot-text: #dddddd;       /* CSS twin of the JS PLOT_TEXT const (plot + colorbar text) */
+
+  /* ── chrome theme (sidebar + page background) — "dark", the default ──────── */
+  --chrome-bg: #1f1f1f; --chrome-text: #ccc;
+  --sidebar-bg: #2b2b2b; --sidebar-border: #444444;
+  --rail: #3a3a3a; --rail-2: #333333;
+  --h2: #c9c9c9; --h3: #999999; --strong: #f0f0f0; --muted: #d1d1d1;
+  --accent: #F5C842; --accent-ink: #1a1a1a;
+  --input-bg: #d9d9d9; --input-text: #1a1a1a; --input-border: #4d4d4d;
+  --ctrl-accent: #8a8a8a;
+  --btn-bg: #3a3a3a; --btn-text: #ddd; --btn-border: #555555; --btn-bg-hover: #484848;
+  --vtx-bg: #262626; --vtx-border: #555555; --vtx-text: #ccc;
+}
+/* "light" — Nord (nordtheme.com): Snow Storm backgrounds, Polar Night text,
+   Frost accent. Canvas/chart panels are intentionally excluded (see above). */
+:root[data-theme="light"] {
+  --chrome-bg: #ECEFF4; --chrome-text: #2E3440;
+  --sidebar-bg: #E5E9F0; --sidebar-border: #D8DEE9;
+  --rail: #D8DEE9; --rail-2: #D8DEE9;
+  --h2: #3B4252; --h3: #4C566A; --strong: #2E3440; --muted: #434C5E;
+  --accent: #5E81AC; --accent-ink: #ECEFF4;
+  --input-bg: #FFFFFF; --input-text: #2E3440; --input-border: #D8DEE9;
+  --ctrl-accent: #5E81AC;
+  --btn-bg: #D8DEE9; --btn-text: #2E3440; --btn-border: #4C566A; --btn-bg-hover: #CCD4E2;
+  --vtx-bg: #FFFFFF; --vtx-border: #D8DEE9; --vtx-text: #2E3440;
 }
 * { box-sizing: border-box; margin: 0; padding: 0; }
 body {
-  background: #1f1f1f; color: #ccc;
+  background: var(--chrome-bg); color: var(--chrome-text);
   font: 11px/1.4 -apple-system, "Segoe UI", Arial, sans-serif;
   display: flex; flex-direction: row; height: 100vh; overflow: hidden;
 }
@@ -18,30 +55,31 @@ body {
    control keeps a stable position. Scrolls vertically if it overflows. */
 #sidebar {
   width: 224px; flex-shrink: 0; height: 100vh; overflow-y: auto; overflow-x: hidden;
-  background: #2b2b2b; border-right: 1px solid #444444;
+  background: var(--sidebar-bg); border-right: 1px solid var(--sidebar-border);
   padding: 6px 8px 14px; display: flex; flex-direction: column; gap: 6px;
 }
 #main { flex: 1; min-width: 0; height: 100vh; display: flex; flex-direction: column; }
-.ctl-group { display: flex; flex-direction: column; gap: 4px; margin-top: 10px; padding-top: 10px; border-top: 1px solid #3a3a3a; }
+.ctl-group { display: flex; flex-direction: column; gap: 4px; margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--rail); }
 .ctl-h {
-  color: var(--accent-yellow); font-size: 9px; letter-spacing: 0.8px;
+  color: var(--accent); font-size: 9px; letter-spacing: 0.8px;
   text-transform: uppercase; font-weight: bold; opacity: 0.9; margin: 1px 0;
 }
 /* nested subsections inside a control group: indented under a hairline rail */
 .ctl-sub, .ctl-subsub { display: flex; flex-direction: column; gap: 4px; }
-.ctl-sub { margin-top: 8px; padding-left: 8px; border-left: 1px solid #3a3a3a; }
-.ctl-subsub { margin-top: 4px; padding-left: 8px; border-left: 1px solid #333333; }
+.ctl-sub { margin-top: 8px; padding-left: 8px; border-left: 1px solid var(--rail); }
+.ctl-subsub { margin-top: 4px; padding-left: 8px; border-left: 1px solid var(--rail-2); }
 .ctl-h2, .ctl-h3 { margin: 0; font-size: 9px; letter-spacing: 0.6px; text-transform: uppercase; font-weight: bold; }
-.ctl-h2 { color: #c9c9c9; }
-.ctl-h3 { color: #999999; }
+.ctl-h2 { color: var(--h2); }
+.ctl-h3 { color: var(--h3); }
 .ctl-row { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; }
 #sidebar select { max-width: 100%; }
-.apptitle { font-weight: bold; color: var(--accent-yellow); font-size: 12px; letter-spacing: 0.5px; white-space: nowrap; }
-.space { color: #999; font-size: 10px; white-space: nowrap; }
-.subj { font-weight: bold; color: #f0f0f0; font-size: 12px; white-space: nowrap; }
-.glab { color: #d1d1d1; font-size: 10px; white-space: nowrap; }
-.loading-badge { color: var(--accent-yellow); font-size: 10px; font-style: italic; white-space: nowrap; }
+.apptitle { font-weight: bold; color: var(--accent); font-size: 12px; letter-spacing: 0.5px; white-space: nowrap; }
+.space { color: var(--h3); font-size: 10px; white-space: nowrap; }
+.subj { font-weight: bold; color: var(--strong); font-size: 12px; white-space: nowrap; }
+.glab { color: var(--muted); font-size: 10px; white-space: nowrap; }
+.loading-badge { color: var(--accent); font-size: 10px; font-style: italic; white-space: nowrap; }
 label { display: flex; align-items: center; gap: 3px; white-space: nowrap; color: #999; }
+#sidebar label { color: var(--h3); }
 select {
   background: #d9d9d9; color: #1a1a1a; border: 1px solid #4d4d4d;
   border-radius: 3px; padding: 1px 3px; font-size: 10px;
@@ -57,6 +95,16 @@ input[type=number] {
 }
 input[type=number]::-webkit-inner-spin-button,
 input[type=number]::-webkit-outer-spin-button { display: none; }
+/* Sidebar controls follow the chrome theme; everything overlaid on the dark
+   canvases/charts (.panel-sel, .cmap-*, .cfoot, bare .cbtn in those areas)
+   keeps the fixed dark styling above — hence scoping by #sidebar, which wins
+   on specificity over the plain element rules regardless of source order. */
+#sidebar select,
+#sidebar input[type=number]:not(#vtxInput) {
+  background: var(--input-bg); color: var(--input-text); border-color: var(--input-border);
+}
+#sidebar input[type=range],
+#sidebar input[type=checkbox] { accent-color: var(--ctrl-accent); }
 /* Re-enable up/down spinners for the Rings field only */
 #ringsInput { -moz-appearance: number-input; width: 52px; }
 #ringsInput::-webkit-inner-spin-button,
@@ -64,17 +112,19 @@ input[type=number]::-webkit-outer-spin-button { display: none; }
   display: inline-block; -webkit-appearance: inner-spin-button; opacity: 1;
 }
 #vtxInput {
-  background: var(--accent-yellow); color: #1a1a1a; border: 1px solid var(--accent-yellow); font-weight: bold;
+  background: var(--accent); color: var(--accent-ink); border: 1px solid var(--accent); font-weight: bold;
 }
 button.cbtn {
   background: #3a3a3a; color: #ddd; border: 1px solid #555555;
   border-radius: 3px; padding: 1px 6px; font-size: 10px; cursor: pointer;
 }
 button.cbtn:hover { background: #484848; }
-#depth-label { color: #d1d1d1; min-width: 40px; }
+#sidebar button.cbtn { background: var(--btn-bg); color: var(--btn-text); border-color: var(--btn-border); }
+#sidebar button.cbtn:hover { background: var(--btn-bg-hover); }
+#depth-label { color: var(--muted); min-width: 40px; }
 .vtx-display  {
-  color: #ccc; font-size: 11px; font-family: monospace; font-weight: bold;
-  background: #262626; border: 1px solid #555555; border-radius: 3px;
+  color: var(--vtx-text); font-size: 11px; font-family: monospace; font-weight: bold;
+  background: var(--vtx-bg); border: 1px solid var(--vtx-border); border-radius: 3px;
   padding: 1px 7px; white-space: nowrap; min-width: 76px;
   text-align: center;
 }
@@ -216,6 +266,11 @@ canvas.nv-canvas { display: block; width: 100% !important; height: 100% !importa
 
   <section class="ctl-group">
     <h3 class="ctl-h">Global</h3>
+    <div class="ctl-row"><label title="Sidebar color theme — the 3-D/orthoslice/chart panels stay dark in both">Theme
+      <select id="themeSel">
+        <option value="dark">Dark</option>
+        <option value="light">Light (Nord)</option>
+      </select></label></div>
     <div class="ctl-row"><label>Metric <select id="metricSel">__METRIC_OPTIONS__</select></label></div>
     <div class="ctl-row"><label>Depth
       <input type="range" id="depthSlider" min="0" max="__MAX_DEPTH__" value="__INIT_DEPTH__">

@@ -1188,6 +1188,18 @@ document.getElementById('interpChk').addEventListener('change', function() {
   nvSlices.setInterpolation(!this.checked)
 })
 
+// ── theme selector ────────────────────────────────────────────────────────────
+// Only the sidebar chrome (CSS variables) reacts to this — the 3-D/orthoslice/
+// Plotly panels keep their fixed dark palette, so no reload or redraw is needed.
+{
+  const themeSel = document.getElementById('themeSel')
+  themeSel.value = document.documentElement.getAttribute('data-theme') || 'dark'
+  themeSel.addEventListener('change', () => {
+    document.documentElement.setAttribute('data-theme', themeSel.value)
+    try { localStorage.setItem('cbTheme', themeSel.value) } catch (e) {}
+  })
+}
+
 // ── metric selector ───────────────────────────────────────────────────────────
 document.getElementById('metricSel').addEventListener('change', async e => {
   currentMetric = e.target.value
