@@ -28,6 +28,10 @@ const nv = new niivue.Niivue({
 })
 await new Promise(r => requestAnimationFrame(r))
 await nv.attachTo('gl-dwi')
+// attachTo() hardcodes canvas.parentElement.style.backgroundColor = "black" —
+// an inline style, which beats any CSS class (including #canvas-wrap's themed
+// background) regardless of specificity. Clear it so the CSS var takes over.
+if (nv.canvas?.parentElement) nv.canvas.parentElement.style.backgroundColor = ''
 
 let dwiCmap = 'lipari'   // colormap applied to whichever volume the orthoslices show; follows switches
 if (FA_URL) await nv.loadVolumes([{ url: FA_URL, colormap: dwiCmap, opacity: 1 }])
@@ -44,9 +48,10 @@ window.addEventListener('storage', e => {
   document.documentElement.setAttribute('data-theme', e.newValue)
   nv.opts.backColor = [...(isLightTheme() ? SLIC_BACK_LIGHT : SLIC_BACK_DARK)]
   nv.setCrosshairColor(accentRgba())
+  if (nv.canvas?.parentElement) nv.canvas.parentElement.style.backgroundColor = ''
   nv.drawScene()
-  // See the matching comment in main.js's applyNiivueTheme(): a bare drawScene()
-  // doesn't fully repaint the orthoslice/colorbar compositing, 'resize' does.
+  // See the matching comment in main.js's applyNiivueTheme(): belt-and-suspenders
+  // full repaint in case anything needs more than a bare drawScene().
   requestAnimationFrame(() => window.dispatchEvent(new Event('resize')))
 })
 // Right-drag brightness/contrast — same gesture override as the main tab's

@@ -188,6 +188,15 @@ await Promise.all([
   nvAsym.attachTo('gl-asym'),
   nvSlices.attachTo('gl-slices'),
 ])
+// attachTo() hardcodes canvas.parentElement.style.backgroundColor = "black" —
+// an inline style, which beats any CSS class (including our themed .cell
+// background) regardless of specificity tricks. Clear it so .cell's
+// var(--cell-bg) takes over; it's barely visible for the surface panels
+// (the mesh render fills almost the whole canvas) but very visible around
+// the orthoslice panel's .cfoot toolbar, which sits outside the canvas.
+for (const nv of [nvLhL, nvRhL, nvAsym, nvSlices]) {
+  if (nv.canvas?.parentElement) nv.canvas.parentElement.style.backgroundColor = ''
+}
 
 // ── custom diverging colormaps ────────────────────────────────────────────────
 function buildDivergingCmap(r0, g0, b0, r1, g1, b1) {
@@ -2428,11 +2437,15 @@ function applyNiivueTheme() {
   nvSlices.opts.backColor = [...slicBack]
   nvSlices.setCrosshairColor(accentRgba())
   nvSlices.drawScene()
-  // opts.backColor updates immediately (confirmed via window._nvSlice.opts.backColor),
-  // but a bare drawScene() doesn't repaint the orthoslice/colorbar compositing fully —
-  // dispatching 'resize' routes through NiiVue's own resizeListener(), which resets
-  // gl.viewport() before its drawScene() call, same trick already used elsewhere in
-  // this file (grid-gutter drag, panel maximize) to force a full NiiVue repaint.
+  // Re-clear the inline parentElement background NiiVue set at attachTo() time
+  // (see the comment where attachTo() is called) in case anything internal
+  // re-applies it; harmless no-op otherwise since it's already cleared.
+  for (const nv of [nvLhL, nvRhL, nvAsym, nvSlices]) {
+    if (nv.canvas?.parentElement) nv.canvas.parentElement.style.backgroundColor = ''
+  }
+  // Belt-and-suspenders: force a full NiiVue repaint the same way grid-gutter
+  // drag/panel maximize already do elsewhere in this file, in case anything
+  // else needs more than a bare drawScene() to recomposite.
   requestAnimationFrame(() => window.dispatchEvent(new Event('resize')))
 }
 
