@@ -16,10 +16,10 @@ const Q = CACHE_BUST ? `?v=${CACHE_BUST}` : ''
 const TEMPLATE = "__TEMPLATE__"
 const STEP_MM  = __STEP_MM__
 
-// Selected-vertex accent color, shared across the vertex box (CSS --accent-yellow),
-// the orthoslice crosshair, and the plots' depth reference line.
+// Selected-vertex accent color, shared across the vertex box (CSS --accent-yellow)
+// and, in dark theme, the orthoslice crosshair and plots' depth reference line
+// (both of those follow the theme — see accentRgba()/CT below).
 const ACCENT_YELLOW = '#F5C842'
-const ACCENT_YELLOW_RGBA = [0xF5/255, 0xC8/255, 0x42/255, 1]
 
 // Shared light-gray text color for all plot axis labels, titles, and legends.
 const PLOT_TEXT = '#dddddd'
@@ -135,6 +135,11 @@ const CHART_THEME = {
            normative: '#3B4252', normativeFill: 'rgba(76,86,106,0.18)' },
 }
 const isLightTheme = () => document.documentElement.getAttribute('data-theme') === 'light'
+const hexToRgba01 = hex => {
+  const n = parseInt(hex.slice(1), 16)
+  return [((n >> 16) & 255) / 255, ((n >> 8) & 255) / 255, (n & 255) / 255, 1]
+}
+const accentRgba = () => hexToRgba01(CHART_THEME[isLightTheme() ? 'light' : 'dark'].accent)
 let CT = CHART_THEME[isLightTheme() ? 'light' : 'dark']
 let chartLhColor   = chartColorFor(LH_COLOR, isLightTheme())
 let chartRhColor   = chartColorFor(RH_COLOR, isLightTheme())
@@ -157,9 +162,16 @@ const sliceContours = { wm: null, pial: null }
 const sliceContourVisible = { wm: false, pial: false }
 
 // ── NiiVue instances ──────────────────────────────────────────────────────────
-const SURF_CFG = { backColor: [0.06, 0.06, 0.06, 1], show3Dcrosshair: false }
+// backColor is read live on every redraw (NiiVue's clearBounds() does
+// gl.clearColor(...opts.backColor) each frame), so it's just as easy to flip
+// on a theme change as any CSS variable — see applyNiivueTheme() below.
+const SURF_BACK_DARK  = [0.06, 0.06, 0.06, 1]
+const SURF_BACK_LIGHT = [0.9255, 0.9373, 0.9569, 1]   // Nord6 #ECEFF4
+const SLIC_BACK_DARK  = [0.04, 0.04, 0.04, 1]
+const SLIC_BACK_LIGHT = [0.8980, 0.9137, 0.9412, 1]   // Nord5 #E5E9F0
+const SURF_CFG = { backColor: isLightTheme() ? SURF_BACK_LIGHT : SURF_BACK_DARK, show3Dcrosshair: false }
 const SLIC_CFG = {
-  backColor: [0.04, 0.04, 0.04, 1], show3Dcrosshair: true,
+  backColor: isLightTheme() ? SLIC_BACK_LIGHT : SLIC_BACK_DARK, show3Dcrosshair: true,
   meshThicknessOn2D: 2, multiplanarLayout: 'row',
   isColorbar: true,           // one colorbar for the ortho view (NiiVue draws it instance-wide, not per-panel)
   showColorbarBorder: false   // drop the outline around the colorbar
@@ -696,7 +708,7 @@ document.getElementById('cutawayInvertChk').addEventListener('change', function(
 })
 nvSlices.setSliceType(nvSlices.sliceTypeMultiplanar)
 nvSlices.setRadiologicalConvention(true)
-nvSlices.setCrosshairColor(ACCENT_YELLOW_RGBA)   // match selected-vertex color
+nvSlices.setCrosshairColor(accentRgba())   // match selected-vertex accent
 nvSlices.setCrosshairWidth(0.5)                   // thinner than the default 1px
 // Right-drag brightness/contrast: NiiVue's default right-button gesture
 // (DRAG_MODE.contrast) draws a box and auto-windows to that box's intensity
@@ -800,7 +812,7 @@ async function showVolume(key) {
   volSel.value = key
   defaultVolCalMin = desc.defCalMin
   defaultVolCalMax = desc.defCalMax
-  nvSlices.setCrosshairColor(ACCENT_YELLOW_RGBA)    // re-assert crosshair styling
+  nvSlices.setCrosshairColor(accentRgba())    // re-assert crosshair styling
   nvSlices.setCrosshairWidth(0.5)
   if (mm && typeof nvSlices.mm2frac === 'function') {
     const frac = nvSlices.mm2frac([mm[0], mm[1], mm[2]])
@@ -1254,6 +1266,7 @@ document.getElementById('interpChk').addEventListener('change', function() {
     document.documentElement.setAttribute('data-theme', themeSel.value)
     try { localStorage.setItem('cbTheme', themeSel.value) } catch (e) {}
     applyChartTheme()
+    applyNiivueTheme()
   })
 }
 
@@ -2397,6 +2410,24 @@ function renderRadarBar(data, depth) {
     name: [mvLabel('LH', data.n_vertices), mvLabel('RH', data.n_vertices)],
   }, [0, 1])
   Plotly.relayout(chartZBar, { 'xaxis.range': [-mvZlim, mvZlim] })
+}
+
+// Re-theme the four NiiVue canvases (3 surfaces + orthoslices) in place.
+// backColor is read fresh on every redraw (see the comment by SURF_CFG), so
+// mutating opts.backColor and calling drawScene() is all a live switch needs —
+// no need to recreate the instances or reload any volumes/surfaces/streamlines.
+// The crosshair also follows the accent, matching the Plotly depth-reference line.
+function applyNiivueTheme() {
+  const light = isLightTheme()
+  const surfBack = light ? SURF_BACK_LIGHT : SURF_BACK_DARK
+  const slicBack = light ? SLIC_BACK_LIGHT : SLIC_BACK_DARK
+  for (const nv of [nvLhL, nvRhL, nvAsym]) {
+    nv.opts.backColor = [...surfBack]
+    nv.drawScene()
+  }
+  nvSlices.opts.backColor = [...slicBack]
+  nvSlices.setCrosshairColor(accentRgba())
+  nvSlices.drawScene()
 }
 
 // Re-theme all six Plotly panels in place (background/grid/text/accent colors,

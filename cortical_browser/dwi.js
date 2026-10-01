@@ -3,11 +3,25 @@ import * as niivue from "__NIIVUE_CDN__"
 const FA_URL      = "__FA_URL__"
 const STREAMLINES = __STREAMLINES_JSON__   // {lh: url, rh: url}
 const STEP_MM     = __STEP_MM__
-const ACCENT_YELLOW_RGBA = [0xF5/255, 0xC8/255, 0x42/255, 1]
 const statusEl = document.getElementById('status')
 
+// Mirrors main.js's theme handling (see CHART_THEME there) — kept independent
+// since this is a separate page/script, synced only via the 'cbTheme'
+// localStorage key (set on first load, and live via the 'storage' event below
+// if the main tab's theme is changed while this tab stays open).
+const SLIC_BACK_DARK  = [0.04, 0.04, 0.04, 1]
+const SLIC_BACK_LIGHT = [0.8980, 0.9137, 0.9412, 1]   // Nord5 #E5E9F0
+const ACCENT_DARK  = '#F5C842'
+const ACCENT_LIGHT = '#5E81AC'
+const isLightTheme = () => document.documentElement.getAttribute('data-theme') === 'light'
+const hexToRgba01 = hex => {
+  const n = parseInt(hex.slice(1), 16)
+  return [((n >> 16) & 255) / 255, ((n >> 8) & 255) / 255, (n & 255) / 255, 1]
+}
+const accentRgba = () => hexToRgba01(isLightTheme() ? ACCENT_LIGHT : ACCENT_DARK)
+
 const nv = new niivue.Niivue({
-  backColor: [0.04, 0.04, 0.04, 1], show3Dcrosshair: true,
+  backColor: isLightTheme() ? SLIC_BACK_LIGHT : SLIC_BACK_DARK, show3Dcrosshair: true,
   meshThicknessOn2D: 2, multiplanarLayout: 'row',
   isColorbar: true, showColorbarBorder: false,
   multiplanarShowRender: niivue.SHOW_RENDER.NEVER,   // just the 3 orthogonal slices, no 3-D volume panel
@@ -19,8 +33,19 @@ let dwiCmap = 'lipari'   // colormap applied to whichever volume the orthoslices
 if (FA_URL) await nv.loadVolumes([{ url: FA_URL, colormap: dwiCmap, opacity: 1 }])
 nv.setSliceType(nv.sliceTypeMultiplanar)
 nv.setRadiologicalConvention(true)
-nv.setCrosshairColor(ACCENT_YELLOW_RGBA)
+nv.setCrosshairColor(accentRgba())
 nv.setCrosshairWidth(0.5)
+
+// Live-sync if the main tab's theme toggle changes while this tab stays open.
+// 'storage' only fires in *other* tabs than the one that wrote the key, which
+// is exactly what's needed here — no feedback loop back to the main tab.
+window.addEventListener('storage', e => {
+  if (e.key !== 'cbTheme' || !(e.newValue === 'light' || e.newValue === 'dark')) return
+  document.documentElement.setAttribute('data-theme', e.newValue)
+  nv.opts.backColor = [...(isLightTheme() ? SLIC_BACK_LIGHT : SLIC_BACK_DARK)]
+  nv.setCrosshairColor(accentRgba())
+  nv.drawScene()
+})
 // Right-drag brightness/contrast — same gesture override as the main tab's
 // orthoslices: NiiVue's default right-button gesture draws a box and
 // auto-windows to it, instead of the up/down=level, left/right=width drag
@@ -160,7 +185,7 @@ async function showVolume(key) {
 
   currentVolKey = key
   volSel.value = key
-  nv.setCrosshairColor(ACCENT_YELLOW_RGBA)
+  nv.setCrosshairColor(accentRgba())
   nv.setCrosshairWidth(0.5)
   if (mm) {
     const frac = nv.mm2frac([mm[0], mm[1], mm[2]])

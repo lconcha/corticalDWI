@@ -12,18 +12,23 @@ try {
 <title>Cortical Browser — __SUBJ_ID__</title>
 <style>
 :root {
-  /* The 3-D surface/orthoslice canvases (NiiVue) stay on this fixed dark
-     backColor in both themes — out of scope for now. The floating chips that
-     sit directly on top of those renders (panel-sel, maxbtn/svgbtn/clabel in
-     cell-lh/cell-rh/cell-asym/cell-ortho, cmap controls) stay fixed dark too,
-     since they'd otherwise mismatch their backdrop. Everything else — the
-     sidebar, mv-warn (it floats over the sidebar, not a canvas), Plotly's
-     chart panels (.plot-cell/.chart-wrap below), and the plotted hemisphere/
-     asymmetry/normative colors — follows the theme; see CHART_THEME in
-     main.js for the JS-side half of the chart theming.
+  /* The NiiVue canvases' own backColor (JS, see SURF_CFG/SLIC_CFG and
+     applyNiivueTheme() in main.js) and the .cell/#grid/.rgutter backgrounds
+     immediately around them follow the theme. The floating chips that sit ON
+     TOP of the renders (panel-sel, maxbtn/svgbtn/clabel in cell-lh/cell-rh/
+     cell-asym/cell-ortho, cmap controls) stay fixed dark-translucent on
+     purpose: they can end up over actual bright brain/slice content as the
+     view rotates/pans, not just empty backColor, and a dark chip with light
+     text reads reliably over arbitrary image content either way — flipping
+     them to a light chip would hurt legibility over bright tissue. Everything
+     else — the sidebar, mv-warn, Plotly's chart panels (.plot-cell/.chart-wrap
+     below), the plotted hemisphere/asymmetry/normative colors, and the
+     colorbar text (--plot-text, which sits in the empty margin NiiVue itself
+     leaves for it) — follows the theme; see CHART_THEME in main.js for the
+     JS-side half of the chart theming.
   */
   --accent-yellow: #F5C842;   /* selected-vertex accent, shared by box/crosshair/plot line */
-  --plot-text: #dddddd;       /* colorbar text over the fixed-dark surface/orthoslice canvases */
+  --plot-text: #dddddd;       /* colorbar title/min/max labels over the surface/orthoslice canvases */
 
   /* ── chrome theme (sidebar + page background) — "dark", the default ──────── */
   --chrome-bg: #1f1f1f; --chrome-text: #ccc;
@@ -39,10 +44,15 @@ try {
   --plotcell-bg: #141414; --chart-bg: #242424;
   --chart-badge-bg: rgba(0,0,0,0.55); --chart-badge-text: #cfcfcf; --chart-badge-border: #555555;
   --warn-bg: rgba(51,38,0,0.92);
+  /* Surface/orthoslice cells and the grid gaps between all panels — must
+     roughly match SURF_BACK_DARK/SLIC_BACK_DARK in main.js */
+  --cell-bg: #141414; --grid-bg: #0a0a0a;
+  --cbar-border: rgba(255,255,255,0.08);
 }
 /* "light" — Nord (nordtheme.com): Snow Storm backgrounds, Polar Night text,
-   Frost accent. The 3-D/orthoslice canvases are intentionally excluded (see
-   above); the chart values below must match CHART_THEME.light in main.js. */
+   Frost accent. The chart values below must match CHART_THEME.light and the
+   cell/grid values must roughly match SURF_BACK_LIGHT/SLIC_BACK_LIGHT, both
+   in main.js. */
 :root[data-theme="light"] {
   --chrome-bg: #ECEFF4; --chrome-text: #2E3440;
   --sidebar-bg: #E5E9F0; --sidebar-border: #D8DEE9;
@@ -56,6 +66,9 @@ try {
   --ctrl-accent: #5E81AC;
   --btn-bg: #D8DEE9; --btn-text: #2E3440; --btn-border: #4C566A; --btn-bg-hover: #CCD4E2;
   --vtx-bg: #FFFFFF; --vtx-border: #D8DEE9; --vtx-text: #2E3440;
+  --cell-bg: #E5E9F0; --grid-bg: #D8DEE9;
+  --cbar-border: rgba(0,0,0,0.12);
+  --plot-text: #3B4252;
 }
 * { box-sizing: border-box; margin: 0; padding: 0; }
 body {
@@ -146,15 +159,15 @@ button.cbtn:hover { background: #484848; }
   /* four content rows separated by three draggable gutter tracks; the content
      row sizes are driven by --gr1..--gr4 so gutters can rescale them live */
   grid-template-rows: var(--gr1,1fr) 7px var(--gr2,1fr) 7px var(--gr3,1fr) 7px var(--gr4,1fr);
-  flex: 1; gap: 2px; background: #0a0a0a; overflow: hidden;
+  flex: 1; gap: 2px; background: var(--grid-bg); overflow: hidden;
 }
-.cell { position: relative; overflow: hidden; background: #141414; }
+.cell { position: relative; overflow: hidden; background: var(--cell-bg); }
 /* pin each panel group to its content row (tracks 1,3,5,7) so auto-placement
    never lands a panel in a gutter track */
 .grow1 { grid-row: 1; } .grow2 { grid-row: 3; } .grow3 { grid-row: 5; } .grow4 { grid-row: 7; }
 /* draggable row-resize gutters, spanning all columns */
-.rgutter { grid-column: 1 / -1; cursor: row-resize; background: #0a0a0a; touch-action: none; }
-.rgutter:hover { background: var(--accent-yellow); }
+.rgutter { grid-column: 1 / -1; cursor: row-resize; background: var(--grid-bg); touch-action: none; }
+.rgutter:hover { background: var(--accent); }
 /* double-click maximize: only the maximized panel is shown, filling the grid */
 #grid.has-max > .cell:not(.maxed) { display: none; }
 #grid.has-max > .rgutter { display: none; }
@@ -257,7 +270,7 @@ canvas.nv-canvas { display: block; width: 100% !important; height: 100% !importa
 .cell-asym .cbar { right: 200px; }   /* asym */
 #grid.has-max > .cmap-shared { display: none; }
 .cbar-g {
-  height: 8px; border-radius: 2px; border: 1px solid rgba(255,255,255,0.08);
+  height: 8px; border-radius: 2px; border: 1px solid var(--cbar-border);
 }
 .cbar-ll {
   display: flex; justify-content: space-between;

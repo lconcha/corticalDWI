@@ -12,14 +12,16 @@ try {
 <title>CORTICAL BROWSER | DWI space — __SUBJ_ID__</title>
 <style>
 :root {
-  /* The canvas itself stays dark in both themes, same rationale as main.html —
-     only the #hdr chrome bar (this tab's "sidebar") follows the theme. */
+  /* The NiiVue canvas's own backColor (see dwi.js) and this wrapper's
+     background follow the theme too — must roughly match SLIC_BACK_DARK
+     there. */
   --accent-yellow: #F5C842;
   --chrome-bg: #1f1f1f; --chrome-text: #ccc;
   --hdr-bg: #2b2b2b; --hdr-border: #444444;
   --accent: #F5C842; --h3: #999999; --strong: #f0f0f0;
   --input-bg: #d9d9d9; --input-text: #1a1a1a; --input-border: #4d4d4d;
   --btn-bg: #3a3a3a; --btn-text: #ddd; --btn-border: #555555; --btn-bg-hover: #484848;
+  --canvas-bg: #0a0a0a;
 }
 :root[data-theme="light"] {
   --chrome-bg: #ECEFF4; --chrome-text: #2E3440;
@@ -27,6 +29,7 @@ try {
   --accent: #5E81AC; --h3: #4C566A; --strong: #2E3440;
   --input-bg: #FFFFFF; --input-text: #2E3440; --input-border: #D8DEE9;
   --btn-bg: #D8DEE9; --btn-text: #2E3440; --btn-border: #4C566A; --btn-bg-hover: #CCD4E2;
+  --canvas-bg: #E5E9F0;
 }
 * { box-sizing: border-box; margin: 0; padding: 0; }
 body {
@@ -61,7 +64,7 @@ input[type=number] {
 input[type=number]::-webkit-inner-spin-button,
 input[type=number]::-webkit-outer-spin-button { display: none; }
 #status { color: var(--h3); font-size: 11px; font-family: monospace; margin-left: auto; white-space: pre; }
-#canvas-wrap { flex: 1; min-height: 0; position: relative; background: #0a0a0a; }
+#canvas-wrap { flex: 1; min-height: 0; position: relative; background: var(--canvas-bg); }
 canvas { display: block; width: 100% !important; height: 100% !important; outline: none; }
 </style>
 </head>
