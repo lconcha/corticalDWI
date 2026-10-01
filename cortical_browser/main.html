@@ -12,14 +12,18 @@ try {
 <title>Cortical Browser — __SUBJ_ID__</title>
 <style>
 :root {
-  /* Canvas/chart overlays (3-D renders, orthoslices, Plotly panels) stay on
-     this fixed dark palette in both themes — NiiVue's colormaps and the
-     hemisphere/asymmetry plot colors are calibrated against a dark background,
-     and the floating chips (panel-sel, maxbtn, svgbtn, cmap controls, mv-warn)
-     sit directly on top of those renders. Only the theme below.
+  /* The 3-D surface/orthoslice canvases (NiiVue) stay on this fixed dark
+     backColor in both themes — out of scope for now. The floating chips that
+     sit directly on top of those renders (panel-sel, maxbtn/svgbtn/clabel in
+     cell-lh/cell-rh/cell-asym/cell-ortho, cmap controls) stay fixed dark too,
+     since they'd otherwise mismatch their backdrop. Everything else — the
+     sidebar, mv-warn (it floats over the sidebar, not a canvas), Plotly's
+     chart panels (.plot-cell/.chart-wrap below), and the plotted hemisphere/
+     asymmetry/normative colors — follows the theme; see CHART_THEME in
+     main.js for the JS-side half of the chart theming.
   */
   --accent-yellow: #F5C842;   /* selected-vertex accent, shared by box/crosshair/plot line */
-  --plot-text: #dddddd;       /* CSS twin of the JS PLOT_TEXT const (plot + colorbar text) */
+  --plot-text: #dddddd;       /* colorbar text over the fixed-dark surface/orthoslice canvases */
 
   /* ── chrome theme (sidebar + page background) — "dark", the default ──────── */
   --chrome-bg: #1f1f1f; --chrome-text: #ccc;
@@ -31,15 +35,23 @@ try {
   --ctrl-accent: #8a8a8a;
   --btn-bg: #3a3a3a; --btn-text: #ddd; --btn-border: #555555; --btn-bg-hover: #484848;
   --vtx-bg: #262626; --vtx-border: #555555; --vtx-text: #ccc;
+  /* Plotly chart cells — must match CHART_THEME.dark.bg in main.js */
+  --plotcell-bg: #141414; --chart-bg: #242424;
+  --chart-badge-bg: rgba(0,0,0,0.55); --chart-badge-text: #cfcfcf; --chart-badge-border: #555555;
+  --warn-bg: rgba(51,38,0,0.92);
 }
 /* "light" — Nord (nordtheme.com): Snow Storm backgrounds, Polar Night text,
-   Frost accent. Canvas/chart panels are intentionally excluded (see above). */
+   Frost accent. The 3-D/orthoslice canvases are intentionally excluded (see
+   above); the chart values below must match CHART_THEME.light in main.js. */
 :root[data-theme="light"] {
   --chrome-bg: #ECEFF4; --chrome-text: #2E3440;
   --sidebar-bg: #E5E9F0; --sidebar-border: #D8DEE9;
   --rail: #D8DEE9; --rail-2: #D8DEE9;
   --h2: #3B4252; --h3: #4C566A; --strong: #2E3440; --muted: #434C5E;
   --accent: #5E81AC; --accent-ink: #ECEFF4;
+  --plotcell-bg: #E5E9F0; --chart-bg: #FFFFFF;
+  --chart-badge-bg: rgba(255,255,255,0.78); --chart-badge-text: #3B4252; --chart-badge-border: #D8DEE9;
+  --warn-bg: rgba(255,255,255,0.92);
   --input-bg: #FFFFFF; --input-text: #2E3440; --input-border: #D8DEE9;
   --ctrl-accent: #5E81AC;
   --btn-bg: #D8DEE9; --btn-text: #2E3440; --btn-border: #4C566A; --btn-bg-hover: #CCD4E2;
@@ -192,9 +204,17 @@ canvas.nv-canvas { display: block; width: 100% !important; height: 100% !importa
   cursor: pointer; opacity: 0.45;
 }
 .svgbtn:hover { opacity: 1; color: var(--accent-yellow); border-color: var(--accent-yellow); }
-.plot-cell { display: flex; flex-direction: column; padding: 20px 5px 4px; }
-.chart-wrap { position: relative; flex: 1; min-height: 0; background: #242424; }
+.plot-cell { display: flex; flex-direction: column; padding: 20px 5px 4px; background: var(--plotcell-bg); }
+.chart-wrap { position: relative; flex: 1; min-height: 0; background: var(--chart-bg); }
 .plotly-chart { width: 100%; height: 100%; }
+/* The clabel/svgbtn/maxbtn chips sit on the dark 3-D/orthoslice canvases
+   elsewhere (kept fixed-dark, see the :root comment above) but on a plot-cell
+   they sit on the chart's own themed background, so they follow the theme too. */
+.plot-cell .clabel { color: var(--chart-badge-text); background: var(--chart-badge-bg); }
+.plot-cell .svgbtn, .plot-cell .maxbtn {
+  color: var(--chart-badge-text); background: var(--chart-badge-bg); border-color: var(--chart-badge-border);
+}
+.plot-cell .svgbtn:hover, .plot-cell .maxbtn:hover { color: var(--accent); border-color: var(--accent); }
 .cbar {
   position: absolute; bottom: 5px; left: 10px; right: 10px; z-index: 10; pointer-events: none;
 }
@@ -229,6 +249,7 @@ canvas.nv-canvas { display: block; width: 100% !important; height: 100% !importa
   flex: 0 0 auto; display: flex; justify-content: center; align-items: center;
   gap: 10px; padding: 3px 0 4px; font-size: 10px; color: #999999;
 }
+.plot-cell .cfoot { color: var(--chart-badge-text); }
 .cmap-row, .cmap-rng { display: flex; align-items: center; gap: 4px; }
 .cmap-rng input[type=number] { width: 58px; }
 .cell-lh .cbar { right: 110px; }   /* LH */
@@ -242,15 +263,18 @@ canvas.nv-canvas { display: block; width: 100% !important; height: 100% !importa
   display: flex; justify-content: space-between;
   font-size: 11px; color: var(--plot-text); margin-top: 2px; font-family: monospace;
 }
+/* Geometrically this sits over the sidebar's bottom-left corner (left:8px,
+   width:208px is within the 224px sidebar), not over any canvas — so unlike
+   the other floating chips above, it follows the chrome theme. */
 .mv-warn {
   position: fixed; left: 8px; bottom: 8px; z-index: 100; width: 208px;
-  background: rgba(51,38,0,0.92); border: 1px solid var(--accent-yellow);
-  color: var(--accent-yellow); font-size: 10px; line-height: 1.4;
+  background: var(--warn-bg); border: 1px solid var(--accent);
+  color: var(--accent); font-size: 10px; line-height: 1.4;
   padding: 5px 20px 5px 8px; border-radius: 4px; display: none;
 }
 .mv-warn-close {
   position: absolute; top: 2px; right: 4px; cursor: pointer;
-  background: none; border: none; color: var(--accent-yellow);
+  background: none; border: none; color: var(--accent);
   font-size: 13px; line-height: 1; padding: 2px; opacity: 0.7;
 }
 .mv-warn-close:hover { opacity: 1; }

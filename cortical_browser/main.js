@@ -84,6 +84,62 @@ const hexToRgba = (hex, alpha) => {
 const LH_COLOR = LH_SURF ? rgba255ToHex(LH_SURF.rgba255) : '#66B3FF'
 const RH_COLOR = RH_SURF ? rgba255ToHex(RH_SURF.rgba255) : '#FF854D'
 
+// ── Plotly chart theming ─────────────────────────────────────────────────────
+// Unlike LH_COLOR/RH_COLOR above (which must stay tied 1:1 to the 3-D mesh
+// color), the *plotted* hemisphere/asymmetry colors need a darker, more
+// saturated variant on a light background to stay legible — chartColorFor()
+// derives that variant by hue, so the plot line still reads as "the same
+// color" as the surface. The 3-D/orthoslice canvases themselves are not
+// affected by any of this; they keep the fixed dark backColor set above.
+function hexToHsl(hex) {
+  const n = parseInt(hex.slice(1), 16)
+  const r = ((n >> 16) & 255) / 255, g = ((n >> 8) & 255) / 255, b = (n & 255) / 255
+  const max = Math.max(r, g, b), min = Math.min(r, g, b), d = max - min
+  let h = 0
+  if (d !== 0) {
+    switch (max) {
+      case r: h = ((g - b) / d) % 6; break
+      case g: h = (b - r) / d + 2; break
+      default: h = (r - g) / d + 4
+    }
+    h *= 60
+    if (h < 0) h += 360
+  }
+  const l = (max + min) / 2
+  const s = d === 0 ? 0 : d / (1 - Math.abs(2 * l - 1))
+  return [h, s, l]
+}
+function hslToHex(h, s, l) {
+  const c = (1 - Math.abs(2 * l - 1)) * s
+  const x = c * (1 - Math.abs(((h / 60) % 2) - 1))
+  const m = l - c / 2
+  const [r, g, b] =
+    h < 60  ? [c, x, 0] : h < 120 ? [x, c, 0] : h < 180 ? [0, c, x] :
+    h < 240 ? [0, x, c] : h < 300 ? [x, 0, c] : [c, 0, x]
+  const toHex = v => Math.round((v + m) * 255).toString(16).padStart(2, '0')
+  return `#${toHex(r)}${toHex(g)}${toHex(b)}`
+}
+function chartColorFor(hex, light) {
+  if (!light) return hex
+  const [h, s] = hexToHsl(hex)
+  return hslToHex(h, Math.max(s, 0.7), 0.38)
+}
+const ASYM_BASE_COLOR = '#8af5a6'
+
+const CHART_THEME = {
+  dark:  { bg: '#242424', text: PLOT_TEXT, grid: '#303030', gridPolar: '#3a3a3a',
+           zero: '#888888', accent: ACCENT_YELLOW,
+           normative: '#ffffff', normativeFill: 'rgba(160,160,160,0.30)' },
+  light: { bg: '#FFFFFF', text: '#2E3440', grid: '#D8DEE9', gridPolar: '#D8DEE9',
+           zero: '#4C566A', accent: '#5E81AC',
+           normative: '#3B4252', normativeFill: 'rgba(76,86,106,0.18)' },
+}
+const isLightTheme = () => document.documentElement.getAttribute('data-theme') === 'light'
+let CT = CHART_THEME[isLightTheme() ? 'light' : 'dark']
+let chartLhColor   = chartColorFor(LH_COLOR, isLightTheme())
+let chartRhColor   = chartColorFor(RH_COLOR, isLightTheme())
+let chartAsymColor = chartColorFor(ASYM_BASE_COLOR, isLightTheme())
+
 // Independently-selectable surface geometry per panel (white/pial/inflated/
 // very_inflated/average_white/average_pial) — all share the same surface
 // template topology, so switching only changes vertex coordinates, not data mapping.
@@ -1197,6 +1253,7 @@ document.getElementById('interpChk').addEventListener('change', function() {
   themeSel.addEventListener('change', () => {
     document.documentElement.setAttribute('data-theme', themeSel.value)
     try { localStorage.setItem('cbTheme', themeSel.value) } catch (e) {}
+    applyChartTheme()
   })
 }
 
@@ -2077,21 +2134,21 @@ const PLOTLY_CONFIG = { displayModeBar: false, responsive: true, scrollZoom: fal
 
 function depthProfileLayout() {
   return {
-    paper_bgcolor: '#242424', plot_bgcolor: '#242424',
-    font: { color: PLOT_TEXT, size: 10 },
+    paper_bgcolor: CT.bg, plot_bgcolor: CT.bg,
+    font: { color: CT.text, size: 10 },
     margin: { l: 46, r: 12, t: 30, b: 34 },
     showlegend: true,
-    legend: { orientation: 'h', x: 0, y: 1.2, font: { size: 9, color: PLOT_TEXT }, groupclick: 'togglegroup',
+    legend: { orientation: 'h', x: 0, y: 1.2, font: { size: 9, color: CT.text }, groupclick: 'togglegroup',
               itemwidth: 30, tracegroupgap: 4 },
     dragmode: false,
     hovermode: 'closest',
     hoverdistance: 50,
-    xaxis: { nticks: 5, color: PLOT_TEXT, gridcolor: '#303030', zerolinecolor: '#303030', tickfont: { size: 10 } },
-    yaxis: { autorange: 'reversed', title: { text: 'Depth (mm)', font: { color: PLOT_TEXT } },
-             nticks: 8, tickformat: '.1f', color: PLOT_TEXT, gridcolor: '#303030', zerolinecolor: '#303030',
+    xaxis: { nticks: 5, color: CT.text, gridcolor: CT.grid, zerolinecolor: CT.grid, tickfont: { size: 10 } },
+    yaxis: { autorange: 'reversed', title: { text: 'Depth (mm)', font: { color: CT.text } },
+             nticks: 8, tickformat: '.1f', color: CT.text, gridcolor: CT.grid, zerolinecolor: CT.grid,
              tickfont: { size: 10 } },
     shapes: [{ type: 'line', xref: 'paper', x0: 0, x1: 1, yref: 'y', y0: 0, y1: 0,
-               line: { color: ACCENT_YELLOW, width: 1.5, dash: 'dash' } }],
+               line: { color: CT.accent, width: 1.5, dash: 'dash' } }],
   }
 }
 
@@ -2143,9 +2200,9 @@ function downloadChartSvg(gd, filename) {
   Plotly.downloadImage(gd, { format: 'svg', filename, width: gd._fullLayout.width, height: gd._fullLayout.height })
 }
 
-chartLH   = makeChart('chart-lh',   LH_COLOR, 'LH')
-chartRH   = makeChart('chart-rh',   RH_COLOR, 'RH')
-chartAsym = makeChart('chart-asym', '#8af5a6', 'Asymmetry', true)
+chartLH   = makeChart('chart-lh',   chartLhColor,   'LH')
+chartRH   = makeChart('chart-rh',   chartRhColor,   'RH')
+chartAsym = makeChart('chart-asym', chartAsymColor, 'Asymmetry', true)
 
 for (const [btnId, chart, suffix] of [
   ['svgBtnLH',   chartLH,   'lh_depth_profile'],
@@ -2161,8 +2218,8 @@ for (const [btnId, chart, suffix] of [
 applyAsymValueLimits()
 
 // ── multivariate explorer charts (row 4) ─────────────────────────────────────
-const mvFont = { size: 10, color: PLOT_TEXT }
-const mvLegend = { orientation: 'h', x: 0, font: { size: 9, color: PLOT_TEXT }, itemwidth: 30, tracegroupgap: 4 }
+const mvFont = { size: 10, color: CT.text }
+const mvLegend = { orientation: 'h', x: 0, font: { size: 9, color: CT.text }, itemwidth: 30, tracegroupgap: 4 }
 
 // Mahalanobis distance vs depth — a mean line per hemisphere with a dashed
 // ±SD band (mirroring the univariate profile charts; the band is only
@@ -2178,24 +2235,24 @@ function mahalSdBand(color, group) {
 chartMahal = document.getElementById('chart-mahal')
 Plotly.newPlot(chartMahal, [
   { x: [], y: [], name: 'LH', mode: 'lines+markers', legendgroup: 'lh',
-    line: { color: LH_COLOR, width: 3 }, marker: { size: 1 } },
-  ...mahalSdBand(LH_COLOR, 'lh'),
+    line: { color: chartLhColor, width: 3 }, marker: { size: 1 } },
+  ...mahalSdBand(chartLhColor, 'lh'),
   { x: [], y: [], name: 'RH', mode: 'lines+markers', legendgroup: 'rh',
-    line: { color: RH_COLOR, width: 3 }, marker: { size: 1 } },
-  ...mahalSdBand(RH_COLOR, 'rh'),
+    line: { color: chartRhColor, width: 3 }, marker: { size: 1 } },
+  ...mahalSdBand(chartRhColor, 'rh'),
 ], {
-  paper_bgcolor: '#242424', plot_bgcolor: '#242424',
+  paper_bgcolor: CT.bg, plot_bgcolor: CT.bg,
   font: mvFont,
   margin: { l: 46, r: 12, t: 30, b: 34 },
   showlegend: true,
   legend: { ...mvLegend, y: 1.2, groupclick: 'togglegroup' },
   dragmode: false, hovermode: 'closest',
-  xaxis: { range: [0, mvMahalLim], title: { text: 'Mahalanobis distance', font: { color: PLOT_TEXT } },
-           color: PLOT_TEXT, gridcolor: '#303030', tickfont: { size: 10 } },
-  yaxis: { autorange: 'reversed', title: { text: 'Depth (mm)', font: { color: PLOT_TEXT } },
-           nticks: 8, tickformat: '.1f', color: PLOT_TEXT, gridcolor: '#303030', tickfont: { size: 10 } },
+  xaxis: { range: [0, mvMahalLim], title: { text: 'Mahalanobis distance', font: { color: CT.text } },
+           color: CT.text, gridcolor: CT.grid, tickfont: { size: 10 } },
+  yaxis: { autorange: 'reversed', title: { text: 'Depth (mm)', font: { color: CT.text } },
+           nticks: 8, tickformat: '.1f', color: CT.text, gridcolor: CT.grid, tickfont: { size: 10 } },
   shapes: [{ type: 'line', xref: 'paper', x0: 0, x1: 1, yref: 'y', y0: 0, y1: 0,
-             line: { color: ACCENT_YELLOW, width: 1.5, dash: 'dash' } }],
+             line: { color: CT.accent, width: 1.5, dash: 'dash' } }],
 }, PLOTLY_CONFIG)
 chartMahal.addEventListener('click', e => setDepthFromChart(chartMahal, e.clientY))
 
@@ -2216,22 +2273,22 @@ function radarSdBand(color, group) {
 chartRadar = document.getElementById('chart-radar')
 Plotly.newPlot(chartRadar, [
   { r: [], theta: [], type: 'scatterpolar', name: 'LH', mode: 'lines+markers', legendgroup: 'lh',
-    line: { color: LH_COLOR, width: 2 }, marker: { size: 4 } },
-  ...radarSdBand(LH_COLOR, 'lh'),
+    line: { color: chartLhColor, width: 2 }, marker: { size: 4 } },
+  ...radarSdBand(chartLhColor, 'lh'),
   { r: [], theta: [], type: 'scatterpolar', name: 'RH', mode: 'lines+markers', legendgroup: 'rh',
-    line: { color: RH_COLOR, width: 2 }, marker: { size: 4 } },
-  ...radarSdBand(RH_COLOR, 'rh'),
+    line: { color: chartRhColor, width: 2 }, marker: { size: 4 } },
+  ...radarSdBand(chartRhColor, 'rh'),
 ], {
-  paper_bgcolor: '#242424',
+  paper_bgcolor: CT.bg,
   font: mvFont,
   margin: { l: 30, r: 30, t: 20, b: 20 },
   showlegend: true,
   legend: { ...mvLegend, y: 1.15, groupclick: 'togglegroup' },
   dragmode: false,
   polar: {
-    bgcolor: '#242424',
-    radialaxis: { range: [0, mvZlim], color: PLOT_TEXT, gridcolor: '#3a3a3a', tickfont: { size: 8 } },
-    angularaxis: { color: PLOT_TEXT, gridcolor: '#3a3a3a', tickfont: { size: 10 } },
+    bgcolor: CT.bg,
+    radialaxis: { range: [0, mvZlim], color: CT.text, gridcolor: CT.gridPolar, tickfont: { size: 8 } },
+    angularaxis: { color: CT.text, gridcolor: CT.gridPolar, tickfont: { size: 10 } },
   },
 }, PLOTLY_CONFIG)
 
@@ -2246,22 +2303,22 @@ const zBarAlpha = z => 0.1 + 0.9 * Math.min(Math.abs(z ?? 0), mvZlim) / mvZlim
 chartZBar = document.getElementById('chart-zbar')
 Plotly.newPlot(chartZBar, [
   { x: [], y: [], type: 'bar', orientation: 'h', name: 'LH', marker: { color: [] },
-    error_x: { type: 'data', array: [], color: LH_COLOR, thickness: 1, width: 3 } },
+    error_x: { type: 'data', array: [], color: chartLhColor, thickness: 1, width: 3 } },
   { x: [], y: [], type: 'bar', orientation: 'h', name: 'RH', marker: { color: [] },
-    error_x: { type: 'data', array: [], color: RH_COLOR, thickness: 1, width: 3 } },
+    error_x: { type: 'data', array: [], color: chartRhColor, thickness: 1, width: 3 } },
 ], {
-  paper_bgcolor: '#242424', plot_bgcolor: '#242424',
+  paper_bgcolor: CT.bg, plot_bgcolor: CT.bg,
   font: mvFont,
   margin: { l: 70, r: 15, t: 10, b: 34 },
   showlegend: true,
   legend: { ...mvLegend, y: 1.15 },
   dragmode: false,
   barmode: 'group',
-  xaxis: { range: [-mvZlim, mvZlim], title: { text: 'Z-score', font: { color: PLOT_TEXT } },
-           color: PLOT_TEXT, gridcolor: '#303030', tickfont: { size: 10 } },
-  yaxis: { type: 'category', autorange: 'reversed', color: PLOT_TEXT, tickfont: { size: 9 }, automargin: true },
+  xaxis: { range: [-mvZlim, mvZlim], title: { text: 'Z-score', font: { color: CT.text } },
+           color: CT.text, gridcolor: CT.grid, tickfont: { size: 10 } },
+  yaxis: { type: 'category', autorange: 'reversed', color: CT.text, tickfont: { size: 9 }, automargin: true },
   shapes: [{ type: 'line', xref: 'x', x0: 0, x1: 0, yref: 'paper', y0: 0, y1: 1,
-             line: { color: '#888888', width: 1 } }],
+             line: { color: CT.zero, width: 1 } }],
 }, PLOTLY_CONFIG)
 
 // If there's no cohort data, flag the panels so they read as unavailable.
@@ -2335,11 +2392,59 @@ function renderRadarBar(data, depth) {
   Plotly.restyle(chartZBar, {
     y: [data.metrics, data.metrics],
     x: [at(data.lh.z), at(data.rh.z)],
-    'marker.color': [zColor(at(data.lh.z), LH_COLOR), zColor(at(data.rh.z), RH_COLOR)],
+    'marker.color': [zColor(at(data.lh.z), chartLhColor), zColor(at(data.rh.z), chartRhColor)],
     'error_x.array': [at(data.lh.z_sd), at(data.rh.z_sd)],
     name: [mvLabel('LH', data.n_vertices), mvLabel('RH', data.n_vertices)],
   }, [0, 1])
   Plotly.relayout(chartZBar, { 'xaxis.range': [-mvZlim, mvZlim] })
+}
+
+// Re-theme all six Plotly panels in place (background/grid/text/accent colors,
+// plus the hemisphere/asymmetry/normative trace colors) when the sidebar theme
+// toggle changes. The profile charts (LH/RH/asym) have no other code path that
+// ever restyles their trace colors, so that happens here explicitly; the
+// multivariate panels get their colors from chartLhColor/chartRhColor on every
+// render already, so replaying the last payload through them is enough.
+function applyChartTheme() {
+  const light = isLightTheme()
+  CT = CHART_THEME[light ? 'light' : 'dark']
+  chartLhColor   = chartColorFor(LH_COLOR, light)
+  chartRhColor   = chartColorFor(RH_COLOR, light)
+  chartAsymColor = chartColorFor(ASYM_BASE_COLOR, light)
+
+  for (const chart of [chartLH, chartRH, chartAsym, chartMahal, chartZBar]) {
+    Plotly.relayout(chart, {
+      paper_bgcolor: CT.bg, plot_bgcolor: CT.bg,
+      'font.color': CT.text, 'legend.font.color': CT.text,
+      'xaxis.color': CT.text, 'xaxis.gridcolor': CT.grid, 'xaxis.zerolinecolor': CT.grid,
+      'yaxis.color': CT.text, 'yaxis.gridcolor': CT.grid, 'yaxis.zerolinecolor': CT.grid,
+    })
+  }
+  for (const chart of [chartLH, chartRH, chartAsym, chartMahal]) {
+    Plotly.relayout(chart, { 'yaxis.title.font.color': CT.text, 'shapes[0].line.color': CT.accent })
+  }
+  Plotly.relayout(chartZBar, { 'shapes[0].line.color': CT.zero })
+  Plotly.relayout(chartRadar, {
+    paper_bgcolor: CT.bg, 'font.color': CT.text, 'legend.font.color': CT.text,
+    'polar.bgcolor': CT.bg,
+    'polar.radialaxis.color': CT.text, 'polar.radialaxis.gridcolor': CT.gridPolar,
+    'polar.angularaxis.color': CT.text, 'polar.angularaxis.gridcolor': CT.gridPolar,
+  })
+
+  for (const [chart, color] of [[chartLH, chartLhColor], [chartRH, chartRhColor], [chartAsym, chartAsymColor]]) {
+    Plotly.restyle(chart, { 'line.color': [color, CT.normative] }, [0, 3])
+    Plotly.restyle(chart, { fillcolor: [hexToRgba(color, 0.16), hexToRgba(color, 0.18), CT.normativeFill] }, [0, 2, 5])
+  }
+  Plotly.restyle(chartMahal, { 'line.color': [chartLhColor, chartRhColor] }, [0, 3])
+  Plotly.restyle(chartMahal, { fillcolor: [hexToRgba(chartLhColor, 0.18), hexToRgba(chartRhColor, 0.18)] }, [2, 5])
+  Plotly.restyle(chartRadar, {
+    'line.color': [chartLhColor, chartLhColor, chartLhColor, chartRhColor, chartRhColor, chartRhColor],
+  }, [0, 1, 2, 3, 4, 5])
+  Plotly.restyle(chartZBar, { 'error_x.color': [chartLhColor, chartRhColor] }, [0, 1])
+
+  // Replay the last multivariate payload so the bars' per-value alpha-blended
+  // marker colors (derived from chartLhColor/chartRhColor) pick up the change too.
+  if (mvCurrent) { renderMahalChart(mvCurrent); renderRadarBar(mvCurrent, currentDepth) }
 }
 
 function clearMultivariate() {
