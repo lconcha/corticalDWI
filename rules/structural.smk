@@ -20,7 +20,7 @@ STRUCTURAL_METRICS_FLAIR = ["flair_proc", "T1_over_FLAIR"]
 
 
 def has_flair(subject):
-    return os.path.exists(f"{SUBJECTS_DIR}/{subject}/mri/flair.nii.gz")
+    return os.path.exists(f"{SUBJECTS_DIR}/{subject}/mri/orig/FLAIRraw.mgz")
 
 
 rule proc_t1:
@@ -37,7 +37,7 @@ rule proc_t1:
 
 rule proc_flair:
     input:
-        flair=f"{SUBJECTS_DIR}/{{subject}}/mri/flair.nii.gz",
+        flair=f"{SUBJECTS_DIR}/{{subject}}/mri/orig/FLAIRraw.mgz",
         t1=f"{SUBJECTS_DIR}/{{subject}}/mri/T1.mgz",
         aseg=f"{SUBJECTS_DIR}/{{subject}}/mri/aseg.mgz",
         brainmask=f"{SUBJECTS_DIR}/{{subject}}/mri/brainmask.mgz",

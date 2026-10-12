@@ -21,7 +21,6 @@ help() {
 }
 
 
-flair=${SUBJECTS_DIR}/${sID}/mri/flair.nii.gz
 t1=${SUBJECTS_DIR}/${sID}/mri/T1.mgz
 aseg=${SUBJECTS_DIR}/${sID}/mri/aseg.mgz
 brainmask=${SUBJECTS_DIR}/${sID}/mri/brainmask.mgz
@@ -37,6 +36,21 @@ then
   echolor green "[INFO] Will not overwrite."
   exit 0
 fi
+
+flair_mgz=${SUBJECTS_DIR}/${sID}/mri/orig/FLAIRraw.mgz
+
+if [ -f $flair_mgz ]
+then
+  echolor green "[INFO] Found flair image for subject $sID"
+  echolor green "[INFO] Converting to NIfTI format"
+  flair_nii=${SUBJECTS_DIR}/${sID}/mri/orig/flair.nii.gz
+  my_do_cmd mrconvert $flair_mgz $flair_nii
+  flair=$flair_nii
+else
+  echolor red "[ERROR] Could not find file: $flair_mgz"
+  exit 2
+fi
+
 
 if [ ! -f $flair ]
 then
