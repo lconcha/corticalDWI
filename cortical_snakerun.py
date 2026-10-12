@@ -448,12 +448,15 @@ def print_status_table(rules, subjects_dir, subjects):
     print("-" * (subj_w + col_w * len(names)))
 
     n_full = 0
+    n_subjects_counted = 0
+    rule_full_counts = {name: 0 for name in names}
     for subject in subjects:
         if os.path.exists(os.path.join(subjects_dir, subject, "skip")):
             continue
         if not os.path.isdir(os.path.join(subjects_dir, subject)):
             print(f"{YELLOW}{subject.ljust(subj_w)}(directory not found){NC}")
             continue
+        n_subjects_counted += 1
         status = {name: (e, t) for name, e, t in subject_rule_status(rules, subject)}
         row = subject.ljust(subj_w)
         for name in names:
@@ -461,6 +464,7 @@ def print_status_table(rules, subjects_dir, subjects):
             if n_existing == n_total:
                 symbol, color = "✓", GREEN
                 n_full += 1
+                rule_full_counts[name] += 1
             elif n_existing == 0:
                 symbol, color = "✗", RED
             else:
@@ -469,8 +473,11 @@ def print_status_table(rules, subjects_dir, subjects):
         print(row)
 
     print("-" * (subj_w + col_w * len(names)))
+    name_w = max(len(name) for name in names) + 2
+    count_w = len(str(n_subjects_counted))
     for h, name in zip(headers, names):
-        print(f"  {h}. {name}")
+        n_complete = rule_full_counts[name]
+        print(f"  {h}. {name:<{name_w}}{n_complete:>{count_w}}/{n_subjects_counted}")
 
     group_status = group_rule_status(rules)
     if group_status:
