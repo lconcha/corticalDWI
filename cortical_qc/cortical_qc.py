@@ -35,6 +35,13 @@ def find_structural_volume(subj_dir):
     return p if os.path.isfile(p) else None
 
 
+def find_flair_volume(subj_dir):
+    """mri/flair_proc.nii.gz, or None if missing. Only used by --interactive —
+    the batch GIF capture doesn't include FLAIR."""
+    p = os.path.join(subj_dir, 'mri', 'flair_proc.nii.gz')
+    return p if os.path.isfile(p) else None
+
+
 def discover_subject_files(subjects_dir, subj_id):
     subj_dir = os.path.join(subjects_dir, subj_id)
     dwi_files = find_dwi_files(subj_dir)          # fa, lh, rh (dwi-space streamlines)
@@ -60,7 +67,17 @@ def discover_subject_files(subjects_dir, subj_id):
     }
 
 
-# ── mrview capture ────────────────────────────────────────────────────────────
+# ── mrview command building ───────────────────────────────────────────────────
+
+def _mrview_base_cmd(volumes, streamlines):
+    """The part shared between a batch capture and an --interactive session:
+    the volume(s) to load, plus a -tractography.load per hemisphere present."""
+    cmd = ['mrview'] + list(volumes)
+    for hemi in ('lh', 'rh'):
+        if streamlines.get(hemi):
+            cmd += ['-tractography.load', streamlines[hemi]]
+    return cmd
+
 
 def capture_pair(volume, streamlines, timeout=120):
     """Runs mrview once for one volume + its streamlines, grabbing a frame with
@@ -73,11 +90,8 @@ def capture_pair(volume, streamlines, timeout=120):
     tmp_dir = tempfile.mkdtemp(prefix='cortical_qc_')
     try:
         prefix = 'qc'
-        cmd = ['mrview', volume, '-size', f'{CAPTURE_SIZE[0]},{CAPTURE_SIZE[1]}']
-        for hemi in ('lh', 'rh'):
-            if streamlines.get(hemi):
-                cmd += ['-tractography.load', streamlines[hemi]]
-        cmd += [
+        cmd = _mrview_base_cmd([volume], streamlines) + [
+            '-size', f'{CAPTURE_SIZE[0]},{CAPTURE_SIZE[1]}',
             '-mode', '2', '-noannotations', '-intensity_range', '0,1',
             '-capture.prefix', prefix, '-capture.folder', tmp_dir,
             '-capture.grab',                        # frame 0: streamlines visible
@@ -133,28 +147,161 @@ def label_strip(text, width):
 
 
 def build_combined_gif(seq_t1, seq_fa, out_path):
-    """seq_fa=None (no dwi/ directory at all) drops the second column entirely,
+    """seq_fa=None (no dwi/ directory at all) drops the second row entirely,
     rather than rendering it as a 'not found' placeholder."""
     w, h = CAPTURE_SIZE
     label_t1 = label_strip('T1w_proc + streamlines (mri/)', w)
     label_fa = label_strip('FA (dti) + streamlines (dwi/, warped)', w) if seq_fa is not None else None
-    n_cols = 1 if seq_fa is None else 2
+    n_rows = 1 if seq_fa is None else 2
     n = len(seq_t1) if seq_fa is None else max(len(seq_t1), len(seq_fa))
+    row_h = h + LABEL_H
 
     frames = []
     for i in range(n):
-        canvas = Image.new('RGB', (w * n_cols, h + LABEL_H), (10, 10, 12))
+        canvas = Image.new('RGB', (w, row_h * n_rows), (10, 10, 12))
         canvas.paste(label_t1, (0, 0))
         canvas.paste(seq_t1[i % len(seq_t1)], (0, LABEL_H))
         if seq_fa is not None:
-            canvas.paste(label_fa, (w, 0))
-            canvas.paste(seq_fa[i % len(seq_fa)], (w, LABEL_H))
+            canvas.paste(label_fa, (0, row_h))
+            canvas.paste(seq_fa[i % len(seq_fa)], (0, row_h + LABEL_H))
         frames.append(canvas)
 
     frames[0].save(
         out_path, save_all=True, append_images=frames[1:],
         duration=FRAME_MS, loop=0, optimize=True,
     )
+
+
+# ── index page ────────────────────────────────────────────────────────────────
+
+def build_index(out_dir, subjects_dir):
+    """A left sidebar of subject buttons + a right pane showing the clicked
+    subject's GIF. Lists every sub-* directory under subjects_dir (not just
+    ones processed this run, so it stays correct across incremental runs);
+    any subject with no <id>_qc.gif in out_dir — missing input files, or a
+    capture that errored out — is listed but shown in red and unclickable."""
+    all_subj = sorted(
+        d for d in os.listdir(subjects_dir)
+        if d.startswith('sub-') and os.path.isdir(os.path.join(subjects_dir, d))
+    )
+    have_gif = {f[:-len('_qc.gif')] for f in os.listdir(out_dir) if f.endswith('_qc.gif')}
+    n_missing = sum(1 for s in all_subj if s not in have_gif)
+
+    buttons = '\n'.join(
+        f'<button data-gif="{s}_qc.gif">{s}</button>' if s in have_gif
+        else f'<button class="missing" disabled title="no QC data (missing input files or capture failed)">{s}</button>'
+        for s in all_subj
+    )
+    html = f"""<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>Cortical QC</title>
+<style>
+  * {{ box-sizing: border-box; }}
+  body {{ background: #111; color: #ddd; font-family: sans-serif; margin: 0; display: flex; height: 100vh; }}
+  #sidebar {{ width: 180px; flex: none; overflow-y: auto; background: #1a1a1a; border-right: 1px solid #333; padding: 8px; }}
+  #sidebar h1 {{ font-size: 13px; color: #e9c46a; margin: 4px 8px 12px; }}
+  button {{ display: block; width: 100%; text-align: left; padding: 8px; margin-bottom: 4px;
+            background: none; border: none; border-radius: 4px; color: #ddd; font-size: 13px; cursor: pointer; }}
+  button:hover {{ background: #2a2a2a; }}
+  button.active {{ background: #e9c46a; color: #111; font-weight: 600; }}
+  button.missing {{ color: #e06c5e; cursor: not-allowed; }}
+  button.missing:hover {{ background: none; }}
+  #search {{ display: block; width: 100%; box-sizing: border-box; padding: 6px 8px; margin: 0 0 8px;
+             background: #111; border: 1px solid #333; border-radius: 4px; color: #ddd; font-size: 13px; }}
+  #viewer {{ flex: 1; display: flex; align-items: center; justify-content: center; padding: 16px; overflow: auto; }}
+  #viewer img {{ max-width: 100%; }}
+  #placeholder {{ color: #666; font-size: 13px; }}
+</style></head>
+<body>
+<div id="sidebar">
+  <h1>{len(all_subj)} subject(s){f', {n_missing} missing QC data' if n_missing else ''}</h1>
+  <input id="search" type="text" placeholder="Search subject ID... (&uarr;/&darr; to browse)">
+  {buttons}
+</div>
+<div id="viewer"><span id="placeholder">Click a subject</span></div>
+<script>
+  const viewer = document.getElementById('viewer')
+  const search = document.getElementById('search')
+  const allButtons = () => Array.from(document.querySelectorAll('#sidebar button'))
+  const navigable = () => allButtons().filter(b => !b.classList.contains('missing') && b.style.display !== 'none')
+
+  function selectButton(btn) {{
+    if (!btn) return
+    allButtons().forEach(b => b.classList.remove('active'))
+    btn.classList.add('active')
+    btn.scrollIntoView({{ block: 'nearest' }})
+    viewer.innerHTML = ''
+    const img = document.createElement('img')
+    img.src = btn.dataset.gif
+    viewer.appendChild(img)
+  }}
+
+  allButtons().forEach(btn => {{
+    if (!btn.classList.contains('missing')) btn.addEventListener('click', () => selectButton(btn))
+  }})
+
+  search.addEventListener('input', () => {{
+    const q = search.value.toLowerCase()
+    allButtons().forEach(b => {{ b.style.display = b.textContent.toLowerCase().includes(q) ? '' : 'none' }})
+  }})
+
+  document.addEventListener('keydown', e => {{
+    if (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') return
+    e.preventDefault()
+    const list = navigable()
+    if (!list.length) return
+    const curIdx = list.findIndex(b => b.classList.contains('active'))
+    const nextIdx = curIdx < 0 ? 0
+      : e.key === 'ArrowDown' ? Math.min(curIdx + 1, list.length - 1)
+      : Math.max(curIdx - 1, 0)
+    selectButton(list[nextIdx])
+  }})
+
+  selectButton(navigable()[0])
+</script>
+</body></html>
+"""
+    path = os.path.join(out_dir, 'index.html')
+    with open(path, 'w') as f:
+        f.write(html)
+    return path
+
+
+# ── interactive mode ──────────────────────────────────────────────────────────
+
+def run_interactive(subjects_dir, subj_id):
+    """Opens two real, interactive mrview windows side by side, at the same
+    time, for one subject — T1-space (T1w_proc + flair_proc + mri/
+    streamlines) and DWI-space (dti/fa + the dwi/-warped streamlines). Unlike
+    capture_pair(), these run directly against the real display (no xvfb) and
+    carry none of the capture-only flags, so each is a normal, fully
+    interactive session; the script exits once both windows are closed (in
+    whichever order). Kept as two separate mrview processes rather than one
+    combined session because T1/FLAIR and FA live in different physical
+    spaces (that's why the dwi/-warped streamlines exist as a separate file)
+    — mrview has no way to apply the nonlinear warp between them, so loading
+    both into one window would show them misaligned. That's purely a
+    same-window-vs-not issue though, not a timing one, so there's no reason
+    the two processes can't run concurrently."""
+    print(subj_id)
+    files = discover_subject_files(subjects_dir, subj_id)
+    if not files['t1'] or not (files['stream_t1']['lh'] or files['stream_t1']['rh']):
+        sys.exit('\nMissing T1w_proc and/or mri/ streamlines — nothing to open.')
+
+    t1_volumes = [files['t1']]
+    flair = find_flair_volume(os.path.join(subjects_dir, subj_id))
+    print(f'  {"found  " if flair else "MISSING"}  flair_proc               {flair or ""}')
+    if flair:
+        t1_volumes.append(flair)
+
+    procs = [subprocess.Popen(_mrview_base_cmd(t1_volumes, files['stream_t1']) + ['-mode', '2'])]
+    if files['has_dwi_dir'] and files['fa'] and (files['stream_fa']['lh'] or files['stream_fa']['rh']):
+        procs.append(subprocess.Popen(_mrview_base_cmd([files['fa']], files['stream_fa']) + ['-mode', '2']))
+        print('\nOpened T1-space and DWI-space sessions — close both to finish.')
+    else:
+        print('\nNo DWI-space data available — opened T1-space session only.')
+
+    for p in procs:
+        p.wait()
 
 
 # ── main ──────────────────────────────────────────────────────────────────────
@@ -165,7 +312,16 @@ def main():
     ap.add_argument('subj_ids', nargs='*',
                      help='Subject IDs to QC; default: every sub-* directory in subjects_dir')
     ap.add_argument('--out-dir', help='Output directory for GIFs (default: <subjects_dir>/QC)')
+    ap.add_argument('--interactive', action='store_true',
+                     help='Open live mrview sessions (T1-space, then DWI-space) for one subject '
+                          'instead of building a GIF. Requires exactly one subject ID.')
     args = ap.parse_args()
+
+    if args.interactive:
+        if len(args.subj_ids) != 1:
+            sys.exit('--interactive requires exactly one subject ID.')
+        run_interactive(args.subjects_dir, args.subj_ids[0])
+        return
 
     subj_ids = args.subj_ids or sorted(
         d for d in os.listdir(args.subjects_dir)
@@ -183,8 +339,14 @@ def main():
             files = discover_subject_files(args.subjects_dir, subj_id)
 
             t1_with, t1_without = capture_pair(files['t1'], files['stream_t1'])
-            seq_t1 = (crossfade_sequence(t1_with, t1_without) if t1_with
-                      else placeholder_sequence('T1w_proc / mri/ streamlines', 2 * HOLD_FRAMES))
+            if not t1_with:
+                # T1w_proc + its streamlines are the one required piece (dwi/ is
+                # optional, see has_dwi_dir below) — without them there's nothing
+                # worth a GIF for, so skip this subject rather than writing an
+                # all-placeholder file. It then shows up as "missing" in the index.
+                print('  [SKIP] missing T1w_proc and/or mri/ streamlines')
+                continue
+            seq_t1 = crossfade_sequence(t1_with, t1_without)
 
             if files['has_dwi_dir']:
                 fa_with, fa_without = capture_pair(files['fa'], files['stream_fa'])
@@ -198,6 +360,9 @@ def main():
             print(f'  -> {out_path}')
         except Exception as exc:   # noqa: BLE001 — one bad subject shouldn't kill the batch
             print(f'  [ERROR] {subj_id}: {exc}')
+
+    index_path = build_index(out_dir, args.subjects_dir)
+    print(f'\nIndex: {index_path}')
 
 
 if __name__ == '__main__':
