@@ -178,20 +178,27 @@ def build_index(out_dir, subjects_dir):
     """A left sidebar of subject buttons + a right pane showing the clicked
     subject's GIF. Lists every sub-* directory under subjects_dir (not just
     ones processed this run, so it stays correct across incremental runs);
-    any subject with no <id>_qc.gif in out_dir — missing input files, or a
-    capture that errored out — is listed but shown in red and unclickable."""
+    any subject with no <id>_qc.gif in out_dir is listed but unclickable —
+    in red if that's unexplained (missing input files or a capture that
+    errored out), or in green if the subject's own folder contains a file
+    named "skip" (an intentional, explicit opt-out)."""
     all_subj = sorted(
         d for d in os.listdir(subjects_dir)
         if d.startswith('sub-') and os.path.isdir(os.path.join(subjects_dir, d))
     )
     have_gif = {f[:-len('_qc.gif')] for f in os.listdir(out_dir) if f.endswith('_qc.gif')}
-    n_missing = sum(1 for s in all_subj if s not in have_gif)
+    is_skipped = lambda s: os.path.isfile(os.path.join(subjects_dir, s, 'skip'))
+    n_skipped = sum(1 for s in all_subj if s not in have_gif and is_skipped(s))
+    n_missing = sum(1 for s in all_subj if s not in have_gif) - n_skipped
 
-    buttons = '\n'.join(
-        f'<button data-gif="{s}_qc.gif">{s}</button>' if s in have_gif
-        else f'<button class="missing" disabled title="no QC data (missing input files or capture failed)">{s}</button>'
-        for s in all_subj
-    )
+    def button_html(s):
+        if s in have_gif:
+            return f'<button data-gif="{s}_qc.gif">{s}</button>'
+        if is_skipped(s):
+            return f'<button class="skipped" disabled title="skipped (has a \'skip\' file)">{s}</button>'
+        return f'<button class="missing" disabled title="no QC data (missing input files or capture failed)">{s}</button>'
+
+    buttons = '\n'.join(button_html(s) for s in all_subj)
     html = f"""<!DOCTYPE html>
 <html><head><meta charset="utf-8"><title>Cortical QC</title>
 <style>
@@ -205,6 +212,8 @@ def build_index(out_dir, subjects_dir):
   button.active {{ background: #e9c46a; color: #111; font-weight: 600; }}
   button.missing {{ color: #e06c5e; cursor: not-allowed; }}
   button.missing:hover {{ background: none; }}
+  button.skipped {{ color: #6ec06c; cursor: not-allowed; }}
+  button.skipped:hover {{ background: none; }}
   #search {{ display: block; width: 100%; box-sizing: border-box; padding: 6px 8px; margin: 0 0 8px;
              background: #111; border: 1px solid #333; border-radius: 4px; color: #ddd; font-size: 13px; }}
   #viewer {{ flex: 1; display: flex; align-items: center; justify-content: center; padding: 16px; overflow: auto; }}
@@ -213,7 +222,7 @@ def build_index(out_dir, subjects_dir):
 </style></head>
 <body>
 <div id="sidebar">
-  <h1>{len(all_subj)} subject(s){f', {n_missing} missing QC data' if n_missing else ''}</h1>
+  <h1>{len(all_subj)} subject(s){f', {n_missing} missing QC data' if n_missing else ''}{f', {n_skipped} skipped' if n_skipped else ''}</h1>
   <input id="search" type="text" placeholder="Search subject ID... (&uarr;/&darr; to browse)">
   {buttons}
 </div>
@@ -222,7 +231,7 @@ def build_index(out_dir, subjects_dir):
   const viewer = document.getElementById('viewer')
   const search = document.getElementById('search')
   const allButtons = () => Array.from(document.querySelectorAll('#sidebar button'))
-  const navigable = () => allButtons().filter(b => !b.classList.contains('missing') && b.style.display !== 'none')
+  const navigable = () => allButtons().filter(b => !b.disabled && b.style.display !== 'none')
 
   function selectButton(btn) {{
     if (!btn) return
@@ -236,7 +245,7 @@ def build_index(out_dir, subjects_dir):
   }}
 
   allButtons().forEach(btn => {{
-    if (!btn.classList.contains('missing')) btn.addEventListener('click', () => selectButton(btn))
+    if (!btn.disabled) btn.addEventListener('click', () => selectButton(btn))
   }})
 
   search.addEventListener('input', () => {{
@@ -315,6 +324,9 @@ def main():
     ap.add_argument('--interactive', action='store_true',
                      help='Open live mrview sessions (T1-space, then DWI-space) for one subject '
                           'instead of building a GIF. Requires exactly one subject ID.')
+    ap.add_argument('--skip-gif-creation', action='store_true',
+                     help="Don't (re)capture any GIFs — just rebuild index.html from whatever "
+                          '<id>_qc.gif files are already in --out-dir. Any subject IDs given are ignored.')
     args = ap.parse_args()
 
     if args.interactive:
@@ -323,15 +335,20 @@ def main():
         run_interactive(args.subjects_dir, args.subj_ids[0])
         return
 
+    out_dir = args.out_dir or os.path.join(args.subjects_dir, 'QC')
+    os.makedirs(out_dir, exist_ok=True)
+
+    if args.skip_gif_creation:
+        index_path = build_index(out_dir, args.subjects_dir)
+        print(f'Index: {index_path}')
+        return
+
     subj_ids = args.subj_ids or sorted(
         d for d in os.listdir(args.subjects_dir)
         if d.startswith('sub-') and os.path.isdir(os.path.join(args.subjects_dir, d))
     )
     if not subj_ids:
         sys.exit(f'No sub-* subjects found under {args.subjects_dir}')
-
-    out_dir = args.out_dir or os.path.join(args.subjects_dir, 'QC')
-    os.makedirs(out_dir, exist_ok=True)
 
     for i, subj_id in enumerate(subj_ids, 1):
         print(f'\n[{i}/{len(subj_ids)}] {subj_id}')
