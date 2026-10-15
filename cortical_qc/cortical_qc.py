@@ -16,11 +16,14 @@ into one final animated GIF per subject.
 Usage:
     python cortical_qc.py <subjects_dir> [subj_id ...] [--out-dir DIR]
 """
-import os, sys, glob, argparse, subprocess, tempfile, shutil
+import os, sys, glob, json, argparse, subprocess, tempfile, shutil
 from PIL import Image, ImageDraw
 
+_REPO_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'cortical_browser'))
+sys.path.insert(0, _REPO_DIR)
 from cortical_browser import find_streamline_files, find_dwi_files
+from cortical_config import load_conf
 
 CAPTURE_SIZE = (900, 700)   # pinned via mrview's -size, so frames always combine cleanly
 HOLD_FRAMES  = 6            # frames held at each extreme (with / without streamlines)
@@ -42,28 +45,47 @@ def find_flair_volume(subj_dir):
     return p if os.path.isfile(p) else None
 
 
-def discover_subject_files(subjects_dir, subj_id):
-    subj_dir = os.path.join(subjects_dir, subj_id)
-    dwi_files = find_dwi_files(subj_dir)          # fa, lh, rh (dwi-space streamlines)
-    stream_t1 = find_streamline_files(subj_dir)    # lh, rh (T1-space streamlines, mri/)
+def dwi_metrics_configured(subjects_dir):
+    """True if corticalDWI_params.conf's browser_metrics — repo defaults,
+    overridden by subjects_dir's own corticalDWI_params.conf if present, same
+    two-tier resolution cortical_browser_config.py uses — configures at least
+    one dwi/ metric. False means this study doesn't use DWI metrics at all,
+    so DWI-space QC is skipped outright rather than going by whether dwi/
+    folders merely happen to exist on disk. If browser_metrics isn't set in
+    either file, defaults to True (matches the pre-existing behavior of
+    always attempting DWI when the folder is there)."""
+    params, _, _, _ = load_conf(_REPO_DIR, subjects_dir)
+    raw = params.get('browser_metrics')
+    if raw is None:
+        return True
+    metrics = [m.strip() for m in raw.split(',') if m.strip()]
+    return any(m.startswith('dwi/') for m in metrics)
 
-    report = {
-        'T1w_proc':              find_structural_volume(subj_dir),
-        'dti/fa':                dwi_files.get('fa'),
-        'streamlines lh (mri/)': stream_t1.get('lh'),
-        'streamlines rh (mri/)': stream_t1.get('rh'),
-        'streamlines lh (dwi/)': dwi_files.get('lh'),
-        'streamlines rh (dwi/)': dwi_files.get('rh'),
-    }
+
+def discover_subject_files(subjects_dir, subj_id, check_dwi=True):
+    subj_dir = os.path.join(subjects_dir, subj_id)
+    dwi_files = find_dwi_files(subj_dir) if check_dwi else {}   # fa, lh, rh (dwi-space streamlines)
+    stream_t1 = find_streamline_files(subj_dir)                 # lh, rh (T1-space streamlines, mri/)
+
+    report = {'T1w_proc': find_structural_volume(subj_dir)}
+    if check_dwi:
+        report['dti/fa'] = dwi_files.get('fa')
+    report['streamlines lh (mri/)'] = stream_t1.get('lh')
+    report['streamlines rh (mri/)'] = stream_t1.get('rh')
+    if check_dwi:
+        report['streamlines lh (dwi/)'] = dwi_files.get('lh')
+        report['streamlines rh (dwi/)'] = dwi_files.get('rh')
     for label, path in report.items():
         print(f'  {"found  " if path else "MISSING"}  {label:24s} {path or ""}')
+    if not check_dwi:
+        print('  (dwi/ not configured in browser_metrics — not checked)')
 
     return {
         't1':          find_structural_volume(subj_dir),
         'stream_t1':   {'lh': stream_t1.get('lh'), 'rh': stream_t1.get('rh')},
         'fa':          dwi_files.get('fa'),
         'stream_fa':   {'lh': dwi_files.get('lh'), 'rh': dwi_files.get('rh')},
-        'has_dwi_dir': os.path.isdir(os.path.join(subj_dir, 'dwi')),
+        'has_dwi_dir': check_dwi and os.path.isdir(os.path.join(subj_dir, 'dwi')),
     }
 
 
@@ -181,7 +203,13 @@ def build_index(out_dir, subjects_dir):
     any subject with no <id>_qc.gif in out_dir is listed but unclickable —
     in red if that's unexplained (missing input files or a capture that
     errored out), or in green if the subject's own folder contains a file
-    named "skip" (an intentional, explicit opt-out)."""
+    named "skip" (an intentional, explicit opt-out). A subject with a GIF
+    also gets a mri/ check-or-cross mark (and a dwi/ one too, unless the
+    study has no dwi/ metric configured at all — see dwi_metrics_configured),
+    read from the <id>_qc_status.json written alongside its GIF, so a
+    DWI-space capture that silently fell back to a placeholder is visible
+    from the sidebar without opening every GIF."""
+    show_dwi_col = dwi_metrics_configured(subjects_dir)
     all_subj = sorted(
         d for d in os.listdir(subjects_dir)
         if d.startswith('sub-') and os.path.isdir(os.path.join(subjects_dir, d))
@@ -191,14 +219,58 @@ def build_index(out_dir, subjects_dir):
     n_skipped = sum(1 for s in all_subj if s not in have_gif and is_skipped(s))
     n_missing = sum(1 for s in all_subj if s not in have_gif) - n_skipped
 
+    def read_status(s):
+        """None (not {}) when there's no status file to read — distinct from
+        a status file that explicitly recorded a False, so a gif that
+        predates this status-file feature doesn't get misread as a failure."""
+        p = os.path.join(out_dir, f'{s}_qc_status.json')
+        if not os.path.isfile(p):
+            return None
+        try:
+            with open(p) as f:
+                return json.load(f)
+        except (OSError, json.JSONDecodeError):
+            return None
+
+    def mark(state, na=False):
+        # state: True/False/None. None splits into two distinct cases:
+        #   na=True  -> a status file exists but explicitly has no dwi result
+        #               (no dwi/ data for this subject — legitimately N/A)
+        #   na=False -> no status file at all (e.g. a gif predating this
+        #               feature) — genuinely unknown, not the same claim.
+        if state is True:
+            return '<span class="mark ok">✓</span>'
+        if state is False:
+            return '<span class="mark bad">✗</span>'
+        if na:
+            return '<span class="mark na" title="not applicable (no dwi/ data for this subject)">–</span>'
+        return ('<span class="mark unknown" title="unknown (no status recorded — rerun without '
+                '--skip-gif-creation)">?</span>')
+
     def button_html(s):
         if s in have_gif:
-            return f'<button data-gif="{s}_qc.gif">{s}</button>'
+            status = read_status(s)
+            # mri: a gif can't exist unless its T1 capture succeeded (main()
+            # only ever writes one after that), so this is True by
+            # construction even when there's no status file (or key) to
+            # confirm it — unlike dwi, which genuinely can be unknown or N/A.
+            mri_ok = True if status is None else status.get('mri', True)
+            marks = mark(mri_ok)
+            if show_dwi_col:
+                marks += (mark(None) if status is None else mark(status.get('dwi'), na=True))
+            return (f'<button data-gif="{s}_qc.gif">'
+                    f'<span class="row"><span class="name">{s}</span>'
+                    f'<span class="marks">{marks}</span></span></button>')
         if is_skipped(s):
             return f'<button class="skipped" disabled title="skipped (has a \'skip\' file)">{s}</button>'
         return f'<button class="missing" disabled title="no QC data (missing input files or capture failed)">{s}</button>'
 
     buttons = '\n'.join(button_html(s) for s in all_subj)
+    col_headers = ''
+    if have_gif:
+        dwi_label = '<span class="mark-label">dwi</span>' if show_dwi_col else ''
+        col_headers = (f'<div class="row header-row"><span class="name"></span>'
+                        f'<span class="marks"><span class="mark-label">mri</span>{dwi_label}</span></div>')
     html = f"""<!DOCTYPE html>
 <html><head><meta charset="utf-8"><title>Cortical QC</title>
 <style>
@@ -214,6 +286,16 @@ def build_index(out_dir, subjects_dir):
   button.missing:hover {{ background: none; }}
   button.skipped {{ color: #6ec06c; cursor: not-allowed; }}
   button.skipped:hover {{ background: none; }}
+  .row {{ display: flex; align-items: center; justify-content: space-between; gap: 8px; }}
+  .name {{ overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }}
+  .marks {{ display: flex; flex: none; gap: 3px; }}
+  .mark {{ font-size: 11px; }}
+  .mark.ok {{ color: #6ec06c; }}
+  .mark.bad {{ color: #e06c5e; }}
+  .mark.unknown {{ color: #666; }}
+  .mark.na {{ color: #666; }}
+  .header-row {{ padding: 0 8px 4px; }}
+  .mark-label {{ font-size: 10px; color: #888; text-transform: uppercase; letter-spacing: .03em; }}
   #search {{ display: block; width: 100%; box-sizing: border-box; padding: 6px 8px; margin: 0 0 8px;
              background: #111; border: 1px solid #333; border-radius: 4px; color: #ddd; font-size: 13px; }}
   #viewer {{ flex: 1; display: flex; align-items: center; justify-content: center; padding: 16px; overflow: auto; }}
@@ -224,6 +306,7 @@ def build_index(out_dir, subjects_dir):
 <div id="sidebar">
   <h1>{len(all_subj)} subject(s){f', {n_missing} missing QC data' if n_missing else ''}{f', {n_skipped} skipped' if n_skipped else ''}</h1>
   <input id="search" type="text" placeholder="Search subject ID... (&uarr;/&darr; to browse)">
+  {col_headers}
   {buttons}
 </div>
 <div id="viewer"><span id="placeholder">Click a subject</span></div>
@@ -292,7 +375,7 @@ def run_interactive(subjects_dir, subj_id):
     same-window-vs-not issue though, not a timing one, so there's no reason
     the two processes can't run concurrently."""
     print(subj_id)
-    files = discover_subject_files(subjects_dir, subj_id)
+    files = discover_subject_files(subjects_dir, subj_id, check_dwi=dwi_metrics_configured(subjects_dir))
     if not files['t1'] or not (files['stream_t1']['lh'] or files['stream_t1']['rh']):
         sys.exit('\nMissing T1w_proc and/or mri/ streamlines — nothing to open.')
 
@@ -350,10 +433,14 @@ def main():
     if not subj_ids:
         sys.exit(f'No sub-* subjects found under {args.subjects_dir}')
 
+    check_dwi = dwi_metrics_configured(args.subjects_dir)
+    if not check_dwi:
+        print('No dwi/ metric configured in browser_metrics — DWI-space QC skipped for all subjects.')
+
     for i, subj_id in enumerate(subj_ids, 1):
         print(f'\n[{i}/{len(subj_ids)}] {subj_id}')
         try:
-            files = discover_subject_files(args.subjects_dir, subj_id)
+            files = discover_subject_files(args.subjects_dir, subj_id, check_dwi=check_dwi)
 
             t1_with, t1_without = capture_pair(files['t1'], files['stream_t1'])
             if not t1_with:
@@ -365,15 +452,23 @@ def main():
                 continue
             seq_t1 = crossfade_sequence(t1_with, t1_without)
 
+            dwi_status = None   # None = not applicable (not configured, or no dwi/ dir)
             if files['has_dwi_dir']:
                 fa_with, fa_without = capture_pair(files['fa'], files['stream_fa'])
-                seq_fa = (crossfade_sequence(fa_with, fa_without) if fa_with
-                          else placeholder_sequence('dti/fa / dwi/ streamlines', 2 * HOLD_FRAMES))
+                if fa_with:
+                    seq_fa = crossfade_sequence(fa_with, fa_without)
+                    dwi_status = True
+                else:
+                    seq_fa = placeholder_sequence('dti/fa / dwi/ streamlines', 2 * HOLD_FRAMES)
+                    dwi_status = False
             else:
-                seq_fa = None   # no dwi/ directory at all: drop the second column entirely
+                seq_fa = None   # not configured, or no dwi/ directory at all: drop the second row entirely
 
             out_path = os.path.join(out_dir, f'{subj_id}_qc.gif')
             build_combined_gif(seq_t1, seq_fa, out_path)
+            status_path = os.path.join(out_dir, f'{subj_id}_qc_status.json')
+            with open(status_path, 'w') as f:
+                json.dump({'mri': True, 'dwi': dwi_status}, f)
             print(f'  -> {out_path}')
         except Exception as exc:   # noqa: BLE001 — one bad subject shouldn't kill the batch
             print(f'  [ERROR] {subj_id}: {exc}')
