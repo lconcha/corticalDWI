@@ -20,8 +20,11 @@ missing (-1), fewer than MIN_N controls have a value there, or the control std
 is 0. Invalid points are excluded from the mean |z|; a vertex with no valid
 points gets NaN in the giftis.
 
-The subject must NOT be in subjects_to_average.txt (the normative data is
-left untouched, so it would be compared against itself).
+Runs for every subject, including those in subjects_to_average.txt — a
+cohort subject's own value is part of the mean/std it's compared against, so
+its z-scores are biased toward 0 (not a true held-out deviation), but they
+are still computed, as a sanity check that the normative stats behave as
+expected on the data that built them.
 
 Usage:
     python cortical_zscore_tsf.py <subjid> [subjects_dir] [--min-n 4]
@@ -175,11 +178,6 @@ def main():
         subj_dir = os.path.join(args.subjects_dir, args.subjid)
         if not os.path.isdir(subj_dir):
             sys.exit(f'Subject directory not found: {subj_dir}')
-        subjects_file = os.path.join(args.subjects_dir, 'templates', 'subjects_to_average.txt')
-        with open(subjects_file) as f:
-            cohort = [l.strip() for l in f if l.strip()]
-        if args.subjid in cohort:
-            sys.exit(f'{args.subjid} is in {subjects_file}; z-scores are only for subjects outside the normative cohort')
         print(f'Subject : {args.subjid} ({subj_dir})')
 
     print(f'Loading normative data: {h5_path}')

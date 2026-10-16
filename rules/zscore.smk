@@ -11,9 +11,12 @@ next to the tsf:
 
 That HDF5 is not produced automatically by any subject-dependent rule (the
 cohort is chosen by hand, in templates/subjects_to_average.txt) — zscore_stats
-and zscore_tsf only enter a subject's DAG when it already exists, see
-zscore_eligible(). Subjects listed in subjects_to_average.txt are never
-z-scored: they are the normative data.
+and zscore_tsf only enter a subject's DAG once it already exists, see
+zscore_eligible(). Cohort subjects ARE z-scored too, same as everyone else —
+a cohort subject's own value is part of the mean/std it's compared against,
+so its z-scores are biased toward 0 (not a true held-out deviation), but
+seeing them land near 0 is itself a useful sanity check on the normative
+stats, see cortical_zscore_tsf.py's own docstring.
 
 There IS a rule to build it, build_normative_data below, but it is deliberately
 never an input of zscore_stats/zscore_tsf, nor of any subject's default
@@ -58,19 +61,11 @@ def _read_normative_metrics():
         return [m.decode() if isinstance(m, bytes) else m for m in h5f["metrics"][:]]
 
 
-def _read_cohort():
-    if not os.path.isfile(COHORT_FILE):
-        return set()
-    with open(COHORT_FILE) as f:
-        return {line.strip() for line in f if line.strip()}
-
-
 NORMATIVE_METRICS = _read_normative_metrics()
-NORMATIVE_COHORT = _read_cohort()
 
 
-def zscore_eligible(subject):
-    return bool(NORMATIVE_METRICS) and subject not in NORMATIVE_COHORT
+def zscore_eligible():
+    return bool(NORMATIVE_METRICS)
 
 
 def zscore_inputs(subject, tsf_files):

@@ -507,9 +507,9 @@ cortical_snakerun.py --delete-rule build_normative_data --dry-run   # preview re
 python cortical_zscore_tsf.py $subjid $SUBJECTS_DIR
 ```
 
-It only ever z‑scores a metric that both the subject and the normative data have, and it refuses to run for a subject that's *in* the cohort (a cohort subject can't be meaningfully compared against a normative distribution it's part of). A vertex/depth point with too few valid cohort values, or a zero cohort SD, is left invalid rather than divided by near‑nothing.
+It only ever z‑scores a metric that both the subject and the normative data have. It runs for every subject, including those *in* the cohort — a cohort subject's own value is part of the mean/SD it's compared against, so its z‑scores are biased toward 0 (not a true held‑out deviation), but computing them anyway is a useful sanity check that the normative stats behave as expected. A vertex/depth point with too few valid cohort values, or a zero cohort SD, is left invalid rather than divided by near‑nothing.
 
-Under Snakemake, this runs automatically as two rules — `zscore_stats` (control mean/SD/n, computed once per dataset and cached) and `zscore_tsf` (per `.tsf` file) — for every non‑cohort subject, once the normative HDF5 above exists:
+Under Snakemake, this runs automatically as two rules — `zscore_stats` (control mean/SD/n, computed once per dataset and cached) and `zscore_tsf` (per `.tsf` file) — for every subject, cohort included, once the normative HDF5 above exists:
 
 ```bash
 snakemake --cores 4 --config 'subjects=["'$subjid'"]'

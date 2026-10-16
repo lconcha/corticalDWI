@@ -218,9 +218,11 @@ def final_outputs(subject):
             + tcksample_dki_outputs(subject)
             + tcksample_noddi_outputs(subject)
         )
-    # z-scores against the normative data: only once that HDF5 exists, and
-    # never for the cohort subjects themselves (see rules/zscore.smk)
-    if zscore_eligible(subject):
+    # z-scores against the normative data: only once that HDF5 exists (see
+    # rules/zscore.smk) — including for the cohort subjects themselves, as a
+    # sanity check (their z-scores should land near 0, not because they're
+    # excluded, but because their own value pulls the mean/std toward them)
+    if zscore_eligible():
         outputs += zscore_outputs(subject, outputs)
     return outputs
 
