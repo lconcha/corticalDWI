@@ -267,35 +267,66 @@ def discover(cortical_dwi_dir, subject):
         # labels (alphanumeric only, no embedded "_"/"." within one entity).
         return re.sub(r"sub-[A-Za-z0-9]+", "{subject}", path)
 
-    rules = {}
-    current = None
-    for line in text.splitlines():
-        m = re.match(r"^rule (\S+):$", line)
-        if m:
-            current = m.group(1)
-            continue
-        if current is None:
-            continue
-        m = re.match(r"^ {4}input: (.+)$", line)
-        if m:
-            rules.setdefault(current, {})["inputs"] = [
-                generalize(p) for p in m.group(1).split(", ")
-            ]
-            continue
-        m = re.match(r"^ {4}output: (.+)$", line)
-        if m:
-            outputs = [generalize(p) for p in m.group(1).split(", ")]
-            rules.setdefault(current, {})["outputs"] = outputs
-            rules[current]["pattern"] = outputs[0]
-            continue
-        m = re.match(r"^ {4}threads: (\d+)$", line)
-        if m:
-            rules.setdefault(current, {})["threads"] = int(m.group(1))
-            continue
-        if line.strip() == "":
-            current = None
+    def parse_into(rules, dump_text):
+        """Merge the rule-X/input/output/threads blocks of one `snakemake -n
+        --forceall` dump into `rules`, in place."""
+        current = None
+        for line in dump_text.splitlines():
+            m = re.match(r"^rule (\S+):$", line)
+            if m:
+                current = m.group(1)
+                continue
+            if current is None:
+                continue
+            m = re.match(r"^ {4}input: (.+)$", line)
+            if m:
+                rules.setdefault(current, {})["inputs"] = [
+                    generalize(p) for p in m.group(1).split(", ")
+                ]
+                continue
+            m = re.match(r"^ {4}output: (.+)$", line)
+            if m:
+                outputs = [generalize(p) for p in m.group(1).split(", ")]
+                rules.setdefault(current, {})["outputs"] = outputs
+                rules[current]["pattern"] = outputs[0]
+                continue
+            m = re.match(r"^ {4}threads: (\d+)$", line)
+            if m:
+                rules.setdefault(current, {})["threads"] = int(m.group(1))
+                continue
+            if line.strip() == "":
+                current = None
 
+    rules = {}
+    parse_into(rules, text)
     rules.pop("all", None)
+
+    # A rule deliberately kept out of the default DAG (e.g.
+    # build_normative_data — triggered only by name, never pulled in by any
+    # subject's target, see rules/zscore.smk) never prints a block in the
+    # --forceall dump above, since nothing there ever reaches it. `--list`
+    # is DAG-independent (just the rule names Snakemake has parsed, however
+    # reachable), so cross-check against it and fill in anything missing
+    # with its own single-rule forceall dry-run. A rule that still can't
+    # resolve this way (needs wildcards bare-name targeting can't supply,
+    # e.g. a per-subject rule for a subject that has no raw inputs at all)
+    # is just left out, same as before this fallback existed.
+    # Only chase this fallback off a main dry-run that actually succeeded —
+    # if the discovery subject itself is unresolvable (e.g. missing raw
+    # inputs), `rules` is deliberately left empty so callers' `if not
+    # rules: sys.exit(...)` fires, rather than this fallback papering over
+    # that failure with just the handful of manual-trigger rules.
+    if result.returncode == 0:
+        list_result = subprocess.run(
+            ["snakemake", "--list"] + cmd[cmd.index("-s"):],
+            capture_output=True, text=True,
+        )
+        all_rule_names = {ln.strip() for ln in list_result.stdout.splitlines() if ln.strip()}
+        for name in sorted(all_rule_names - set(rules) - {"all"}):
+            single_cmd = [cmd[0], name] + cmd[1:]
+            single_result = subprocess.run(single_cmd, capture_output=True, text=True)
+            parse_into(rules, single_result.stdout + single_result.stderr)
+
     return rules, text
 
 
@@ -332,22 +363,79 @@ def subject_rule_status(rules, subject):
     return sorted(results)
 
 
-def group_rule_status(rules):
+def _csd_in_use(cortical_dwi_dir):
+    """Whether this study's browser_metrics (corticalDWI_params.conf) names
+    any CSD-derived metric — folder dwi/csd... covers both dwi/csd/csd_fixels
+    and dwi/csd_fixels_singletissue, see cortical_browser_config.py's own
+    METRICS parsing, reused here as the single source of truth rather than
+    re-deriving the repo/study-override + default fallback logic a second
+    time. csd_average_response only belongs in --status's group-wise section
+    when CSD is actually part of this study's pipeline, not just because the
+    rule exists in the repo."""
+    sys.path.insert(0, os.path.join(cortical_dwi_dir, "cortical_browser"))
+    from cortical_browser_config import METRICS
+    return any(m.startswith("dwi/csd") for m in METRICS)
+
+
+def _normative_paths(cortical_dwi_dir, subjects_dir):
+    """The exact paths rules/zscore.smk declares for COHORT_FILE/NORMATIVE_H5/
+    ZSCORE_STATS, computed directly here (same formula, same target_type
+    config key) rather than via Snakemake discovery — build_normative_data
+    and zscore_stats must always appear in --status's group-wise section
+    (see group_rule_status), including when COHORT_FILE doesn't exist yet
+    and a forced dry-run through either rule can't resolve at all."""
+    sys.path.insert(0, cortical_dwi_dir)
+    from cortical_config import load_conf
+    params, _, _, _ = load_conf(cortical_dwi_dir, subjects_dir)
+    target_type = params.get("target_type", "ico6_sym")
+    normative_h5 = os.path.join(subjects_dir, "templates", "normative", f"{target_type}_multivariate.h5")
+    zscore_stats = normative_h5[: -len(".h5")] + "_zscore_stats.npz"
+    cohort_file = os.path.join(subjects_dir, "templates", "subjects_to_average.txt")
+    return cohort_file, normative_h5, zscore_stats
+
+
+def group_rule_status(rules, cortical_dwi_dir, subjects_dir):
     """One (rule_name, n_existing, n_total) tuple per *group-wise* rule —
     one with declared outputs but no {subject} in any of them, e.g.
     csd_average_response (a group-level CSD response averaged across
     subjects, see rules/csd.smk). Not tied to any one subject, so it doesn't
     belong in --status's per-subject grid — reported in its own section
-    instead. Currently just csd_average_response, but written generically
-    so any future group-wise rule shows up here automatically."""
+    instead, with two conditionals on top of the generic "any group-wise
+    rule shows up automatically" behavior:
+      - csd_average_response is left out entirely when this study's
+        browser_metrics has no CSD metric (_csd_in_use()) — CSD rules exist
+        in the repo, but aren't "playing" for a study that never uses them.
+      - build_normative_data/zscore_stats are always included — even when
+        discover() couldn't resolve them at all (cohort file missing, see
+        _normative_paths()) — rather than silently vanishing from the
+        listing; a caller checks the returned `warning` for that case.
+
+    Returns (results, warning) — warning is None unless the cohort file is
+    missing."""
     results = []
     for name, info in rules.items():
+        if name in ("build_normative_data", "zscore_stats"):
+            continue  # always handled below, regardless of discovery
         outs = info.get("outputs", [])
         if not outs or subject_scoped(outs):
             continue
+        if name == "csd_average_response" and not _csd_in_use(cortical_dwi_dir):
+            continue
         n_existing = sum(1 for p in outs if os.path.exists(p))
         results.append((name, n_existing, len(outs)))
-    return sorted(results)
+
+    cohort_file, normative_h5, zscore_stats_path = _normative_paths(cortical_dwi_dir, subjects_dir)
+    results.append(("build_normative_data", int(os.path.exists(normative_h5)), 1))
+    results.append(("zscore_stats", int(os.path.exists(zscore_stats_path)), 1))
+
+    warning = None
+    if not os.path.isfile(cohort_file):
+        warning = (
+            f"{cohort_file} does not exist — build_normative_data has no "
+            "cohort to build from, so zscore_stats/zscore_tsf have no "
+            "normative data to compare against either."
+        )
+    return sorted(results), warning
 
 
 def compute_rule_deps(rules):
@@ -422,7 +510,7 @@ def rule_dependency_order(rules):
     return order
 
 
-def print_status_table(rules, subjects_dir, subjects):
+def print_status_table(rules, cortical_dwi_dir, subjects_dir, subjects):
     """cortical_status.sh-style table: one row per subject, one column per
     subject-scoped rule. Reuses a single `rules` dict (one snakemake dry-run,
     already paid for by the caller) against every subject's real files —
@@ -479,7 +567,7 @@ def print_status_table(rules, subjects_dir, subjects):
         n_complete = rule_full_counts[name]
         print(f"  {h}. {name:<{name_w}}{n_complete:>{count_w}}/{n_subjects_counted}")
 
-    group_status = group_rule_status(rules)
+    group_status, group_warning = group_rule_status(rules, cortical_dwi_dir, subjects_dir)
     if group_status:
         print("-" * (subj_w + col_w * len(names)))
         print("Group-wise rules (not tied to any one subject):")
@@ -492,6 +580,8 @@ def print_status_table(rules, subjects_dir, subjects):
             else:
                 symbol, color = "!", YELLOW
             print(f"  {color}{symbol}{NC} {name:<{name_w}} {n_existing}/{n_total}")
+        if group_warning:
+            print(f"  {BOLD_YELLOW}WARNING: {group_warning}{NC}")
 
     print("-" * (subj_w + col_w * len(names)))
     n_total_cells = len(subjects) * len(names)
@@ -712,7 +802,7 @@ def main():
         rules, text = discover(cortical_dwi_dir, discovery_subject)
         if not rules:
             sys.exit(f"Dry-run against '{discovery_subject}' didn't resolve cleanly:\n\n{text}")
-        print_status_table(rules, subjects_dir, subjects)
+        print_status_table(rules, cortical_dwi_dir, subjects_dir, subjects)
         return
 
     if "--subject-status" in argv:

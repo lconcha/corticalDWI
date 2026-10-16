@@ -9,12 +9,28 @@ next to the tsf:
     <metric>_zscore_absmean.func.gii    mean |z| per vertex
     <metric>_zscore_abssum.func.gii     sum  |z| per vertex
 
-That HDF5 is NOT produced by any rule here (the cohort is chosen by hand, in
-templates/subjects_to_average.txt), so these rules only enter a subject's DAG
-when it exists — see zscore_eligible(). Subjects listed in
-subjects_to_average.txt are never z-scored: they are the normative data.
+That HDF5 is not produced automatically by any subject-dependent rule (the
+cohort is chosen by hand, in templates/subjects_to_average.txt) — zscore_stats
+and zscore_tsf only enter a subject's DAG when it already exists, see
+zscore_eligible(). Subjects listed in subjects_to_average.txt are never
+z-scored: they are the normative data.
 
-Two rules:
+There IS a rule to build it, build_normative_data below, but it is deliberately
+never an input of zscore_stats/zscore_tsf, nor of any subject's default
+target — it must be triggered by name (`cortical_snakerun.py
+build_normative_data` or `snakemake build_normative_data`). Wiring it in
+automatically would mean the normative baseline (and therefore everyone's
+z-scores) silently rebuilds and shifts whenever some unrelated subject's .tsf
+output happens to change, instead of only when a human deliberately decides
+the cohort or its data should change.
+
+Three rules:
+  build_normative_data once per dataset, by hand: builds the cohort HDF5
+                itself from templates/subjects_to_average.txt. Re-run whenever
+                browser_metrics, target_type, or that subject list changes —
+                its declared input is just the cohort list file, not every
+                cohort subject's .tsf files, so Snakemake has no way to notice
+                a changed/added .tsf on its own and won't rebuild for you.
   zscore_stats  once per dataset: control mean/SD/n per vertex+depth, cached
                 beside the HDF5. A rule of its own so parallel subject jobs
                 never race to build it, and so it is rebuilt automatically
@@ -79,6 +95,22 @@ def zscore_outputs(subject, tsf_files):
         base = path[: -len(".tsf")]
         outputs += [f"{base}_zscore.tsf", f"{base}_zscore_absmean.func.gii", f"{base}_zscore_abssum.func.gii"]
     return outputs
+
+
+rule build_normative_data:
+    # Convenience wrapper, not a dependency link — see module docstring above
+    # for why zscore_stats/zscore_tsf must never depend on this. COHORT_FILE
+    # as the only declared input is deliberate too: it makes Snakemake rerun
+    # this when the cohort list is edited, without pretending to track every
+    # cohort subject's .tsf files (that tracking would just invite the same
+    # silent-auto-rebuild problem the module docstring warns against).
+    input:
+        COHORT_FILE,
+    output:
+        NORMATIVE_H5,
+    threads: config["python_threads"]
+    shell:
+        "cortical_create_normative_data_from_tsf.py {SUBJECTS_DIR}"
 
 
 rule zscore_stats:

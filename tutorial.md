@@ -492,6 +492,13 @@ python cortical_create_normative_data_from_tsf.py $SUBJECTS_DIR
 
 This reads each cohort subject's `.tsf` files for every metric in `browser_metrics` and stacks them into `$SUBJECTS_DIR/templates/normative/<target_type>_multivariate.h5`. Re‑run it whenever `browser_metrics`, `target_type`, or the cohort list changes. See the "Pre‑computing normative data" section of [cortical_browser_manual.md](./cortical_browser_manual.md) for the full detail.
 
+The same call is also available as a Snakemake rule, `build_normative_data` — a convenience wrapper only, never a dependency of `zscore_stats`/`zscore_tsf` or any subject's default target (the cohort is a deliberate human choice, not something that should rebuild itself off some unrelated subject's output — see `rules/zscore.smk`'s module docstring):
+
+```bash
+cortical_snakerun.py build_normative_data        # or: snakemake build_normative_data
+cortical_snakerun.py --delete-rule build_normative_data --dry-run   # preview removing the HDF5
+```
+
 ## Z-scoring a subject against the normative data
 
 `cortical_zscore_tsf.py` compares one subject's `.tsf` files, metric by metric, against the normative data above, and writes the result next to each input file: a `_zscore.tsf` with a z‑score per streamline point, and two per‑vertex `.func.gii` files (mean and sum of `|z|` along each streamline).

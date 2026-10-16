@@ -137,6 +137,13 @@ python cortical_create_normative_data_from_tsf.py <subjects_dir>
 SUBJECTS_DIR=/path/to/subjects  python cortical_create_normative_data_from_tsf.py
 ```
 
+Under Snakemake, the same call is available as a rule you trigger by name —
+`cortical_snakerun.py build_normative_data` or `snakemake build_normative_data`
+— so `--delete-rule build_normative_data` / `--status` pick it up too. It is
+**not** wired as a dependency of anything else in the pipeline (see
+`rules/zscore.smk`'s module docstring): the cohort is a deliberate human
+choice, so this only ever runs when you ask for it by name.
+
 **Inputs**
 - `<subjects_dir>/templates/subjects_to_average.txt` — the cohort: one subject ID per line.
 - `$SUBJECTS_DIR/corticalDWI_params.conf` — for `browser_metrics`.
