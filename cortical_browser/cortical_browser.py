@@ -696,12 +696,27 @@ def make_handler(html_bytes, file_map, overlay_arrays, materialized, out_dir,
             if path == '/static/main.js':
                 self._reply(200, 'text/javascript; charset=utf-8', main_js_bytes)
                 return
+
             if path == '/static/dwi.js':
                 if dwi_js_bytes:
                     self._reply(200, 'text/javascript; charset=utf-8', dwi_js_bytes)
                 else:
                     self._reply(404, 'text/plain', b'DWI space not available for this subject\n')
                 return
+
+            if path == '/static/icon_CB.png':
+                logo_path = os.path.join(
+                    os.path.dirname(os.path.dirname(__file__)),
+                    'images',
+                    'icon_CB.png'
+                )
+                try:
+                    with open(logo_path, 'rb') as fh:
+                        self._reply(200, 'image/png', fh.read())
+                except FileNotFoundError:
+                    self._reply(404, 'text/plain', b'icon_CB.png not found\n')
+                return
+
             if path == '/mahal':
                 self._serve_mahal()
                 return

@@ -30,6 +30,17 @@ body {
 .ctl-row { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; }
 #sidebar select { max-width: 100%; }
 .apptitle { font-weight: bold; color: var(--accent-yellow); font-size: 12px; letter-spacing: 0.5px; white-space: nowrap; }
+.app-logo {
+  display: flex;
+  align-items: center;
+  height: 32px;
+}
+
+.app-logo img {
+  height: 32px;
+  width: auto;
+  display: block;
+}
 .space { color: #999; font-size: 10px; white-space: nowrap; }
 .subj { font-weight: bold; color: #f0f0f0; font-size: 12px; white-space: nowrap; }
 .glab { color: #d1d1d1; font-size: 10px; white-space: nowrap; }
@@ -156,7 +167,9 @@ canvas.nv-canvas { display: block; width: 100% !important; height: 100% !importa
 <body>
 
 <aside id="sidebar">
-  <div class="apptitle">CORTICAL BROWSER</div>
+  <div class="app-logo">
+    <img src="/static/icon_CB.png" alt="Cortical Browser">
+  </div>
   <div class="space">T1 space</div>
   <div class="subj">__SUBJ_ID__</div>
   <button class="cbtn" id="openDwiBtn" title="Open the FA map in DWI space in a new tab, with the DWI-space streamlines overlaid. The crosshair there follows the vertex/depth selected here.">Open DWI space</button>
