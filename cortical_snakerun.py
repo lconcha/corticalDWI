@@ -269,7 +269,19 @@ def discover(cortical_dwi_dir, subject):
 
     def parse_into(rules, dump_text):
         """Merge the rule-X/input/output/threads blocks of one `snakemake -n
-        --forceall` dump into `rules`, in place."""
+        --forceall` dump into `rules`, in place.
+
+        A wildcard-heavy rule (e.g. zscore_tsf, wildcarded on subdir/hemi/
+        metric as well as subject) prints one "rule X:" block per resolved
+        instance — 8 separate blocks for one subject with flair, not 1. Each
+        block's inputs/outputs are merged (union, deduped) into the same
+        rules[name] entry rather than the last block overwriting all the
+        earlier ones, so a caller that reports on rules[name]["outputs"]
+        (subject_rule_status, subject_outputs, group_rule_status) sees every
+        instance's files, not just whichever one happened to print last.
+        `pattern` (used only to build a single --rule-name target) keeps its
+        pre-existing last-block-wins behavior — unrelated to that reporting
+        path and out of scope here."""
         current = None
         for line in dump_text.splitlines():
             m = re.match(r"^rule (\S+):$", line)
@@ -280,15 +292,16 @@ def discover(cortical_dwi_dir, subject):
                 continue
             m = re.match(r"^ {4}input: (.+)$", line)
             if m:
-                rules.setdefault(current, {})["inputs"] = [
-                    generalize(p) for p in m.group(1).split(", ")
-                ]
+                info = rules.setdefault(current, {})
+                inputs = [generalize(p) for p in m.group(1).split(", ")]
+                info["inputs"] = sorted(set(info.get("inputs", [])) | set(inputs))
                 continue
             m = re.match(r"^ {4}output: (.+)$", line)
             if m:
+                info = rules.setdefault(current, {})
                 outputs = [generalize(p) for p in m.group(1).split(", ")]
-                rules.setdefault(current, {})["outputs"] = outputs
-                rules[current]["pattern"] = outputs[0]
+                info["outputs"] = sorted(set(info.get("outputs", [])) | set(outputs))
+                info["pattern"] = outputs[0]
                 continue
             m = re.match(r"^ {4}threads: (\d+)$", line)
             if m:
@@ -967,16 +980,28 @@ def main():
         missing_subject = []
         no_subject_needed = []
         for name in selected:
-            pattern = rules[name]["pattern"]
-            needs_subject = "{subject}" in pattern
+            # Every output this rule declares, not just rules[name]["pattern"]
+            # (its first/last-seen output alone). For a rule with a single
+            # invocation per subject (e.g. tcksample_mri_t1, one job writing
+            # several files) any one output works as a target — Snakemake
+            # pulls in the whole job regardless. But a wildcard-heavy rule
+            # like zscore_tsf runs as several INDEPENDENT jobs per subject
+            # (one per metric/hemi instance), each with its own outputs —
+            # targeting only one job's output silently leaves the other
+            # instances unbuilt. Targeting every declared output (now merged
+            # across all instances by discover()'s parse_into) covers every
+            # instance; redundant targets belonging to the same job just
+            # resolve to that one job, so this is never wasted work.
+            patterns = rules[name].get("outputs") or [rules[name]["pattern"]]
+            needs_subject = any("{subject}" in p for p in patterns)
             if needs_subject and all_subjects_flag:
-                targets += [pattern.format(subject=s) for s in all_subjects_list]
+                targets += [p.format(subject=s) for p in patterns for s in all_subjects_list]
             elif needs_subject and subject:
-                targets.append(pattern.format(subject=subject))
+                targets += [p.format(subject=subject) for p in patterns]
             elif needs_subject:
                 missing_subject.append(name)
             else:
-                targets.append(pattern)
+                targets += patterns
                 if subject or all_subjects_flag:
                     no_subject_needed.append(name)
 
