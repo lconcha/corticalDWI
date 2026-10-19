@@ -7,6 +7,10 @@ hardcodes 'ico6_sym' in its output filenames regardless of config, and
 cortical_compute_streamlines.sh requires target_type-suffixed surfaces as input — the two
 are only consistent when target_type == ico6_sym, which is also the repo default.
 Wiring up fsLR-32k/fsLR-5k (via cortical_resample_surface.sh) is out of scope here.
+
+resample_fsaverage_sym_to_ico6 is the one group-wise rule in this file (study-level
+template surfaces, not per-subject) — see its own docstring for why it's never pulled
+into a subject's default target, mirroring build_normative_data in rules/zscore.smk.
 """
 
 
@@ -36,6 +40,35 @@ rule resample_surface_ico6_sym:
         spec=f"{SUBJECTS_DIR}/{{subject}}/surf/ico6_sym.spec",
     shell:
         MRTRIX_ENV + "cortical_resample_surface_ico6_sym.sh {wildcards.subject}"
+
+
+rule resample_fsaverage_sym_to_ico6:
+    # Group-wise, triggered by name only (`cortical_snakerun.py
+    # resample_fsaverage_sym_to_ico6`) — like build_normative_data in
+    # rules/zscore.smk, this is never an input of any subject's default
+    # target, so it never silently reruns just because some subject's own
+    # output changed. Builds the shared ico6_sym white/pial TEMPLATE surfaces
+    # (mirrored fsaverage_sym, not any one subject's anatomy) that
+    # cortical_browser.py's surface-type dropdown lists as "average_white"/
+    # "average_pial" (see find_surface_types()) — once per study, not once
+    # per subject.
+    #
+    # Its input is the ico6 sphere template, built as a side effect the
+    # first time ANY subject runs resample_surface_ico6_sym above — not
+    # declared as that rule's output (deliberately: it's shared/study-level,
+    # not per-subject) so Snakemake has no rule it could chain to build it
+    # automatically. The wrapped script exits with a clear error if it's
+    # still missing, same as cortical_create_normative_data_from_tsf.py does
+    # for its own missing inputs.
+    input:
+        f"{SUBJECTS_DIR}/templates/fsaverage_sym.sphere.ico6.surf.gii",
+    output:
+        lh_white=f"{SUBJECTS_DIR}/templates/surf/lh_white.ico6_sym.surf.gii",
+        rh_white=f"{SUBJECTS_DIR}/templates/surf/rh_white.ico6_sym.surf.gii",
+        lh_pial=f"{SUBJECTS_DIR}/templates/surf/lh_pial.ico6_sym.surf.gii",
+        rh_pial=f"{SUBJECTS_DIR}/templates/surf/rh_pial.ico6_sym.surf.gii",
+    shell:
+        MRTRIX_ENV + "cortical_resample_fsaverage_sym_to_ico6.sh"
 
 
 rule register_t1_to_dwi:
