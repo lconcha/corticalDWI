@@ -323,6 +323,9 @@ canvas.nv-canvas { display: block; width: 100% !important; height: 100% !importa
       <label>Metric <select id="metricSel">__METRIC_OPTIONS__</select></label>
       <label id="zscoreLabel" title="Show per-vertex z-scores against the cohort norm instead of raw values"><input type="checkbox" id="zscoreChk"> Z</label>
     </div>
+    <div class="ctl-row">
+      <label id="collapseDepthLabel" title="Show the mean value across all depths per vertex instead of one depth-slice (depth-profile plots stay depth-resolved)"><input type="checkbox" id="collapseDepthChk"> Collapse depth</label>
+    </div>
     <div class="ctl-row"><label>Depth
       <input type="range" id="depthSlider" min="0" max="__MAX_DEPTH__" value="__INIT_DEPTH__">
       <span id="depth-label">__INIT_DEPTH_MM__ mm</span></label></div>

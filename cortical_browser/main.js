@@ -53,6 +53,14 @@ function hasZscore(metric) { return !!(metric && ZSCORE[metric]) }
 function activeMetricInfo(metric) {
   return (showZscore && hasZscore(metric)) ? ZSCORE[metric] : METRICS[metric]
 }
+// Collapse-depth mode: the lh/rh/asym surfaces show one value per vertex
+// (the mean across every depth) instead of a depth-indexed frame — works for
+// whatever's currently displayed, z-scored or raw (see meanPerVertex). The
+// depth-profile plots are untouched: they stay depth-resolved, and the depth
+// slider/+-/plot-click still move their reference marker — setDepth() just
+// stops pushing that depth onto the surfaces (frame4D) while this is on.
+let collapseDepth = false
+function canCollapseDepth(metric) { return !!metric }
 const markerMeshes = new Map()   // nv instance -> its vertex-marker connectome mesh
 const neighborMeshes = new Map() // nv instance -> its neighbor-rings connectome mesh
 
@@ -383,17 +391,14 @@ function disableTransparentBelowCalMin(nv) {
 // at 0.5 (independent of the live, user-adjustable data cal_min), so a mask
 // value of 0 (valid) always cleanly skips — leaving the data layer's color
 // untouched — while 1 (invalid) always paints.
-function invalidMask(matArray, nd, depth) {
-  const nVerts = matArray.length / nd
-  const mask = new Float32Array(nVerts)
-  for (let vi = 0; vi < nVerts; vi++) mask[vi] = Number.isNaN(matArray[vi * nd + depth]) ? 1 : 0
-  return mask
-}
-function applyInvalidMask(nv, matArray, nd, depth, cmapName) {
+// Raw mask-values layer injection, factored out of applyInvalidMask so the
+// collapse-depth overlay (applyCollapsedOverlays below) can reuse it with a
+// differently-computed mask (NaN in the collapsed array, not NaN at one depth).
+function applyMaskLayer(nv, mask, cmapName) {
   const mesh = nv.meshes[0]
-  if (!mesh?.layers?.length || !matArray) return
+  if (!mesh?.layers?.length || !mask) return
   mesh.layers[1] = {
-    values: invalidMask(matArray, nd, depth), nFrame4D: 1, frame4D: 0,
+    values: mask, nFrame4D: 1, frame4D: 0,
     colormap: cmapName, colormapNegative: 'winter', useNegativeCmap: false,
     colormapInvert: false, colormapType: 0, colormapLabel: null,
     isTransparentBelowCalMin: true, isAdditiveBlend: false, colorbarVisible: false,
@@ -402,15 +407,137 @@ function applyInvalidMask(nv, matArray, nd, depth, cmapName) {
   }
   mesh.updateMesh(nv.gl)
 }
+function invalidMaskAtDepth(matArray, nd, depth) {
+  const nVerts = matArray.length / nd
+  const mask = new Float32Array(nVerts)
+  for (let vi = 0; vi < nVerts; vi++) mask[vi] = Number.isNaN(matArray[vi * nd + depth]) ? 1 : 0
+  return mask
+}
+function invalidMaskFromArray(arr) {
+  const mask = new Float32Array(arr.length)
+  for (let i = 0; i < arr.length; i++) mask[i] = Number.isNaN(arr[i]) ? 1 : 0
+  return mask
+}
 const MASK_CMAP_FOR = { lh: 'flat_lh', rh: 'flat_rh', asym: 'flat_lh' }   // nvAsym shares LH geometry/base color
 function refreshInvalidMasks(depth) {
-  if (!currentMetric) return
+  if (!currentMetric || collapseDepth) return   // collapse-depth masks are set by applyCollapsedOverlays instead
   const zscore = showZscore && hasZscore(currentMetric)
   const nd = activeMetricInfo(currentMetric).n_depths
   for (const [hemi, nv] of [['lh', nvLhL], ['rh', nvRhL], ['asym', nvAsym]]) {
     const mat = matCache[`${hemi}_${currentMetric}${zscore ? '_zscore' : ''}`]
-    if (mat) applyInvalidMask(nv, mat, nd, depth, MASK_CMAP_FOR[hemi])
+    if (mat) applyMaskLayer(nv, invalidMaskAtDepth(mat, nd, depth), MASK_CMAP_FOR[hemi])
   }
+}
+
+// ── collapse-depth overlay (mean across depth, per vertex) ───────────────────
+// Computed client-side from whichever matrices are already in matCache (the
+// signed _zscore ones in z-score mode, the plain raw ones otherwise — both
+// already fetched for the depth-profile plots), so no server round-trip is
+// needed. Applied via the same raw-layer-injection NiiVue accepts for the
+// mask layer (applyMaskLayer above) — bypasses layerDataFor/layerAsymFor's
+// URL-based loadMeshes path entirely, since there's no per-depth frame to
+// point a URL at.
+//
+// z-score mode averages |z| (magnitude): opposite-signed deviations at
+// different depths would otherwise cancel toward 0 and hide a real
+// abnormality. Raw mode averages the plain value — ordinary cortical metrics
+// (FA, T1w intensity, ...) have no such cancellation risk, and this is just
+// "the average value down the column" — except the raw asym panel, which is
+// already a signed (LH-RH)/mean ratio; it's plain-averaged too (consistent
+// with "average whatever's currently shown"), so it keeps its own diverging
+// colormap/range rather than switching to the data colormap the way the
+// unsigned z-score case does (see asymUnsigned below).
+function meanPerVertex(matArray, nd, useAbs) {
+  const nVerts = matArray.length / nd
+  const out = new Float32Array(nVerts)
+  for (let vi = 0; vi < nVerts; vi++) {
+    let sum = 0, count = 0
+    for (let d = 0; d < nd; d++) {
+      const v = matArray[vi * nd + d]
+      if (!Number.isNaN(v)) { sum += useAbs ? Math.abs(v) : v; count++ }
+    }
+    out[vi] = count > 0 ? sum / count : NaN
+  }
+  return out
+}
+// 98th-percentile cal max (clip range, matches the server's zscore_cal_range
+// convention) and the true max (for global_max) of a collapsed array. Only
+// used in z-score mode — raw mode reuses the already-computed
+// currentClimMin/Max / currentAsymMin/Max instead (see applyCollapsedOverlays).
+function collapsedRangeStats(arr, pct = 98) {
+  const finite = []
+  for (const v of arr) if (Number.isFinite(v)) finite.push(v)
+  if (!finite.length) return { calMax: 1, trueMax: 1 }
+  finite.sort((a, b) => a - b)
+  const idx = Math.min(finite.length - 1, Math.floor((pct / 100) * finite.length))
+  return { calMax: finite[idx] || 1, trueMax: finite[finite.length - 1] || 1 }
+}
+function applyCollapsedDataLayer(nv, values, cmap, invert, calMin, calMax, globalMin, globalMax) {
+  const mesh = nv.meshes[0]
+  if (!mesh?.layers?.length) return
+  mesh.layers[0] = {
+    values, nFrame4D: 1, frame4D: 0,
+    colormap: cmap, colormapNegative: 'winter', useNegativeCmap: false,
+    colormapInvert: invert, colormapType: 0, colormapLabel: null,
+    isTransparentBelowCalMin: false, isAdditiveBlend: false, colorbarVisible: true,
+    outlineBorder: 0, opacity: layerOpacity, cal_min: calMin, cal_max: calMax,
+    cal_minNeg: NaN, cal_maxNeg: NaN, global_min: globalMin, global_max: globalMax,
+  }
+  mesh.updateMesh(nv.gl)
+}
+// Last-computed collapsed cal ranges (z-score mode only — see above), used by
+// refreshColorbars() to label the sidebar swatches — lh/rh share one range
+// (mirrors the per-depth zscore mode's shared currentClimMin/Max), asym gets
+// its own (mirrors currentAsymMin/Max).
+let collapseClimMax = 1, collapseAsymClimMax = 1
+function applyCollapsedOverlays() {
+  if (!currentMetric) return
+  const zscore = showZscore && hasZscore(currentMetric)
+  const nd = activeMetricInfo(currentMetric).n_depths
+  const suffix = zscore ? '_zscore' : ''
+  const lhMat   = matCache[`lh_${currentMetric}${suffix}`]
+  const rhMat   = matCache[`rh_${currentMetric}${suffix}`]
+  const asymMat = matCache[`asym_${currentMetric}${suffix}`]
+  const lhCollapsed   = lhMat   ? meanPerVertex(lhMat, nd, zscore)   : null
+  const rhCollapsed   = rhMat   ? meanPerVertex(rhMat, nd, zscore)   : null
+  const asymCollapsed = asymMat ? meanPerVertex(asymMat, nd, zscore) : null
+
+  // The collapsed raw asym ratio is signed, same as the regular (non-collapsed)
+  // raw asym panel — keeps its own diverging colormap/range. Only the z-score
+  // case (unsigned mean |diff|) switches to the data colormap.
+  let dataMin, dataMax, dataGMin, dataGMax, asymCmap, asymInv, asymMin, asymMax, asymGMin, asymGMax
+  if (zscore) {
+    const lhStats   = lhCollapsed   ? collapsedRangeStats(lhCollapsed)   : null
+    const rhStats   = rhCollapsed   ? collapsedRangeStats(rhCollapsed)   : null
+    const asymStats = asymCollapsed ? collapsedRangeStats(asymCollapsed) : null
+    collapseClimMax = Math.max(lhStats?.calMax || 0, rhStats?.calMax || 0) || 1
+    collapseAsymClimMax = asymStats?.calMax || 1
+    dataMin = 0; dataMax = collapseClimMax
+    dataGMin = 0; dataGMax = Math.max(lhStats?.trueMax || 0, rhStats?.trueMax || 0) || 1
+    asymCmap = currentCmap; asymInv = dataInvert
+    asymMin = 0; asymMax = collapseAsymClimMax
+    asymGMin = 0; asymGMax = asymStats?.trueMax || 1
+  } else {
+    dataMin = currentClimMin; dataMax = currentClimMax
+    dataGMin = currentClimMin; dataGMax = currentClimMax
+    asymCmap = currentCmapAsym; asymInv = asymInvert
+    asymMin = currentAsymMin; asymMax = currentAsymMax
+    asymGMin = currentAsymMin; asymGMax = currentAsymMax
+  }
+
+  if (lhCollapsed) {
+    applyCollapsedDataLayer(nvLhL, lhCollapsed, currentCmap, dataInvert, dataMin, dataMax, dataGMin, dataGMax)
+    applyMaskLayer(nvLhL, invalidMaskFromArray(lhCollapsed), MASK_CMAP_FOR.lh)
+  }
+  if (rhCollapsed) {
+    applyCollapsedDataLayer(nvRhL, rhCollapsed, currentCmap, dataInvert, dataMin, dataMax, dataGMin, dataGMax)
+    applyMaskLayer(nvRhL, invalidMaskFromArray(rhCollapsed), MASK_CMAP_FOR.rh)
+  }
+  if (asymCollapsed) {
+    applyCollapsedDataLayer(nvAsym, asymCollapsed, asymCmap, asymInv, asymMin, asymMax, asymGMin, asymGMax)
+    applyMaskLayer(nvAsym, invalidMaskFromArray(asymCollapsed), MASK_CMAP_FOR.asym)
+  }
+  refreshColorbars()
 }
 
 async function loadLhPanel(metric) {
@@ -960,10 +1087,16 @@ function setDepth(d) {
   currentDepth = d
   const mm = d * STEP_MM
   document.getElementById('depth-label').textContent = `${mm.toFixed(1)} mm`
-  for (const nv of [nvLhL, nvRhL, nvAsym])
-    for (const mesh of nv.meshes)
-      if (mesh.layers?.length) nv.setMeshLayerProperty(mesh.id, 0, 'frame4D', d)
-  refreshInvalidMasks(d)
+  // In collapse-depth mode the surfaces show one depth-independent value per
+  // vertex (see applyCollapsedOverlays) — depth selection still drives the
+  // depth-profile plots' reference marker below, but must not touch frame4D
+  // or recompute the per-depth invalid mask here.
+  if (!collapseDepth) {
+    for (const nv of [nvLhL, nvRhL, nvAsym])
+      for (const mesh of nv.meshes)
+        if (mesh.layers?.length) nv.setMeshLayerProperty(mesh.id, 0, 'frame4D', d)
+    refreshInvalidMasks(d)
+  }
   broadcastDwiCrosshair()
   updateDepthMarker(mm)
 }
@@ -1023,6 +1156,15 @@ function setAsymCLim(mn, mx) {
   refreshColorbars()
 }
 
+// True only for the one collapse-depth case where the asym panel is unsigned
+// (mean |LH-RH z|) and therefore shares the main data colormap — the raw
+// collapse-depth asym value (mean of the signed (LH-RH)/mean ratio) stays
+// signed, same as the regular per-depth raw asym panel, and keeps its own
+// diverging colormap/range. See applyCollapsedOverlays.
+function collapsedAsymUnsigned() {
+  return collapseDepth && showZscore && hasZscore(currentMetric)
+}
+
 function setDataCmap(cmap, invert) {
   currentCmap = cmap; dataInvert = invert
   for (const nv of [nvLhL, nvRhL])
@@ -1031,16 +1173,29 @@ function setDataCmap(cmap, invert) {
         nv.setMeshLayerProperty(mesh.id, 0, 'colormap', cmap)
         nv.setMeshLayerProperty(mesh.id, 0, 'colormapInvert', invert)
       }
+  if (collapsedAsymUnsigned()) {
+    for (const mesh of nvAsym.meshes)
+      if (mesh.layers?.length) {
+        nvAsym.setMeshLayerProperty(mesh.id, 0, 'colormap', cmap)
+        nvAsym.setMeshLayerProperty(mesh.id, 0, 'colormapInvert', invert)
+      }
+  }
   refreshColorbars()
 }
 
 function setAsymCmap(cmap, invert) {
   currentCmapAsym = cmap; asymInvert = invert
-  for (const mesh of nvAsym.meshes)
-    if (mesh.layers?.length) {
-      nvAsym.setMeshLayerProperty(mesh.id, 0, 'colormap', cmap)
-      nvAsym.setMeshLayerProperty(mesh.id, 0, 'colormapInvert', invert)
-    }
+  // No-op on the live mesh while the asym panel is in its unsigned
+  // collapse-depth z-score state (the UI control is also disabled then —
+  // see updateCollapseCmapControlsEnabled) — still records the chosen
+  // values so they take effect immediately once that state ends.
+  if (!collapsedAsymUnsigned()) {
+    for (const mesh of nvAsym.meshes)
+      if (mesh.layers?.length) {
+        nvAsym.setMeshLayerProperty(mesh.id, 0, 'colormap', cmap)
+        nvAsym.setMeshLayerProperty(mesh.id, 0, 'colormapInvert', invert)
+      }
+  }
   refreshColorbars()
 }
 
@@ -1074,12 +1229,30 @@ function cmapCss(name, invert) {
 function refreshColorbars() {
   const fmt = v => parseFloat(v).toPrecision(4)
   const zscore = showZscore && hasZscore(currentMetric)
-  const dataLabel = currentMetric + (zscore ? ' (z-score)' : '')
-  const asymLabel = zscore ? `${currentMetric} LH−RH z-score` : `${currentMetric} asymmetry`
+  let dataLabel, asymLabel, dataMin, dataMax, asymCmap, asymInv, asymMin, asymMax
+  if (collapseDepth && zscore) {
+    dataLabel = currentMetric + ' mean |z|'
+    asymLabel = `${currentMetric} mean |LH−RH z|`
+    dataMin = 0; dataMax = collapseClimMax
+    asymCmap = currentCmap; asymInv = dataInvert
+    asymMin = 0; asymMax = collapseAsymClimMax
+  } else if (collapseDepth) {
+    dataLabel = currentMetric + ' mean'
+    asymLabel = `${currentMetric} mean asymmetry`
+    dataMin = currentClimMin; dataMax = currentClimMax
+    asymCmap = currentCmapAsym; asymInv = asymInvert
+    asymMin = currentAsymMin; asymMax = currentAsymMax
+  } else {
+    dataLabel = currentMetric + (zscore ? ' (z-score)' : '')
+    asymLabel = zscore ? `${currentMetric} LH−RH z-score` : `${currentMetric} asymmetry`
+    dataMin = currentClimMin; dataMax = currentClimMax
+    asymCmap = currentCmapAsym; asymInv = asymInvert
+    asymMin = currentAsymMin; asymMax = currentAsymMax
+  }
   const pairs = [
-    ['lh',   currentCmap,     dataInvert, currentClimMin, currentClimMax, dataLabel],
-    ['rh',   currentCmap,     dataInvert, currentClimMin, currentClimMax, dataLabel],
-    ['asym', currentCmapAsym, asymInvert, currentAsymMin, currentAsymMax, asymLabel],
+    ['lh',   currentCmap, dataInvert, dataMin, dataMax, dataLabel],
+    ['rh',   currentCmap, dataInvert, dataMin, dataMax, dataLabel],
+    ['asym', asymCmap,    asymInv,    asymMin, asymMax, asymLabel],
   ]
   for (const [id, cmap, inv, mn, mx, title] of pairs) {
     const g = document.getElementById(`cbgrad-${id}`)
@@ -1389,6 +1562,8 @@ updateZscoreToggleAvailability(currentMetric)
 document.getElementById('zscoreChk').addEventListener('change', async function() {
   if (!currentMetric) { this.checked = false; return }
   showZscore = this.checked
+  updateCollapseDepthToggleAvailability(currentMetric)
+  updateCollapseCmapControlsEnabled()
   const info = activeMetricInfo(currentMetric)
   initClimInputs(info)
 
@@ -1399,6 +1574,55 @@ document.getElementById('zscoreChk').addEventListener('change', async function()
   sl.value = currentDepth
 
   await Promise.all([loadAllSurfaces(currentMetric), loadMatrices(currentMetric)])
+  if (collapseDepth) applyCollapsedOverlays()
+  setDepth(currentDepth)
+  if (currentVertex !== null) await selectVertex(currentVertex, nvLhL)
+})
+
+// ── collapse-depth toggle ────────────────────────────────────────────────────
+// Works for any metric, z-scored or not (see meanPerVertex) — the only time
+// it's disabled is when there's no metric at all to collapse.
+function updateCollapseDepthToggleAvailability(metric) {
+  const chk   = document.getElementById('collapseDepthChk')
+  const label = document.getElementById('collapseDepthLabel')
+  const available = canCollapseDepth(metric)
+  chk.disabled = !available
+  label.style.opacity = available ? '' : 0.4
+  label.title = available
+    ? 'Show the mean value across all depths per vertex instead of one depth-slice (depth-profile plots stay depth-resolved)'
+    : 'No metric selected'
+  if (!available && collapseDepth) {
+    collapseDepth = false
+    chk.checked = false
+  }
+}
+// The asym-specific diverging colormap/invert controls have nothing to do
+// only in the one unsigned case — collapse-depth AND z-score mode together
+// (mean |LH-RH z| then follows the main data colormap instead, see
+// applyCollapsedOverlays/setDataCmap/setAsymCmap) — disabled then so
+// adjusting them doesn't silently do nothing. The raw collapse-depth asym
+// (mean of the signed ratio) keeps using them normally.
+function updateCollapseCmapControlsEnabled() {
+  const unsigned = collapsedAsymUnsigned()
+  const sel = document.getElementById('cmapAsymSel')
+  const inv = document.getElementById('cmapAsymInv')
+  sel.disabled = unsigned
+  inv.disabled = unsigned
+  sel.style.opacity = unsigned ? 0.4 : ''
+  inv.parentElement.style.opacity = unsigned ? 0.4 : ''
+  sel.title = unsigned
+    ? 'Not used in collapse-depth z-score mode — the collapsed asym surface follows the main data colormap instead'
+    : 'Colormap for the asymmetry index'
+}
+updateCollapseDepthToggleAvailability(currentMetric)
+updateCollapseCmapControlsEnabled()
+
+document.getElementById('collapseDepthChk').addEventListener('change', async function() {
+  if (!currentMetric) { this.checked = false; return }
+  collapseDepth = this.checked
+  updateCollapseCmapControlsEnabled()
+  await Promise.all([loadAllSurfaces(currentMetric), loadMatrices(currentMetric)])
+  if (collapseDepth) applyCollapsedOverlays()
   setDepth(currentDepth)
   if (currentVertex !== null) await selectVertex(currentVertex, nvLhL)
 })
@@ -1407,6 +1631,8 @@ document.getElementById('zscoreChk').addEventListener('change', async function()
 document.getElementById('metricSel').addEventListener('change', async e => {
   currentMetric = e.target.value
   updateZscoreToggleAvailability(currentMetric)
+  updateCollapseDepthToggleAvailability(currentMetric)
+  updateCollapseCmapControlsEnabled()
   const info = activeMetricInfo(currentMetric)
   initClimInputs(info)
 
@@ -1417,6 +1643,7 @@ document.getElementById('metricSel').addEventListener('change', async e => {
   sl.value = currentDepth
 
   await Promise.all([loadAllSurfaces(currentMetric), loadMatrices(currentMetric)])
+  if (collapseDepth) applyCollapsedOverlays()
   setDepth(currentDepth)
   if (currentVertex !== null) {
     // Keep the selected vertex; re-select to redraw its markers and replot the
