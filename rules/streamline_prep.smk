@@ -67,6 +67,10 @@ rule resample_fsaverage_sym_to_ico6:
         rh_white=f"{SUBJECTS_DIR}/templates/surf/rh_white.ico6_sym.surf.gii",
         lh_pial=f"{SUBJECTS_DIR}/templates/surf/lh_pial.ico6_sym.surf.gii",
         rh_pial=f"{SUBJECTS_DIR}/templates/surf/rh_pial.ico6_sym.surf.gii",
+        lh_inflated=f"{SUBJECTS_DIR}/templates/surf/lh_inflated.ico6_sym.surf.gii",
+        rh_inflated=f"{SUBJECTS_DIR}/templates/surf/rh_inflated.ico6_sym.surf.gii",
+        lh_very_inflated=f"{SUBJECTS_DIR}/templates/surf/lh_very-inflated.ico6_sym.surf.gii",
+        rh_very_inflated=f"{SUBJECTS_DIR}/templates/surf/rh_very-inflated.ico6_sym.surf.gii",
     shell:
         MRTRIX_ENV + "cortical_resample_fsaverage_sym_to_ico6.sh"
 

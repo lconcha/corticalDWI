@@ -170,15 +170,26 @@ SURF_TYPE_FILENAMES = {
     'inflated':      lambda hemi, t: f'{hemi}_white_{t}_inflated.surf.gii',
     'very_inflated': lambda hemi, t: f'{hemi}_white_{t}_veryInflated.surf.gii',
 }
-SURF_TYPE_ORDER = ['white', 'pial', 'inflated', 'very_inflated', 'average_white', 'average_pial']
+SURF_TYPE_ORDER = ['white', 'pial', 'inflated', 'very_inflated',
+                   'average_white', 'average_pial', 'average_inflated', 'average_very_inflated']
+# Template surfaces (templates/surf/, built once per study by
+# cortical_resample_fsaverage_sym_to_ico6.sh) are named {hemi}_{prefix}.{template}.surf.gii —
+# note the literal hyphen in "very-inflated" (that script's own naming), unlike the
+# per-subject very_inflated/veryInflated spelling in SURF_TYPE_FILENAMES above.
+AVERAGE_SURF_TYPES = (
+    ('average_white',         'white'),
+    ('average_pial',          'pial'),
+    ('average_inflated',      'inflated'),
+    ('average_very_inflated', 'very-inflated'),
+)
 
 
 def find_surface_types(subjects_dir, subj_dir, template=TEMPLATE):
     """Discover available surface-type files for lh/rh, mirroring the MATLAB
     viewer's getSurfPath(): per-subject white/pial/inflated/very_inflated,
-    plus fsaverage-style average_white/average_pial templates shared across
-    subjects. Returns {surf_type: {'lh': path, 'rh': path}}, only including
-    entries whose file actually exists."""
+    plus fsaverage-style average_* templates shared across subjects. Returns
+    {surf_type: {'lh': path, 'rh': path}}, only including entries whose file
+    actually exists."""
     surf_dir      = os.path.join(subj_dir, 'surf')
     templates_dir = os.path.join(subjects_dir, 'templates', 'surf')
     result = {}
@@ -190,7 +201,7 @@ def find_surface_types(subjects_dir, subj_dir, template=TEMPLATE):
                 entry[hemi] = p
         if entry:
             result[surf_type] = entry
-    for surf_type, prefix in (('average_white', 'white'), ('average_pial', 'pial')):
+    for surf_type, prefix in AVERAGE_SURF_TYPES:
         entry = {}
         for hemi in ('lh', 'rh'):
             p = os.path.join(templates_dir, f'{hemi}_{prefix}.{template}.surf.gii')

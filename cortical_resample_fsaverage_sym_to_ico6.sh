@@ -112,6 +112,14 @@ my_do_cmd $WB -add-to-spec-file $specfile CORTEX_LEFT  $OUT/lh_pial.ico6_sym.sur
 my_do_cmd $WB -add-to-spec-file $specfile CORTEX_RIGHT $OUT/rh_white.ico6_sym.surf.gii
 my_do_cmd $WB -add-to-spec-file $specfile CORTEX_RIGHT $OUT/rh_pial.ico6_sym.surf.gii
 
+# Inflate white surfaces
+for hemi in lh rh; do
+    my_do_cmd $WB -surface-generate-inflated \
+        $OUT/${hemi}_white.ico6_sym.surf.gii \
+        $OUT/${hemi}_inflated.ico6_sym.surf.gii \
+        $OUT/${hemi}_very-inflated.ico6_sym.surf.gii
+done    
+
 echo ""
 echo "========================================"
 echo " Done."
