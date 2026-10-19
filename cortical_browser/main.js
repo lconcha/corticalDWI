@@ -582,6 +582,43 @@ async function loadAsymPanel(metric) {
   }
 }
 
+// ── native white-surface coordinates (cached, for the anatomical crosshair) ───
+// Only the subject's own white/pial surfaces have vertex coordinates that
+// correspond to the orthoslice volume. inflated/very_inflated are the same
+// subject's geometry but artificially expanded for visualization; the
+// average_white/average_pial surface types are a DIFFERENT subject's geometry
+// entirely (the shared fsaverage_sym template, see
+// cortical_resample_fsaverage_sym_to_ico6.sh) despite the name. All surface
+// types share the same ico6_sym vertex indexing though, so whenever a click
+// lands on a non-safe surface type, the clicked vertex ID is looked up in
+// this subject's own white surface instead — fetched lazily (once, promise-
+// cached so concurrent callers share one fetch) and never rendered, just used
+// for its .pts array.
+const SAFE_SURF_TYPES = new Set(['white', 'pial'])
+const whitePtsPromise = { lh: null, rh: null }
+function ensureWhitePts(hemi) {
+  if (whitePtsPromise[hemi]) return whitePtsPromise[hemi]
+  const url = SURF_TYPES.white?.[hemi]
+  if (!url) return Promise.resolve(null)
+  whitePtsPromise[hemi] = niivue.NVMesh.loadFromUrl({ url, gl: nvLhL.gl }).then(m => m.pts)
+  return whitePtsPromise[hemi]
+}
+// World coordinates for vertex `i` on the panel whose surface-type dropdown
+// is `surfSelId` — corrected to this subject's white surface if that panel's
+// current type isn't in SAFE_SURF_TYPES. `fallbackPts` (the panel's own live,
+// possibly-distorted mesh.pts) is used if the white surface hasn't loaded yet
+// or isn't available for this subject at all. `corrected` tells the caller
+// whether a substitution actually happened, so callers that display the
+// coordinates (not just use them internally, like the crosshair) can flag it.
+async function anatomicalPts(surfSelId, hemi, fallbackPts, i) {
+  const curType = document.getElementById(surfSelId).value
+  if (!SAFE_SURF_TYPES.has(curType)) {
+    const wpts = await ensureWhitePts(hemi)
+    if (wpts) return { pt: [wpts[i * 3], wpts[i * 3 + 1], wpts[i * 3 + 2]], corrected: true }
+  }
+  return { pt: [fallbackPts[i * 3], fallbackPts[i * 3 + 1], fallbackPts[i * 3 + 2]], corrected: false }
+}
+
 // Orthoslice contours (geometry only, no scalar overlay). Loaded on demand the
 // first time their WM/pial toggle is switched on, then kept in nvSlices' mesh
 // list so on/off is just an opacity change — no re-parse/re-upload. Added via
@@ -1965,10 +2002,14 @@ async function selectVertex(vertIdx, nvInst) {
   const nVerts = mesh.pts.length / 3
   if (vertIdx < 0 || vertIdx >= nVerts) return
 
-  // Snap orthoslice crosshairs to vertex world position. Setting crosshairPos
-  // directly doesn't fire onLocationChange (only user slice interaction does),
-  // so call createOnLocationChange() to refresh the position readout.
-  const vx=mesh.pts[vertIdx*3], vy=mesh.pts[vertIdx*3+1], vz=mesh.pts[vertIdx*3+2]
+  // Snap orthoslice crosshairs to vertex world position — using this
+  // subject's own white surface instead if the clicked panel isn't currently
+  // showing white/pial (see anatomicalPts). Setting crosshairPos directly
+  // doesn't fire onLocationChange (only user slice interaction does), so call
+  // createOnLocationChange() to refresh the position readout.
+  const clickedSurfSelId = nvInst === nvRhL ? 'rhSurfSel' : nvInst === nvAsym ? 'asymSurfSel' : 'lhSurfSel'
+  const clickedHemi = nvInst === nvRhL ? 'rh' : 'lh'   // nvAsym shares LH geometry
+  const { pt: [vx, vy, vz] } = await anatomicalPts(clickedSurfSelId, clickedHemi, mesh.pts, vertIdx)
   if (nvSlices.volumes.length && typeof nvSlices.mm2frac === 'function') {
     const frac = nvSlices.mm2frac([vx, vy, vz])
     if (frac) {
@@ -2054,12 +2095,19 @@ async function selectVertex(vertIdx, nvInst) {
   // Both hemispheres' world coordinates for this vertex index, regardless of
   // which surface panel was actually clicked — the ico6_sym template shares
   // vertex indices across LH/RH, but the two hemispheres have distinct (mirror-
-  // asymmetric) geometry, so their mm coordinates differ and both are worth showing.
-  const fmtMm = (mesh, i) => mesh?.pts
-    ? `${mesh.pts[i*3].toFixed(1)}, ${mesh.pts[i*3+1].toFixed(1)}, ${mesh.pts[i*3+2].toFixed(1)} mm`
-    : '—, —, — mm'
-  document.getElementById('vtx-display-lh').textContent = fmtMm(lhMesh, vertIdx)
-  document.getElementById('vtx-display-rh').textContent = fmtMm(rhMesh, vertIdx)
+  // asymmetric) geometry, so their mm coordinates differ and both are worth
+  // showing. Each panel independently corrects to this subject's white
+  // surface if it isn't currently showing white/pial (see anatomicalPts) —
+  // flagged with a trailing "(white)" so it's clear the number doesn't match
+  // the distorted/template mesh actually on screen.
+  const fmtMm = async (surfSelId, hemi, mesh, i) => {
+    if (!mesh?.pts) return '—, —, — mm'
+    const { pt, corrected } = await anatomicalPts(surfSelId, hemi, mesh.pts, i)
+    const txt = `${pt[0].toFixed(1)}, ${pt[1].toFixed(1)}, ${pt[2].toFixed(1)} mm`
+    return corrected ? `${txt} (white)` : txt
+  }
+  document.getElementById('vtx-display-lh').textContent = await fmtMm('lhSurfSel', 'lh', lhMesh, vertIdx)
+  document.getElementById('vtx-display-rh').textContent = await fmtMm('rhSurfSel', 'rh', rhMesh, vertIdx)
   document.getElementById('vtxInput').value = vertIdx
 
   // Multivariate panels fetch independently so the profiles above render
