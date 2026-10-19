@@ -16,6 +16,15 @@ via `snakemake -n --forceall`, so it can never drift out of sync with rules/*.sm
   
 \033[1mOptions:\033[0m
   --all-subjects    Run all subjects within $SUBJECTS_DIR
+  --for-subject sub-X
+                    Subject to discover rules against (snakemake -n --forceall),
+                    when no subject is already given positionally — i.e. for a
+                    bare listing (-h / no args) or a group-wise/--all-subjects
+                    run. Defaults to the "richest" subject (has both dwi and
+                    flair, else just dwi, else any) if omitted, which can hide
+                    whole rule families (DTI/MRDS/CSD/flair-only rules) for a
+                    thin subject — pass this to discover against a specific
+                    subject instead.
   --dry-run/-n      Show what would run, run nothing
   --rules <list>    Run just this comma-separated list of rules
   --skip <list>     Skip these comma-separated rules
