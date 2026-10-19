@@ -37,6 +37,11 @@ _MAIN_JS = _read_web_file('main.js')
 _DWI_HTML = _read_web_file('dwi.html')
 _DWI_JS   = _read_web_file('dwi.js')
 
+try:
+    _LOGO_SVG_BYTES = _read_web_file('logo.svg').encode('utf-8')
+except FileNotFoundError:
+    _LOGO_SVG_BYTES = None
+
 
 # ── file discovery ─────────────────────────────────────────────────────────────
 
@@ -850,6 +855,16 @@ def make_handler(html_bytes, file_map, overlay_arrays, materialized, out_dir,
                     self._reply(200, 'text/javascript; charset=utf-8', dwi_js_bytes)
                 else:
                     self._reply(404, 'text/plain', b'DWI space not available for this subject\n')
+                return
+            if path == '/static/logo.svg':
+                if _LOGO_SVG_BYTES:
+                    # Identical for every subject/launch (no placeholder
+                    # substitution, unlike main.js/html), so it's safe to
+                    # cache forever. The page recolors it per theme client-side
+                    # (see applyLogoTheme in main.js), not here.
+                    self._reply(200, 'image/svg+xml', _LOGO_SVG_BYTES, cacheable=True)
+                else:
+                    self._reply(404, 'text/plain', b'logo.svg not found\n')
                 return
             if path == '/mahal':
                 self._serve_mahal()

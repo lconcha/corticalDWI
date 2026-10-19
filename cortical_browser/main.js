@@ -1321,6 +1321,37 @@ document.getElementById('interpChk').addEventListener('change', function() {
   nvSlices.setInterpolation(!this.checked)
 })
 
+// ── theme-colored logo ────────────────────────────────────────────────────────
+// A single logo.svg, recolored per theme rather than swapped for a second
+// file: an <img>'s SVG is opaque to page CSS (var(--accent) can't reach
+// inside it), so instead this fetches the raw SVG text once, string-replaces
+// its one accent color (#f5c842 — used only by the "Cortical Browser" text
+// and the two rule lines; the brain icon's grays/colorful dots are untouched)
+// with the active theme's --accent, and points the <img> at a blob URL of
+// the result. Re-run on every theme change, same as applyChartTheme/
+// applyNiivueTheme below.
+const LOGO_SOURCE_COLOR = /#f5c842/gi
+let logoSvgText = null
+let logoObjectUrl = null
+async function applyLogoTheme() {
+  const img = document.getElementById('appLogo')
+  if (!img) return
+  if (logoSvgText === null) {
+    try {
+      logoSvgText = await (await fetch(img.getAttribute('src'))).text()
+    } catch (e) {
+      console.warn('[logo] fetch failed:', e.message)
+      return
+    }
+  }
+  const accent = getComputedStyle(document.documentElement).getPropertyValue('--accent').trim() || '#F5C842'
+  const blob = new Blob([logoSvgText.replace(LOGO_SOURCE_COLOR, accent)], { type: 'image/svg+xml' })
+  if (logoObjectUrl) URL.revokeObjectURL(logoObjectUrl)   // the previous theme's blob is no longer referenced
+  logoObjectUrl = URL.createObjectURL(blob)
+  img.src = logoObjectUrl
+}
+applyLogoTheme()
+
 // ── theme selector ────────────────────────────────────────────────────────────
 // Only the sidebar chrome (CSS variables) reacts to this — the 3-D/orthoslice/
 // Plotly panels keep their fixed dark palette, so no reload or redraw is needed.
@@ -1332,6 +1363,7 @@ document.getElementById('interpChk').addEventListener('change', function() {
     try { localStorage.setItem('cbTheme', themeSel.value) } catch (e) {}
     applyChartTheme()
     applyNiivueTheme()
+    applyLogoTheme()
   })
 }
 
