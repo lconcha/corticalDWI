@@ -239,6 +239,20 @@ def label_from_id(mid, labels):
     return next((l for l in labels if metric_id(l) == mid), None)
 
 
+def find_zscore_metrics(tsf_metrics):
+    """Metrics (subset of tsf_metrics) that also have a per-hemisphere
+    <name>_zscore.tsf sitting next to the raw tsf (written by
+    cortical_zscore_tsf.py / the zscore_tsf snakemake rule). Both hemispheres
+    must be present. Returns {metric: {'lh': path, 'rh': path}} of the
+    z-score tsf paths (not the raw ones)."""
+    found = {}
+    for metric, hemis in tsf_metrics.items():
+        zpaths = {hemi: p[:-len('.tsf')] + '_zscore.tsf' for hemi, p in hemis.items()}
+        if all(os.path.isfile(p) for p in zpaths.values()):
+            found[metric] = zpaths
+    return found
+
+
 # ── TSF → func.gii conversion ─────────────────────────────────────────────────
 # Split into a cheap in-memory "stats" pass (needed up front for every metric,
 # so the dropdown/depth-slider/CLim inputs work before its overlay exists) and
@@ -282,6 +296,24 @@ def asym_cal_range():
     # Fixed symmetric range for the asymmetry index; the front-end uses this for
     # both the surface color limits and the asym plot's y-axis.
     return -1.0, 1.0
+
+
+def zscore_cal_range(M, pct=98):
+    """Symmetric color range for a signed z-score matrix: +/- the pct-th
+    percentile of |z|. Unlike matrix_cal_range (positive-only, one-sided —
+    built for metrics like FA that are never negative), a z-score is centered
+    on 0, so the range must be symmetric or the sign of the data gets lost."""
+    finite = M[np.isfinite(M)]
+    v = float(np.percentile(np.abs(finite), pct)) if finite.size else 1.0
+    return round(-v, 4), round(v, 4)
+
+
+def compute_zscore_asym_matrix(lh_Mz, rh_Mz):
+    """Plain hemisphere difference of z-scores (LH_z - RH_z), NOT the
+    (LH-RH)/mean asymmetry index used for raw metrics — that ratio is
+    meaningless here since its denominator (mean of two z-scores) can itself
+    be ~0 or negative. NaN propagates automatically from either input."""
+    return (lh_Mz.astype(np.float64) - rh_Mz.astype(np.float64)).astype(np.float32)
 
 
 def write_func_gii(M, out_path):
@@ -342,6 +374,54 @@ def materialize_overlay(metric, lh_M, rh_M, out_dir, template=TEMPLATE):
     write_func_gii(rh_M, rh_gii);  rh_M.tofile(rh_mat)
     A = compute_asym_matrix(lh_M, rh_M)
     write_func_gii(A, asym_gii);   A.tofile(asym_mat)
+
+    paths = (lh_gii, rh_gii, asym_gii, lh_mat, rh_mat, asym_mat)
+    return [(f'/data/{os.path.basename(p)}', p) for p in paths]
+
+
+def scan_zscore_stats(zscore_metrics):
+    """Same split as scan_overlay_stats, but for the z-scored tsf siblings:
+    reads each metric's z-score matrices and computes symmetric cal ranges
+    (for lh/rh and for the LH_z-RH_z hemisphere difference), without writing
+    any files. Returns (info, arrays) where arrays[metric] = (lh_Mz, rh_Mz)."""
+    info = {}
+    arrays = {}
+    for metric, hemis in zscore_metrics.items():
+        lh_Mz = read_tsf_matrix(hemis['lh'])
+        rh_Mz = read_tsf_matrix(hemis['rh'])
+        common_d = min(lh_Mz.shape[1], rh_Mz.shape[1])
+        lh_Mz = lh_Mz[:, :common_d]
+        rh_Mz = rh_Mz[:, :common_d]
+        cmin, cmax = zscore_cal_range(np.concatenate([lh_Mz, rh_Mz]))
+        D = compute_zscore_asym_matrix(lh_Mz, rh_Mz)
+        amin, amax = zscore_cal_range(D)
+        info[metric] = {
+            'n_depths':     lh_Mz.shape[1],
+            'cal_min':      cmin,
+            'cal_max':      cmax,
+            'cal_min_asym': amin,
+            'cal_max_asym': amax,
+        }
+        arrays[metric] = (lh_Mz, rh_Mz)
+        print(f'  {metric} [zscore]: {lh_Mz.shape[1]} depths  [{cmin:.3f}, {cmax:.3f}]  diff [{amin:.3f}, {amax:.3f}]')
+    return info, arrays
+
+
+def materialize_zscore_overlay(metric, lh_Mz, rh_Mz, out_dir, template=TEMPLATE):
+    """Write the func.gii + binary matrix files for one metric's z-scores
+    (mirrors materialize_overlay, with a _zscore suffix so the URLs/files
+    never collide with the raw-metric overlay)."""
+    lh_gii   = os.path.join(out_dir, f'lh_{template}_{metric_id(metric)}_zscore.func.gii')
+    rh_gii   = os.path.join(out_dir, f'rh_{template}_{metric_id(metric)}_zscore.func.gii')
+    asym_gii = os.path.join(out_dir, f'asym_{template}_{metric_id(metric)}_zscore.func.gii')
+    lh_mat   = os.path.join(out_dir, f'lh_{template}_{metric_id(metric)}_zscore_matrix.f32')
+    rh_mat   = os.path.join(out_dir, f'rh_{template}_{metric_id(metric)}_zscore_matrix.f32')
+    asym_mat = os.path.join(out_dir, f'asym_{template}_{metric_id(metric)}_zscore_matrix.f32')
+
+    write_func_gii(lh_Mz, lh_gii);  lh_Mz.tofile(lh_mat)
+    write_func_gii(rh_Mz, rh_gii);  rh_Mz.tofile(rh_mat)
+    D = compute_zscore_asym_matrix(lh_Mz, rh_Mz)
+    write_func_gii(D, asym_gii);    D.tofile(asym_mat)
 
     paths = (lh_gii, rh_gii, asym_gii, lh_mat, rh_mat, asym_mat)
     return [(f'/data/{os.path.basename(p)}', p) for p in paths]
@@ -629,7 +709,7 @@ def compute_multivariate(subjects_dir, tsf_metrics, subj_cache, vertices,
 
 def make_html(subj_id, vol_path, lh_path, rh_path, overlay_info, port, surf_types=None,
               normative_info=None, template=TEMPLATE, cache_bust='', streamline_files=None,
-              dwi_available=False):
+              dwi_available=False, zscore_info=None):
     base = f'http://localhost:{port}/data'
     # The /data/ files are served immutable (see _reply), and their URLs depend
     # only on hemi/template/metric — NOT the subject. Two subjects on the same
@@ -679,6 +759,7 @@ def make_html(subj_id, vol_path, lh_path, rh_path, overlay_info, port, surf_type
         ('__DWI_AVAILABLE_JSON__', json.dumps(bool(dwi_available))),
         ('__NORMATIVE_JSON__', json.dumps(normative_info or {})),
         ('__METRICS_JSON__',   json.dumps(overlay_info)),
+        ('__ZSCORE_JSON__',    json.dumps(zscore_info or {})),
         ('__BASE_URL__',       base),
         ('__CACHE_BUST__',     cache_bust),
         ('__TEMPLATE__',       template),
@@ -724,7 +805,8 @@ def make_dwi_html(subj_id, dwi_files, port, cache_bust=''):
 
 def make_handler(html_bytes, file_map, overlay_arrays, materialized, out_dir,
                   subjects_dir=None, normative_materialized=None, template=TEMPLATE,
-                  tsf_metrics=None, dwi_html_bytes=None, main_js_bytes=None, dwi_js_bytes=None):
+                  tsf_metrics=None, dwi_html_bytes=None, main_js_bytes=None, dwi_js_bytes=None,
+                  zscore_arrays=None, zscore_materialized=None):
     # Session cache of the subject's NaN-masked per-metric matrices, populated
     # lazily on the first /mahal request and reused across vertices.
     mv_subject_cache = {}
@@ -733,10 +815,20 @@ def make_handler(html_bytes, file_map, overlay_arrays, materialized, out_dir,
     overlay_re = re.compile(
         r'^(?:lh|rh|asym)_' + re.escape(template) + r'_(.+?)(?:\.func\.gii|_matrix\.f32)$'
     )
+    # Same, but for the z-scored siblings (lh_<template>_<metric>_zscore.func.gii
+    # etc.) — checked first in _materialize_if_needed, since overlay_re would
+    # otherwise swallow the trailing "_zscore" into its metric-id group and
+    # fail the lookup instead of routing to the right materializer.
+    zscore_overlay_re = re.compile(
+        r'^(?:lh|rh|asym)_' + re.escape(template) + r'_(.+?)_zscore(?:\.func\.gii|_matrix\.f32)$'
+    )
     # Matches normative_<lh|rh|asym>_<metric>_<mean|std>.f32, isolating <metric>.
     normative_re = re.compile(r'^normative_(?:lh|rh|asym)_(.+?)_(?:mean|std)\.f32$')
     if normative_materialized is None:
         normative_materialized = set()
+    zscore_arrays = zscore_arrays or {}
+    if zscore_materialized is None:
+        zscore_materialized = set()
 
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self):
@@ -783,6 +875,17 @@ def make_handler(html_bytes, file_map, overlay_arrays, materialized, out_dir,
             normative comparison) triggers on-demand conversion; subsequent
             requests just hit file_map."""
             fname = path.rsplit('/', 1)[-1]
+
+            m = zscore_overlay_re.match(fname)
+            if m:
+                metric = label_from_id(m.group(1), zscore_arrays)
+                if metric is None or metric in zscore_materialized:
+                    return
+                lh_Mz, rh_Mz = zscore_arrays[metric]
+                for url, fpath in materialize_zscore_overlay(metric, lh_Mz, rh_Mz, out_dir, template):
+                    file_map[url] = fpath
+                zscore_materialized.add(metric)
+                return
 
             m = overlay_re.match(fname)
             if m:
@@ -967,6 +1070,12 @@ def main():
     print(f'Normative metrics: {list(normative_info) or "none"}')
     normative_materialized = set()
 
+    zscore_metrics = find_zscore_metrics(tsf_metrics)
+    print(f'Z-score metrics: {list(zscore_metrics) or "none"}')
+    print(f'Scanning {len(zscore_metrics)} z-score metric(s) (stats only, no conversion yet)…')
+    zscore_info, zscore_arrays = scan_zscore_stats(zscore_metrics)
+    zscore_materialized = set()
+
     # Unique per launch (tempfile guarantees a fresh suffix), so every session's
     # /data/ URLs differ from any previous subject's on the same port.
     cache_bust = os.path.basename(out_dir)
@@ -975,6 +1084,7 @@ def main():
         overlay_info, args.port, surf_types, normative_info,
         cache_bust=cache_bust, streamline_files=streamline_files,
         dwi_available=bool(dwi_files.get('fa')),
+        zscore_info=zscore_info,
     )
     html_bytes    = html.encode('utf-8')
     main_js_bytes = main_js.encode('utf-8')
@@ -988,7 +1098,8 @@ def main():
         make_handler(html_bytes, file_map, overlay_arrays, materialized, out_dir,
                       args.subjects_dir, normative_materialized, tsf_metrics=tsf_metrics,
                       dwi_html_bytes=dwi_html_bytes, main_js_bytes=main_js_bytes,
-                      dwi_js_bytes=dwi_js_bytes))
+                      dwi_js_bytes=dwi_js_bytes, zscore_arrays=zscore_arrays,
+                      zscore_materialized=zscore_materialized))
     url    = f'http://localhost:{args.port}/'
     print(f'\nBrowser  : {url}')
     print('Ctrl+C to quit.\n')

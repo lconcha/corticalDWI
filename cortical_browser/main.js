@@ -8,6 +8,9 @@ const STREAMLINES = __STREAMLINES_JSON__
 const DWI_AVAILABLE = __DWI_AVAILABLE_JSON__
 const NORMATIVE = __NORMATIVE_JSON__
 const METRICS  = __METRICS_JSON__
+// Metrics that also have per-vertex z-score tsf siblings (cortical_zscore_tsf.py),
+// with their own symmetric (signed) cal ranges — see zscore_cal_range() in Python.
+const ZSCORE   = __ZSCORE_JSON__
 const BASE_URL = "__BASE_URL__"
 // Per-launch cache-buster: appended to every /data/ fetch so an immutable-cached
 // file from a previous subject (same port, same URL) can't leak into this one.
@@ -40,6 +43,16 @@ let nRings = 0
 let currentVertex = null
 let pivotAtVertex = false
 let showNormative = false
+// Z-score mode: surfaces/profiles read the metric's _zscore tsf siblings
+// instead of its raw values. Per-metric (hasZscore), not global — see
+// updateZscoreToggleAvailability().
+let showZscore = false
+function hasZscore(metric) { return !!(metric && ZSCORE[metric]) }
+// The stats (n_depths/cal ranges) that currently drive the surfaces/plots:
+// the metric's own in raw mode, its z-score sibling's in z-score mode.
+function activeMetricInfo(metric) {
+  return (showZscore && hasZscore(metric)) ? ZSCORE[metric] : METRICS[metric]
+}
 const markerMeshes = new Map()   // nv instance -> its vertex-marker connectome mesh
 const neighborMeshes = new Map() // nv instance -> its neighbor-rings connectome mesh
 
@@ -326,16 +339,18 @@ function resetPivot(nv) {
 const metricId = m => m.replace(/\//g, '__')
 
 function layerDataFor(hemi, metric) {
-  const info = metric ? METRICS[metric] : null
+  const info = metric ? activeMetricInfo(metric) : null
   if (!info) return []
-  return [{ url: `${BASE_URL}/${hemi}_${TEMPLATE}_${metricId(metric)}.func.gii${Q}`,
+  const suffix = (showZscore && hasZscore(metric)) ? '_zscore' : ''
+  return [{ url: `${BASE_URL}/${hemi}_${TEMPLATE}_${metricId(metric)}${suffix}.func.gii${Q}`,
             colormap: currentCmap, colormapInvert: dataInvert,
             opacity: layerOpacity, cal_min: currentClimMin, cal_max: currentClimMax }]
 }
 function layerAsymFor(metric) {
-  const info = metric ? METRICS[metric] : null
+  const info = metric ? activeMetricInfo(metric) : null
   if (!info) return []
-  return [{ url: `${BASE_URL}/asym_${TEMPLATE}_${metricId(metric)}.func.gii${Q}`,
+  const suffix = (showZscore && hasZscore(metric)) ? '_zscore' : ''
+  return [{ url: `${BASE_URL}/asym_${TEMPLATE}_${metricId(metric)}${suffix}.func.gii${Q}`,
             colormap: currentCmapAsym, colormapInvert: asymInvert,
             opacity: layerOpacity, cal_min: currentAsymMin, cal_max: currentAsymMax }]
 }
@@ -387,9 +402,10 @@ function applyInvalidMask(nv, matArray, nd, depth, cmapName) {
 const MASK_CMAP_FOR = { lh: 'flat_lh', rh: 'flat_rh', asym: 'flat_lh' }   // nvAsym shares LH geometry/base color
 function refreshInvalidMasks(depth) {
   if (!currentMetric) return
-  const nd = METRICS[currentMetric].n_depths
+  const zscore = showZscore && hasZscore(currentMetric)
+  const nd = activeMetricInfo(currentMetric).n_depths
   for (const [hemi, nv] of [['lh', nvLhL], ['rh', nvRhL], ['asym', nvAsym]]) {
-    const mat = matCache[`${hemi}_${currentMetric}`]
+    const mat = matCache[`${hemi}_${currentMetric}${zscore ? '_zscore' : ''}`]
     if (mat) applyInvalidMask(nv, mat, nd, depth, MASK_CMAP_FOR[hemi])
   }
 }
@@ -584,10 +600,11 @@ async function loadAllSurfaces(metric, resetCamera = false) {
 // ── matrix cache ──────────────────────────────────────────────────────────────
 const matCache = {}
 
-async function ensureMatrix(hemi, metric) {
-  const key = `${hemi}_${metric}`
+async function ensureMatrix(hemi, metric, zscore = false) {
+  const suffix = zscore ? '_zscore' : ''
+  const key = `${hemi}_${metric}${suffix}`
   if (matCache[key]) return matCache[key]
-  const r = await fetch(`${BASE_URL}/${hemi}_${TEMPLATE}_${metricId(metric)}_matrix.f32${Q}`)
+  const r = await fetch(`${BASE_URL}/${hemi}_${TEMPLATE}_${metricId(metric)}${suffix}_matrix.f32${Q}`)
   matCache[key] = new Float32Array(await r.arrayBuffer())
   return matCache[key]
 }
@@ -635,11 +652,19 @@ async function normativeRingStat(kind, metric, ringSet) {
 }
 
 async function loadMatrices(metric) {
-  await Promise.all([
+  const tasks = [
     ensureMatrix('lh',   metric),
     ensureMatrix('rh',   metric),
     ensureMatrix('asym', metric),
-  ])
+  ]
+  if (hasZscore(metric)) {
+    tasks.push(
+      ensureMatrix('lh',   metric, true),
+      ensureMatrix('rh',   metric, true),
+      ensureMatrix('asym', metric, true),
+    )
+  }
+  await Promise.all(tasks)
 }
 
 // ── initial load ──────────────────────────────────────────────────────────────
@@ -946,7 +971,7 @@ document.getElementById('depthSlider').oninput = e => setDepth(+e.target.value)
 // slider in sync. Used by the +/- keyboard shortcuts.
 function stepDepth(delta) {
   if (!currentMetric) return
-  const nd = METRICS[currentMetric].n_depths
+  const nd = activeMetricInfo(currentMetric).n_depths
   const d = Math.max(0, Math.min(nd - 1, currentDepth + delta))
   if (d === currentDepth) return
   document.getElementById('depthSlider').value = d
@@ -962,7 +987,19 @@ function setDataCLim(mn, mx) {
         nv.setMeshLayerProperty(mesh.id, 0, 'cal_min', mn)
         nv.setMeshLayerProperty(mesh.id, 0, 'cal_max', mx)
       }
+  applyDataValueLimits()
   refreshColorbars()
+}
+
+// In z-score mode, pin the LH/RH plots' value axis (x) to the (symmetric,
+// zero-centered) data CLim — same role as applyAsymValueLimits() for the
+// asym plot — instead of setProfiles()'s usual auto-fit-to-data range, which
+// would recenter on whatever the current vertex/ring happens to show and
+// lose the at-a-glance "0 = no deviation" reading z-scores depend on.
+function applyDataValueLimits() {
+  if (!chartLH || !chartRH) return
+  if (!(showZscore && hasZscore(currentMetric))) return
+  for (const c of [chartLH, chartRH]) Plotly.relayout(c, { 'xaxis.range': [currentClimMin, currentClimMax] })
 }
 
 // Pin the Asymmetry plot's value axis (x) to the asym colormap limits so the
@@ -1033,10 +1070,13 @@ function cmapCss(name, invert) {
 
 function refreshColorbars() {
   const fmt = v => parseFloat(v).toPrecision(4)
+  const zscore = showZscore && hasZscore(currentMetric)
+  const dataLabel = currentMetric + (zscore ? ' (z-score)' : '')
+  const asymLabel = zscore ? `${currentMetric} LH−RH z-score` : `${currentMetric} asymmetry`
   const pairs = [
-    ['lh',   currentCmap,     dataInvert, currentClimMin, currentClimMax, currentMetric],
-    ['rh',   currentCmap,     dataInvert, currentClimMin, currentClimMax, currentMetric],
-    ['asym', currentCmapAsym, asymInvert, currentAsymMin, currentAsymMax, `${currentMetric} asymmetry`],
+    ['lh',   currentCmap,     dataInvert, currentClimMin, currentClimMax, dataLabel],
+    ['rh',   currentCmap,     dataInvert, currentClimMin, currentClimMax, dataLabel],
+    ['asym', currentCmapAsym, asymInvert, currentAsymMin, currentAsymMax, asymLabel],
   ]
   for (const [id, cmap, inv, mn, mx, title] of pairs) {
     const g = document.getElementById(`cbgrad-${id}`)
@@ -1063,6 +1103,7 @@ function initClimInputs(info) {
   asymMaxEl.value = info.cal_max_asym.toFixed(4)
   currentClimMin = info.cal_min; currentClimMax = info.cal_max
   currentAsymMin = info.cal_min_asym; currentAsymMax = info.cal_max_asym
+  applyDataValueLimits()
   applyAsymValueLimits()
   refreshColorbars()
 }
@@ -1085,14 +1126,14 @@ asymMaxEl.addEventListener('change', onAsymClimChange)
 
 document.getElementById('climAuto').addEventListener('click', () => {
   if (!currentMetric) return
-  const info = METRICS[currentMetric]
+  const info = activeMetricInfo(currentMetric)
   climMinEl.value = info.cal_min.toFixed(4)
   climMaxEl.value = info.cal_max.toFixed(4)
   setDataCLim(info.cal_min, info.cal_max)
 })
 document.getElementById('asymAuto').addEventListener('click', () => {
   if (!currentMetric) return
-  const info = METRICS[currentMetric]
+  const info = activeMetricInfo(currentMetric)
   asymMinEl.value = info.cal_min_asym.toFixed(4)
   asymMaxEl.value = info.cal_max_asym.toFixed(4)
   setAsymCLim(info.cal_min_asym, info.cal_max_asym)
@@ -1291,10 +1332,47 @@ document.getElementById('interpChk').addEventListener('change', function() {
   })
 }
 
+// ── z-score toggle ───────────────────────────────────────────────────────────
+// Enabled/disabled per metric (not globally): follows the Metric dropdown,
+// auto-unchecking if the newly selected metric has no z-scored tsf files.
+function updateZscoreToggleAvailability(metric) {
+  const chk   = document.getElementById('zscoreChk')
+  const label = document.getElementById('zscoreLabel')
+  const available = hasZscore(metric)
+  chk.disabled = !available
+  label.style.opacity = available ? '' : 0.4
+  label.title = available
+    ? 'Show per-vertex z-scores against the cohort norm instead of raw values'
+    : 'No z-scored TSF files for this metric'
+  if (!available && showZscore) {
+    showZscore = false
+    chk.checked = false
+  }
+}
+updateZscoreToggleAvailability(currentMetric)
+
+document.getElementById('zscoreChk').addEventListener('change', async function() {
+  if (!currentMetric) { this.checked = false; return }
+  showZscore = this.checked
+  const info = activeMetricInfo(currentMetric)
+  initClimInputs(info)
+
+  const nd = info.n_depths
+  const sl = document.getElementById('depthSlider')
+  sl.max = nd - 1
+  if (currentDepth > nd - 1) currentDepth = nd - 1
+  sl.value = currentDepth
+
+  await Promise.all([loadAllSurfaces(currentMetric), loadMatrices(currentMetric)])
+  setDepth(currentDepth)
+  if (currentVertex !== null) await selectVertex(currentVertex, nvLhL)
+})
+
 // ── metric selector ───────────────────────────────────────────────────────────
 document.getElementById('metricSel').addEventListener('change', async e => {
   currentMetric = e.target.value
-  const info = METRICS[currentMetric]
+  updateZscoreToggleAvailability(currentMetric)
+  const info = activeMetricInfo(currentMetric)
   initClimInputs(info)
 
   const nd = info.n_depths
@@ -1675,12 +1753,13 @@ async function selectVertex(vertIdx, nvInst) {
   broadcastDwiCrosshair()
 
   // Read depth profiles from binary matrices, averaged over the neighbor-ring set
-  const info = METRICS[currentMetric]
+  const zscore = showZscore && hasZscore(currentMetric)
+  const info = activeMetricInfo(currentMetric)
   const nd   = info.n_depths
   const [lhMat, rhMat, asymMat] = await Promise.all([
-    ensureMatrix('lh',   currentMetric),
-    ensureMatrix('rh',   currentMetric),
-    ensureMatrix('asym', currentMetric),
+    ensureMatrix('lh',   currentMetric, zscore),
+    ensureMatrix('rh',   currentMetric, zscore),
+    ensureMatrix('asym', currentMetric, zscore),
   ])
   const rowsOf = mat => ringSet.map(vi => {
     const row = new Array(nd)
@@ -1690,8 +1769,11 @@ async function selectVertex(vertIdx, nvInst) {
   const lhArea = ringArea('lh', ringSet)
   const rhArea = ringArea('rh', ringSet)
 
+  // The cohort normative band is in the raw metric's own units/scale — not
+  // comparable to a z-score y-axis (z-scores are themselves already relative
+  // to that same cohort), so it's skipped while z-score mode is on.
   let normStat = null
-  if (showNormative && NORMATIVE[currentMetric]) {
+  if (showNormative && !zscore && NORMATIVE[currentMetric]) {
     const loadingEl = document.getElementById('normativeLoading')
     loadingEl.style.display = ''
     try {
@@ -2580,9 +2662,11 @@ function setProfiles(lhStat, rhStat, asymStat, count, lhArea, rhArea, normStat) 
   // LH and RH share one x range (covering both, bands and normative included)
   // so the two profiles are directly comparable; asym is pinned separately to
   // the asym colormap limits (applyAsymValueLimits).
+  const zscore = showZscore && hasZscore(currentMetric)
   let lo = Infinity, hi = -Infinity
   for (const [chart, stat, area, norm] of entries) {
     let label = chart.baseLabel
+    if (zscore) label += ' (z)'
     if (count > 1) label += ` (nVert=${count})`
     if (area != null) label += ` [${area.toFixed(1)} mm²]`
 
@@ -2609,7 +2693,12 @@ function setProfiles(lhStat, rhStat, asymStat, count, lhArea, rhArea, normStat) 
     }, [0, 1, 2, 3, 4, 5])
     Plotly.restyle(chart, { name: [label, normLabel] }, [0, 3])
   }
-  if (Number.isFinite(lo) && Number.isFinite(hi)) {
+  if (zscore) {
+    // Pinned to the symmetric, zero-centered data CLim (applyDataValueLimits)
+    // rather than auto-fit to this vertex's data — a z-score plot's whole
+    // point is reading deviation from 0 against a fixed scale.
+    applyDataValueLimits()
+  } else if (Number.isFinite(lo) && Number.isFinite(hi)) {
     const pad = (hi - lo) * 0.05 || 0.5
     for (const c of [chartLH, chartRH]) Plotly.relayout(c, { 'xaxis.range': [lo - pad, hi + pad] })
   } else {

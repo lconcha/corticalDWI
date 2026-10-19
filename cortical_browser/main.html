@@ -319,7 +319,10 @@ canvas.nv-canvas { display: block; width: 100% !important; height: 100% !importa
         <option value="nord-dark">Nord Dark</option>
         <option value="light">Nord Light</option>
       </select></label></div>
-    <div class="ctl-row"><label>Metric <select id="metricSel">__METRIC_OPTIONS__</select></label></div>
+    <div class="ctl-row">
+      <label>Metric <select id="metricSel">__METRIC_OPTIONS__</select></label>
+      <label id="zscoreLabel" title="Show per-vertex z-scores against the cohort norm instead of raw values"><input type="checkbox" id="zscoreChk"> Z</label>
+    </div>
     <div class="ctl-row"><label>Depth
       <input type="range" id="depthSlider" min="0" max="__MAX_DEPTH__" value="__INIT_DEPTH__">
       <span id="depth-label">__INIT_DEPTH_MM__ mm</span></label></div>
