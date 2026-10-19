@@ -271,12 +271,15 @@ for (const nv of [nvLhL, nvRhL, nvAsym, nvSlices]) {
 // Colormaps for scalar data, shared by BOTH the surface data overlays (cmapSel)
 // and the orthoslice volume (volCmapSel) so the two menus are identical. Built
 // from NiiVue's full registered set (so lipari, navia, etc. are all included),
-// minus the CT-specific clinical maps and our own diverging maps — the latter
-// live on the asymmetry menu (cmapAsymSel), since asymmetry is signed and needs
-// a white-centered map, not a sequential one.
-const CUSTOM_CMAP_NAMES = new Set(Object.keys(CUSTOM_CMAPS))
+// plus our own diverging bwr/cwr/gwr (registered above) — useful on the LH/RH
+// (and, via the shared list, the volume) panels for signed data like z-scores,
+// not just the asymmetry-index menu (cmapAsymSel), which keeps its own
+// separate, asym-only list. Only the CT-specific clinical maps and the
+// flat_lh/flat_rh masks (internal-only — flag "no data" vertices, never a
+// real user choice) are excluded.
+const MASK_CMAP_NAMES = new Set(['flat_lh', 'flat_rh'])
 const SURFACE_CMAPS = (nvSlices.colormaps ? nvSlices.colormaps() : ['gray'])
-  .filter(n => !/^ct[-_]/i.test(n) && !CUSTOM_CMAP_NAMES.has(n))
+  .filter(n => !/^ct[-_]/i.test(n) && !MASK_CMAP_NAMES.has(n))
   .sort()
 function fillCmapSelect(sel, selected) {
   sel.innerHTML = SURFACE_CMAPS.map(n =>
