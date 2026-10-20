@@ -317,7 +317,62 @@ function applyInitialCameras() {
   setCam(nvLhL,   90, 15)   // LH lateral
   setCam(nvRhL,  270, 15)   // RH lateral
   setCam(nvAsym,  90, 15)   // Asymmetry (LH geometry, lateral view)
+  yokeRecordAll()
 }
+
+// ── view yoking (wb_view-style) ────────────────────────────────────────────────
+// Rotating one of the three surface panels rotates the other two along with
+// it — same feature as Connectome Workbench's "Yoking". LH and Asym (which
+// renders on LH geometry) share azimuth 1:1; RH is mirrored — its initial
+// az=270 vs LH/Asym's az=90 above is itself a 180deg mirror image, since LH
+// and RH are mirror images of each other, so a yoked turntable rotation has
+// to run in opposite directions on each side to keep showing the same
+// anatomical view (both lateral, or both medial) at once, matching
+// Workbench's own documented behavior for surface yoking. Elevation (tilt)
+// is shared as-is, not mirrored — tilting up/down doesn't swap lateral/
+// medial correspondence.
+const YOKE_PANELS = [nvLhL, nvRhL, nvAsym]
+const YOKE_SIGN = new Map([[nvLhL, 1], [nvAsym, 1], [nvRhL, -1]])
+const yokeLastAzEl = new Map()
+let yokeEnabled = false
+let yokeApplying = false   // guards re-entrancy while this drives the other two panels
+
+function yokeRecordAll() {
+  for (const nv of YOKE_PANELS) yokeLastAzEl.set(nv, [nv.scene.renderAzimuth, nv.scene.renderElevation])
+}
+
+// Shortest signed distance from `from` to `to` on a 0-360 circle. NiiVue
+// normalizes azimuth into [0, 360) on every drag tick (CameraController.
+// normalizeAzimuth), so a naive subtraction breaks right at the wrap (e.g.
+// 359 -> 1 is really +2, not -358).
+function azimuthDelta(to, from) {
+  let d = (to - from) % 360
+  if (d > 180) d -= 360
+  if (d < -180) d += 360
+  return d
+}
+
+// Hooked onto each panel's onAzimuthElevationChange, which NiiVue fires on
+// every drag-rotation tick (and on arrow-key nudges while a panel has
+// focus). Always keeps yokeLastAzEl current, even while yoking is off, so
+// turning it on mid-session starts from a correct baseline.
+function onYokedAzElChange(nv, az, el) {
+  if (!yokeEnabled || yokeApplying) { yokeLastAzEl.set(nv, [az, el]); return }
+  const [prevAz, prevEl] = yokeLastAzEl.get(nv) ?? [az, el]
+  const dAz = azimuthDelta(az, prevAz) * YOKE_SIGN.get(nv)   // canonical (unmirrored) delta
+  const dEl = el - prevEl
+  if (dAz || dEl) {
+    yokeApplying = true
+    for (const other of YOKE_PANELS) {
+      if (other === nv) continue
+      const newAz = ((other.scene.renderAzimuth + dAz * YOKE_SIGN.get(other)) % 360 + 360) % 360
+      setCam(other, newAz, other.scene.renderElevation + dEl)
+    }
+    yokeApplying = false
+  }
+  yokeRecordAll()
+}
+for (const nv of YOKE_PANELS) nv.onAzimuthElevationChange = (az, el) => onYokedAzElChange(nv, az, el)
 
 // draw3D() calls nv.setPivot3D() at the start of every single frame, which
 // recomputes pivot3D from the scene's bounding box — so a one-off assignment
@@ -2350,6 +2405,12 @@ document.getElementById('resetPivotBtn').addEventListener('click', () => {
   resetPivot(nvLhL); resetPivot(nvRhL); resetPivot(nvAsym)
 })
 
+// ── yoked rotation toggle ──────────────────────────────────────────────────────
+document.getElementById('yokeChk').addEventListener('change', function() {
+  yokeEnabled = this.checked
+  if (yokeEnabled) yokeRecordAll()   // fresh baseline so the very next drag's delta is correct
+})
+
 // ── show/hide normative (cohort) comparison ──────────────────────────────────
 document.getElementById('showNormativeChk').addEventListener('change', async function() {
   showNormative = this.checked
@@ -2523,6 +2584,13 @@ document.addEventListener('keydown', e => {
     }
     case 'c': {   // toggle the 3-D cutaway via its checkbox so the UI stays in sync
       const chk = document.getElementById('cutaway3DChk')
+      chk.checked = !chk.checked
+      chk.dispatchEvent(new Event('change'))
+      e.preventDefault()
+      break
+    }
+    case 'y': {   // toggle yoked rotation across the surface panels via its checkbox
+      const chk = document.getElementById('yokeChk')
       chk.checked = !chk.checked
       chk.dispatchEvent(new Event('change'))
       e.preventDefault()

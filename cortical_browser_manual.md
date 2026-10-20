@@ -204,6 +204,7 @@ toggle with **Rad**.
 | **Asym** min / max / **Auto** | Color limits for the asymmetry surface (default ±1) |
 | **Asym colormap** / **Inv** | Diverging colormap for the asymmetry surface and invert toggle |
 | **Shader** | Surface lighting model (Matte / Phong / Diffuse) |
+| **Yoke rotation** | Link rotation across the LH/RH/Asym 3‑D panels — mirrored for RH, same as Connectome Workbench's "Yoking" (shortcut `y`; see *Interacting with the surfaces*) |
 | **LH / RH / Asym surf** | Per‑panel surface geometry (white, pial, inflated, very‑inflated, average_*) |
 | **Rad** | Radiological vs neurological orthoslice orientation |
 | **X‑hair** | Show/hide the orthoslice crosshair |
@@ -246,6 +247,17 @@ toggle with **Rad**.
 - The depth‑profile and multivariate charts update to that vertex (and its ring neighbors
   when **Rings > 0**).
 - **Scroll** over a surface to zoom it; drag to rotate. **Ctrl+scroll** zooms the orthoslices.
+
+### Yoke rotation
+With **Yoke rotation** on (or the `y` shortcut), dragging any one of the LH/RH/Asym 3‑D
+panels rotates the other two along with it — the same feature as Connectome Workbench's
+"Yoking". Because LH and RH are mirror images of each other, the rotation is **mirrored**
+between them: turning LH/Asym toward their medial surface turns RH toward its medial
+surface too, rather than snapping both to the same absolute camera angle. The Asym panel
+(rendered on LH geometry) always moves with LH, never mirrored against it. Elevation (tilt
+up/down) is shared as‑is, not mirrored. Zoom and pivot are independent per panel regardless
+of yoking. Toggling yoking off/on never forces an immediate realignment — it only governs
+rotation from that point on.
 
 ### Rings
 Setting **Rings > 0** expands the selection to include mesh neighbors within that many
@@ -405,6 +417,7 @@ its own smaller, independent set (see *DWI space*).
 | `p` | Toggle **Pivot@vertex** — orbit the 3‑D surfaces around the selected vertex vs. the whole‑brain centre. |
 | `i` | Toggle orthoslice interpolation — smooth (linear) vs nearest‑neighbor (mirrors the **Interp** checkbox). |
 | `c` | Toggle **3D cutaway** in the orthoslice viewer's 3‑D panel (mirrors the **3D cutaway** checkbox). |
+| `y` | Toggle **Yoke rotation** across the LH/RH/Asym 3‑D panels (mirrors the **Yoke rotation** checkbox; see *Yoke rotation*). |
 
 ### Orthoslice navigation (moves the crosshair one voxel)
 | Key | Plane | Direction |
