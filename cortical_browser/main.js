@@ -38,6 +38,10 @@ let currentShader  = 'Diffuse'
 let currentDepth   = 0
 let currentClimMin = 0, currentClimMax = 1
 let currentAsymMin = -1, currentAsymMax = 1
+// Half-width "dead zone" around zero shown as solid white/neutral on the
+// bwr/cwr/gwr diverging colormaps (0 disables — plain two-stop gradient).
+// Independent per panel group, same as the min/max limits they pair with.
+let currentClimThresh = 0, currentAsymThresh = 0
 // Orthoslice surface contours are off by default and lazily loaded per kind.
 let nRings = 0
 let currentVertex = null
@@ -232,21 +236,109 @@ for (const nv of [nvLhL, nvRhL, nvAsym, nvSlices]) {
 }
 
 // ── custom diverging colormaps ────────────────────────────────────────────────
-function buildDivergingCmap(r0, g0, b0, r1, g1, b1) {
-  const R = [], G = [], B = [], A = []
+// Every diverging colormap is defined by its own 256-entry BASE LUT —
+// color0 -> white/neutral -> color1, centered at index 127.5 — either our
+// own hand-rolled 2-color gradient (bwr/gwr/cwr) or one sampled straight
+// from matplotlib (MPL_DIVERGING_HEX below). buildDivergingCmap() and
+// buildOneSidedDivergingCmap() then remap that SAME base shape across any
+// data range + significance threshold, regardless of which kind it is.
+
+// 256-entry base LUT from two endpoint colors through white — this is all
+// bwr/gwr/cwr ever were before matplotlib's richer colormaps were added.
+function twoColorBaseLUT(r0, g0, b0, r1, g1, b1) {
+  const R = [], G = [], B = []
   for (let i = 0; i < 256; i++) {
     const t = i / 255
     if (t <= 0.5) {
       const s = t * 2
-      R.push(Math.round(r0 + s * (255 - r0)))
-      G.push(Math.round(g0 + s * (255 - g0)))
-      B.push(Math.round(b0 + s * (255 - b0)))
+      R.push(r0 + s * (255 - r0)); G.push(g0 + s * (255 - g0)); B.push(b0 + s * (255 - b0))
     } else {
       const s = (t - 0.5) * 2
-      R.push(Math.round(255 - s * (255 - r1)))
-      G.push(Math.round(255 - s * (255 - g1)))
-      B.push(Math.round(255 - s * (255 - b1)))
+      R.push(255 - s * (255 - r1)); G.push(255 - s * (255 - g1)); B.push(255 - s * (255 - b1))
     }
+  }
+  return { R, G, B }
+}
+// 256 RGB samples (as a 1536-char "rrggbb"-per-entry hex string) taken
+// straight from each matplotlib diverging colormap — generated once via
+// `cmap(np.linspace(0, 1, 256))` in a local Python/matplotlib shell and
+// pasted in statically here, so there's no runtime Python dependency.
+const MPL_DIVERGING_HEX = {
+  PiYG: '8e015290025492035594045797055999065a9b075c9d085e9f095fa10a61a40b63a60c65a80d66aa0e68ac0f6aae106bb1116db3126fb51370b71472b91574bb1675bd1777c01879c2197ac41a7cc51d7ec62080c72482c82884c92b86ca2f88cb3289cc368bcd3a8dce3d8fcf4191d04493d14895d24c97d34f99d4539bd5579dd65a9fd75ea1d861a2d965a4da69a6db6ca8dc70aadd73acde77aedf79b0df7cb1e07eb3e181b5e283b7e286b8e388bae48bbce58dbee590bfe692c1e795c3e897c4e89ac6e99cc8ea9fcaeba1cbeba3cdeca6cfeda8d1eeabd2eeadd4efb0d6f0b2d7f1b5d9f1b7daf2b8dbf2badcf3bcddf3bddef4bfdff4c1dff5c2e0f5c4e1f5c6e2f6c7e3f6c9e3f7cbe4f7cce5f8cee6f8d0e7f9d1e8f9d3e8fad4e9fad6eafbd8ebfbd9ecfcdbedfcddedfddeeefde0effde1effde2f0fce3f0fce4f0fce5f1fce5f1fbe6f1fbe7f2fbe8f2fbe9f2faeaf2faebf3faecf3faedf3f9eef4f9eef4f9eff4f9f0f5f9f1f5f8f2f5f8f3f6f8f4f6f8f5f6f7f6f7f7f7f7f7f7f6f6f7f5f5f7f3f5f7f2f4f7f0f3f7eff3f6edf2f6ecf1f6eaf1f6e8f0f6e7eff6e5eff6e4eef6e2edf6e1edf6dfecf6deebf6dcebf6dbeaf5d9e9f5d8e9f5d6e8f5d5e7f5d3e7f5d2e6f5d0e4f4cde2f3cae1f3c7dff2c4ddf1c1dbf0bfd9f0bcd8efb9d6eeb6d4edb3d2ecb0d0ecadcfebaacdeaa7cbe9a4c9e8a2c7e89fc6e79cc4e699c2e596c0e593bee490bde38dbbe28ab9e187b7e085b5df82b2dd7fb0dc7daeda7aacd977a9d874a7d672a5d56fa3d36ca1d26a9ed0679ccf649acd6198cc5f95cb5c93c95991c8578fc6548cc5518ac34f88c24c86c04983bf4681bd447fbc417dba407bb93e79b73d77b53c75b43b73b23971b0386faf376dad366bac3469aa3367a83266a73164a52f62a32e60a22d5ea02c5c9e2a5a9d29589b285699275498255296245094234e93224c91214b8f21498d20488c20468a2045881f43861f42841f40831e3f811e3d7f1e3c7d1d3a7b1d397a1d37781c36761c34741c33721c31711b306f1b2e6d1b2d6b1a2b691a2a681a286619276419',
+  PRGn: '40004b42024d44034f4605524807544b08564d0a584f0c5a510d5d530f5f5510615712635914655c15685e176a60196c621a6e641c70661e73681f756a21776c23796f247b71267e732880752982772b84782e857931877b34887c368a7e398c7f3c8d803f8f824190834492844793864a95874c97894f988a529a8b559b8d579d8e5a9e8f5da09160a29262a39465a59568a6966ba8986da99970ab9b72ac9c74ae9e76af9f78b1a17ab2a37cb3a47fb5a681b6a783b8a985b9ab87bbac89bcae8bbdb08dbfb18fc0b391c2b493c3b695c4b897c6b99ac7bb9cc9bc9ecabea0cbc0a2cdc1a4cec3a6cfc4a8d0c6aad1c7abd2c9add3caafd4cbb1d5cdb3d6ceb5d7d0b7d8d1b8d9d3badad4bcdbd6bedcd7c0ddd8c2dedac3dfdbc5e0ddc7e1dec9e2e0cbe3e1cde4e3cee5e4d0e6e6d2e7e7d4e8e8d5e9e8d7e9e9d8eaead9eaeadbebebdcecebdeececdfedede0edede2eeeee3eeefe4efefe6f0f0e7f0f0e9f1f1eaf1f2ebf2f2edf3f3eef3f4eff4f4f1f4f5f2f5f5f4f6f6f5f6f7f6f7f6f7f6f5f7f5f4f6f3f3f6f2f2f6f1f1f5efeff5eeeef5ecedf5ebecf4eaebf4e8e9f4e7e8f4e5e7f3e4e6f3e3e5f3e1e4f2e0e2f2dee1f2dde0f2dbdff1dadef1d9ddf1d7dbf1d6daf0d4d9f0d3d7efd1d5eecfd3eecdd1edcbcfecc9cdebc7cbeac5c9e9c3c7e9c1c5e8bfc3e7bdc1e6bbbfe5b9bde4b7bbe4b5b9e3b3b7e2b1b5e1afb3e0adb1e0abafdfa9addea7abdda5a9dca3a7dba1a5da9fa2d89c9fd79a9cd59799d39596d19293d09090ce8d8dcc8b8aca8987c88684c78481c5817ec37f7bc17c78c07a75be7772bc756fba726cb97069b76d66b56b63b36860b2665db0635aae6158ac5f55aa5e53a85c50a65a4ea3594ba157499f55469d54449b524199513f974f3c954d3a924c37904a358e48328c47308a452e88432b864229844026823e247f3d217d3b1f7b391c79381a7736197535187334177133166f32156d31146b3013692f12672e11652d10632b0f612a0e5f290d5c280c5a270b58260a5625085424075223065022054e20044c1f034a1e02481d01461c00441b',
+  BrBG: '5430055631055833055b34065d35065f3606613806633906663a07683c076a3d076c3e076e40077141087342087543087745087946087c47097e4909804a09824b09844c09874e0a894f0a8b500a8d520b8f540c91560d93580f955910975b12995d139b5f149d61169f6317a16518a3671aa5691ba76a1da96c1eab6e1fad7021af7222b17423b37625b57826b77928b97b29bb7d2abd7f2cbf812dc08430c28633c38936c48b3ac58e3dc79040c89343c99546ca9849cc9a4ccd9d50cea053cfa256d1a559d2a75cd3aa5fd4ac62d6af65d7b169d8b46cd9b76fdbb972dcbc75ddbe78dec17bdfc37ee0c481e1c684e2c787e3c989e4ca8ce5cc8fe6cd92e7cf94e8d097e8d29ae9d39dead59febd6a2ecd8a5edd9a8eedbaaefdcadf0deb0f1dfb3f1e1b5f2e2b8f3e4bbf4e5bef5e7c0f6e8c3f6e9c5f6e9c7f6eac9f6eacbf6ebcdf6ebcff6ecd1f6ecd3f6edd5f6edd7f6eed9f6eedbf5efdcf5efdef5f0e0f5f0e2f5f1e4f5f1e6f5f2e8f5f2eaf5f3ecf5f3eef5f4f0f5f4f2f5f5f4f4f5f5f2f4f4f0f4f3eff3f3edf3f2ebf3f2e9f2f1e7f2f0e6f1f0e4f1efe2f0eee0f0eedef0edddefeddbefecd9eeebd7eeebd5edead4ede9d2ede9d0ece8ceece8ccebe7cbebe6c9eae6c7eae5c4e9e4c1e8e2bfe7e1bce5dfb9e4deb6e3ddb4e2dbb1e1daaee0d8abdfd7a8ddd5a6dcd4a3dbd3a0dad19dd9d09ad8ce98d7cd95d6cc92d4ca8fd3c98dd2c78ad1c687d0c584cfc381cec27fccc07ccabe79c8bc76c6ba73c3b870c1b66dbfb46abdb267bbb064b9ae61b7ac5eb5aa5bb3a858b0a755aea552aca34faaa14da89f4aa69d47a49b44a299419f973e9d953b9b9338999135978f33958d31938b2f91892d8f872b8d85298b83278a8225888023867e21847c1f827a1d80781a7e76187c74167a7210746c0e726a0c71690a6f67086d65066b6304696102675f01655d01645b016259016058015f56015d54015b52015a5001584f01564d01554b015349015147005046004e44004c42004b4000493e00483d00463b004439004337004135003f34003e32003c30',
+  PuOr: '7f3b08813c08833d08853e088740088941088b42088d43078f44079145079346079548079749079a4a079c4b079e4c07a04d07a24e07a44f07a65107a85206aa5306ac5406ae5506b05606b25706b45906b65a07b75c07b95e08bb5f08bd6109be630ac0640ac2660bc4680bc6690cc76b0cc96d0dcb6e0dcd700ece720fd0730fd27510d47610d57811d77a11d97b12db7d12dc7f13de8013e08214e18417e2861ae3881de58a20e68d23e78f27e8912ae9932dea9530eb9733ed9936ee9b39ef9e3cf0a03ff1a242f2a446f3a649f4a84cf6aa4ff7ac52f8ae55f9b158fab35bfbb55efcb761fdb965fdba68fdbc6bfdbd6efdbf72fdc175fdc278fdc47bfdc57ffdc782fdc885fdca88fdcc8cfecd8ffecf92fed095fed299fed39cfed59ffed7a2fed8a6fedaa9fedbacfeddaffedeb3fee0b6fee1b9fde2bbfde3befde4c0fde5c3fce5c5fce6c8fce7cafce8cdfbe9cffbead2fbebd5faecd7faeddafaeedcfaeedff9efe1f9f0e4f9f1e6f9f2e9f8f3ecf8f4eef8f5f1f7f6f3f7f7f6f6f6f7f5f5f6f4f4f6f3f3f5f2f2f5f0f1f4eff0f4eeeef3ededf3ebecf3eaebf2e9eaf2e8e9f1e7e8f1e5e7f0e4e5f0e3e4efe2e3efe1e2eedfe1eedee0eddddfeddcddecdadcecd9dbebd8daebd7d8ead5d6e9d4d4e8d2d3e7d1d1e6cfcfe5cecde4cccbe3cbc9e2c9c8e1c8c6e0c6c4dfc5c2dec3c0ddc2bedcc0bddbbfbbdabdb9d9bcb7d8bab5d7b9b3d6b7b1d5b6b0d4b4aed3b3acd2b1aad1afa8d0ada6ceaba3cda9a1cba79fcaa59dc8a39bc7a198c59f96c49d94c29b92c19990bf988dbe968bbc9489bb9287b99085b88e82b68c80b58a7eb3887cb2867ab08475af8275ad8073ac7e70ab7d6da97b6aa87967a67764a57661a4745ea2725ba170589f6f559e6d529c6b4f9b6a4c9a684998664697644395634094613d935f3a915d37905c348e5a318d582e8c572b8a5528895326875225845023824f22804d207d4c1f7b4a1d78491c76471a7445187144176f42156c41146a3f12683e11653c0f633b0e61390c5e380b5c3609593508573306553205523003502f024d2d004b',
+  RdGy: '67001f6a011f6d02207003207304217605217906227c07227f0823810823840924870a248a0b258d0c25900d26930e26960f279910279c11279f1228a21328a51429a81529ab162aae172ab1182bb3192cb41c2db61f2eb72230b82531ba2832bb2a34bd2d35be3036bf3338c13639c2383ac43b3cc53e3dc6413ec84440c94741cb4942cc4c44ce4f45cf5246d05548d25849d35a4ad55d4cd6604dd7634fd86551da6853db6b55dc6e57dd7059de735cdf765ee17860e27b62e37e64e48066e58368e6866ae8896ce98b6eea8e70eb9172ec9374ee9677ef9979f09c7bf19e7df2a17ff3a481f4a683f5a886f5aa89f5ac8bf6af8ef6b191f6b394f7b596f7b799f7b99cf8bb9ef8bda1f8bfa4f9c2a7f9c4a9f9c6acfac8affacab1fbccb4fbceb7fbd0b9fcd3bcfcd5bffcd7c2fdd9c4fddbc7fddcc9fddecbfddfcefde1d0fde2d2fde3d4fee5d6fee6d9fee8dbfee9ddfeebdffeece1feede4feefe6fef0e8fef2eafef3ecfef4effef6f1fff7f3fff9f5fffaf7fffbfafffdfcfffefefefefefdfdfdfcfcfcfbfbfbfafafaf8f8f8f7f7f7f6f6f6f5f5f5f3f3f3f2f2f2f1f1f1f0f0f0efefefedededecececebebebeaeaeae9e9e9e7e7e7e6e6e6e5e5e5e4e4e4e2e2e2e1e1e1e0e0e0dfdfdfdddddddcdcdcdadadad9d9d9d7d7d7d6d6d6d4d4d4d3d3d3d1d1d1d0d0d0cecececdcdcdcbcbcbcacacac8c8c8c7c7c7c5c5c5c4c4c4c2c2c2c1c1c1bfbfbfbebebebcbcbcbbbbbbb9b9b9b7b7b7b5b5b5b3b3b3b1b1b1afafafadadadabababa9a9a9a7a7a7a5a5a5a3a3a3a1a1a19f9f9f9d9d9d9b9b9b9999999797979595959393939191918f8f8f8d8d8d8b8b8b8989898787878585858282828080807e7e7e7c7c7c7979797777777575757373737070706e6e6e6c6c6c6969696767676565656363636060605e5e5e5c5c5c5a5a5a5757575555555353535050504e4e4e4c4c4c4a4a4a4848484646464444444242424040403e3e3e3c3c3c3a3a3a3838383636363434343232323030302e2e2e2c2c2c2a2a2a2828282626262424242222222020201e1e1e1c1c1c1a1a1a',
+  RdBu: '67001f6a011f6d02207003207304217605217906227c07227f0823810823840924870a248a0b258d0c25900d26930e26960f279910279c11279f1228a21328a51429a81529ab162aae172ab1182bb3192cb41c2db61f2eb72230b82531ba2832bb2a34bd2d35be3036bf3338c13639c2383ac43b3cc53e3dc6413ec84440c94741cb4942cc4c44ce4f45cf5246d05548d25849d35a4ad55d4cd6604dd7634fd86551da6853db6b55dc6e57dd7059de735cdf765ee17860e27b62e37e64e48066e58368e6866ae8896ce98b6eea8e70eb9172ec9374ee9677ef9979f09c7bf19e7df2a17ff3a481f4a683f5a886f5aa89f5ac8bf6af8ef6b191f6b394f7b596f7b799f7b99cf8bb9ef8bda1f8bfa4f9c2a7f9c4a9f9c6acfac8affacab1fbccb4fbceb7fbd0b9fcd3bcfcd5bffcd7c2fdd9c4fddbc7fddcc9fdddcbfcdecdfcdfcffce0d0fce2d2fbe3d4fbe4d6fbe5d8fbe6dafae7dcfae8defae9dffaeae1f9ebe3f9ede5f9eee7f9efe9f9f0ebf8f1edf8f2eff8f3f0f8f4f2f7f5f4f7f6f6f6f7f7f5f6f7f3f5f6f2f5f6f0f4f6eff3f5edf2f5ecf2f5eaf1f5e9f0f4e7f0f4e6eff4e4eef4e3edf3e1edf3e0ecf3deebf2ddebf2dbeaf2dae9f2d8e9f1d7e8f1d5e7f1d4e6f1d2e6f0d1e5f0cfe4efcce2efcae1eec7e0edc5dfecc2ddecc0dcebbddbeabbdaeab8d8e9b6d7e8b3d6e8b1d5e7aed3e6acd2e5a9d1e5a7d0e4a5cee3a2cde3a0cce29dcbe19bc9e098c8e096c7df93c6de90c4dd8dc2dc8ac0db87beda84bcd981bad87eb8d77bb6d678b4d575b2d471b0d36eaed26bacd168abd065a9cf62a7ce5fa5cd5ca3cb59a1ca569fc9529dc84f9bc74c99c64997c54695c44393c34291c2408fc13f8ec03e8cbf3c8abe3b88be3a87bd3885bc3783bb3681ba3480b9337eb8327cb7307ab62f79b52e77b52c75b42b73b32a71b22870b1276eb0266caf246aae2369ad2267ac2065ab1f63a81e61a51d5fa21c5c9f1b5a9c1a589919569618549317529015508d144e8a134c8712498411478110457e0f437b0e41790d3f760c3d730a3b7009386d08366a073467063264053061',
+  RdYlBu: 'a50026a70226a90426ab0626ad0826af0926b10b26b30d26b50f26b71126b91326bb1526bd1726be1827c01a27c21c27c41e27c62027c82227ca2427cc2627ce2827d02927d22b27d42d27d62f27d83128d93429da362adb382bdc3b2cdd3d2dde402ee0422fe14430e24731e34933e44c34e54e35e65036e75337e95538ea5739eb5a3aec5c3bed5f3cee613eef633ff16640f26841f36b42f46d43f47044f57245f57547f57748f67a49f67c4af67f4bf7814cf7844ef8864ff88950f88c51f98e52f99153f99355fa9656fa9857fa9b58fb9d59fba05bfba35cfca55dfca85efcaa5ffdad60fdaf62fdb164fdb366fdb567fdb769fdb96bfdbb6dfdbd6ffdbf71fdc173fdc374fdc576fdc778fec87afeca7cfecc7efece7ffed081fed283fed485fed687fed889feda8afedc8cfede8efee090fee192fee294fee496fee597fee699fee79bfee99dfeea9ffeeba1feeca2feeda4feefa6fff0a8fff1aafff2acfff3adfff5affff6b1fff7b3fff8b5fffab7fffbb9fffcbafffdbcfffebefeffc0fdfec2fcfec5fbfdc7fafdc9f8fccbf7fccef6fbd0f5fbd2f3fbd4f2fad6f1fad9f0f9dbeff9ddedf8dfecf8e2ebf7e4eaf7e6e9f6e8e7f6ebe6f5ede5f5efe4f4f1e2f4f4e1f3f6e0f3f8def2f7dcf1f7daf0f6d8eff6d6eef5d4edf4d1ecf4cfebf3cdeaf3cbe9f2c9e8f2c7e7f1c5e6f0c3e5f0c1e4efbfe3efbde2eebbe1edb9e0edb6dfecb4deecb2ddebb0dceaaedbeaacdae9aad8e9a8d6e8a6d5e7a3d3e6a1d1e59fd0e49dcee39bcce299cae197c9e094c7df92c5de90c3dd8ec2dc8cc0db8abeda87bdd985bbd983b9d881b7d77fb6d67db4d57ab2d478b0d376afd274add172abd070a9cf6ea6ce6da4cc6ba2cb69a0ca679ec9659bc86399c76297c66095c45e93c35c90c25a8ec1588cc0578abf5588be5385bd5183bb4f81ba4d7fb94b7db84a7ab74878b64676b54574b34471b2436fb1426cb0416aaf4167ad4065ac3f62ab3e60aa3e5ea83d5ba73c59a63b56a53a54a43a51a2394fa1384ca0374a9f36479e36459c35429b34409a333d99333b97323896313695',
+  RdYlGn: 'a50026a70226a90426ab0626ad0826af0926b10b26b30d26b50f26b71126b91326bb1526bd1726be1827c01a27c21c27c41e27c62027c82227ca2427cc2627ce2827d02927d22b27d42d27d62f27d83128d93429da362adb382bdc3b2cdd3d2dde402ee0422fe14430e24731e34933e44c34e54e35e65036e75337e95538ea5739eb5a3aec5c3bed5f3cee613eef633ff16640f26841f36b42f46d43f47044f57245f57547f57748f67a49f67c4af67f4bf7814cf7844ef8864ff88950f88c51f98e52f99153f99355fa9656fa9857fa9b58fb9d59fba05bfba35cfca55dfca85efcaa5ffdad60fdaf62fdb163fdb365fdb567fdb768fdb96afdbb6cfdbd6dfdbf6ffdc171fdc372fdc574fdc776fec877feca79fecc7bfece7cfed07efed27ffed481fed683fed884feda86fedc88fede89fee08bfee18dfee28ffee491fee593fee695fee797fee999feea9bfeeb9dfeec9ffeeda1feefa3fff0a6fff1a8fff2aafff3acfff5aefff6b0fff7b2fff8b4fffab6fffbb8fffcbafffdbcfffebefeffbefdfebcfbfdbafafdb8f8fcb6f7fcb4f5fbb2f4fab0f2faaef1f9aceff8aaeef8a8ecf7a6ebf7a3e9f6a1e8f59fe6f59de5f49be3f399e2f397e0f295dff293ddf191dcf08fdaf08dd9ef8bd7ee8ad5ed88d3ec87d1ec86cfeb85cdea83cbe982c9e881c7e77fc5e67ec3e67dc1e57bbfe47abde379bbe278b9e176b7e075b5df74b3df72b1de71afdd70addc6fabdb6da9da6ca7d96ba5d86aa2d76aa0d6699dd5699bd46998d36896d26893d16891d0688ecf678ccd6789cc6787cb6784ca6682c9667fc8667dc7657ac66578c56575c46573c26470c1646ec0646bbf6469be6366bd6363bc6260ba625db9615ab76057b65f54b45f51b35e4eb15d4bb05c48ae5c45ad5b42ac5a3faa593ca95939a75836a65733a45630a3562da1552aa054279f53249d53219c521e9a511b995019975018954f17934e16914d15904c148e4b138c4a128a491188481086470f84460e82450d80440c7f430b7d420a7b4109794008773f07753e06733d05713c04703b036e3a026c39016a38006837',
+  coolwarm: '3b4cc03c4ec23d50c33e51c53f53c64055c84257c94358cb445acc455cce465ecf485fd14961d24a63d34b64d54c66d64e68d84f69d9506bda516ddb536edd5470de5572df5673e05875e15977e35a78e45b7ae55d7ce65e7de75f7fe86180e96282ea6384eb6485ec6687ed6788ee688aef6a8bef6b8df06c8ff16e90f26f92f37093f37295f47396f57597f67699f6779af7799cf87a9df87b9ff97da0f97ea1fa80a3fa81a4fb82a6fb84a7fc85a8fc86a9fc88abfd89acfd8badfd8caffe8db0fe8fb1fe90b2fe92b4fe93b5fe94b6ff96b7ff97b8ff98b9ff9abbff9bbcff9dbdff9ebeff9fbfffa1c0ffa2c1ffa3c2fea5c3fea6c4fea7c5fea9c6fdaac7fdabc8fdadc9fdaec9fcafcafcb1cbfcb2ccfbb3cdfbb5cdfab6cefab7cff9b9d0f9bad0f8bbd1f8bcd2f7bed2f6bfd3f6c0d4f5c1d4f4c3d5f4c4d5f3c5d6f2c6d6f1c7d7f0c9d7f0cad8efcbd8eeccd9edcdd9eccedaebcfdaead1dae9d2dbe8d3dbe7d4dbe6d5dbe5d6dce4d7dce3d8dce2d9dce1dadce0dbdcdedcdddddddcdcdedcdbdfdbd9e0dbd8e1dad6e2dad5e3d9d3e4d9d2e5d8d1e6d7cfe7d7cee8d6cce9d5cbead5c9ead4c8ebd3c6ecd3c5edd2c3edd1c2eed0c0efcfbfefcebdf0cdbbf1cdbaf1ccb8f2cbb7f2cab5f2c9b4f3c8b2f3c7b1f4c6aff4c5adf5c4acf5c2aaf5c1a9f5c0a7f6bfa6f6bea4f6bda2f7bca1f7ba9ff7b99ef7b89cf7b79bf7b599f7b497f7b396f7b194f7b093f7af91f7ad90f7ac8ef7aa8cf7a98bf7a889f7a688f6a586f6a385f6a283f5a081f59f80f59d7ef59c7df49a7bf4987af39778f39577f39475f29274f29072f18f71f18d6ff08b6ef08a6cef886bee8669ee8468ed8366ec8165ec7f63eb7d62ea7b60e97a5fe9785de8765ce7745be67259e57058e46e56e36c55e36b54e26952e16751e0654fdf634ede614ddd5f4bdc5d4ada5a49d95847d85646d75445d65244d55042d44e41d24b40d1493fd0473dcf453ccd423bcc403acb3e38ca3b37c83836c73635c53334c43032c32e31c12b30c0282fbe242ebd1f2dbb1b2cba162bb8122ab70d28b50927b40426',
+  seismic: '00004c00004f00005200005500005800005a00005d00006000006300006600006800006b00006e00007100007400007600007900007c00007f00008200008400008700008a00008d00009000009200009500009800009b00009e0000a00000a30000a60000a90000ac0000ae0000b10000b40000b70000ba0000bc0000bf0000c20000c50000c80000ca0000cd0000d00000d30000d60000d80000db0000de0000e10000e40000e60000e90000ec0000ef0000f20000f40000f70000fa0000fd0101ff0505ff0909ff0d0dff1111ff1515ff1919ff1d1dff2121ff2525ff2929ff2d2dff3131ff3535ff3939ff3d3dff4141ff4545ff4949ff4d4dff5151ff5555ff5959ff5d5dff6161ff6565ff6969ff6d6dff7171ff7575ff7979ff7d7dff8181ff8585ff8989ff8d8dff9191ff9595ff9999ff9d9dffa1a1ffa5a5ffa9a9ffadadffb1b1ffb5b5ffb9b9ffbdbdffc1c1ffc5c5ffc9c9ffcdcdffd1d1ffd5d5ffd9d9ffddddffe1e1ffe5e5ffe9e9ffededfff1f1fff5f5fff9f9fffdfdfffffdfdfff9f9fff5f5fff1f1ffededffe9e9ffe5e5ffe1e1ffddddffd9d9ffd5d5ffd1d1ffcdcdffc9c9ffc5c5ffc1c1ffbdbdffb9b9ffb5b5ffb1b1ffadadffa9a9ffa5a5ffa1a1ff9d9dff9999ff9595ff9191ff8d8dff8989ff8585ff8181ff7d7dff7979ff7575ff7171ff6d6dff6969ff6565ff6161ff5d5dff5959ff5555ff5151ff4d4dff4949ff4545ff4141ff3d3dff3939ff3535ff3131ff2d2dff2929ff2525ff2121ff1d1dff1919ff1515ff1111ff0d0dff0909ff0505ff0101fe0000fc0000fa0000f80000f60000f40000f20000f00000ee0000ec0000ea0000e80000e60000e30000e20000e00000de0000dc0000da0000d80000d60000d30000d20000d00000ce0000cc0000ca0000c80000c60000c30000c20000c00000be0000bc0000ba0000b80000b60000b30000b20000b00000ae0000ac0000aa0000a80000a60000a30000a20000a000009e00009c00009a00009800009600009300009200009000008e00008c00008a0000880000860000840000820000800000',
+}
+function hexBaseLUT(hex) {
+  const R = [], G = [], B = []
+  for (let i = 0; i < 256; i++) {
+    const o = i * 6
+    R.push(parseInt(hex.substr(o, 2), 16))
+    G.push(parseInt(hex.substr(o + 2, 2), 16))
+    B.push(parseInt(hex.substr(o + 4, 2), 16))
+  }
+  return { R, G, B }
+}
+// Linear-interpolated sample at a fractional index into a 256-entry base LUT.
+function sampleBaseLUT(lut, idx) {
+  const i0 = Math.max(0, Math.min(255, Math.floor(idx)))
+  const i1 = Math.min(255, i0 + 1)
+  const f = idx - i0
+  return [
+    lut.R[i0] + f * (lut.R[i1] - lut.R[i0]),
+    lut.G[i0] + f * (lut.G[i1] - lut.G[i0]),
+    lut.B[i0] + f * (lut.B[i1] - lut.B[i0]),
+  ]
+}
+// color0/color1 endpoints for our own 3 hand-rolled diverging colormaps —
+// every other diverging name comes from MPL_DIVERGING_HEX instead. Lowercased
+// for the matplotlib ones (vs. e.g. "RdBu") to match this app's own naming
+// convention and sort predictably alongside bwr/gwr/cwr and NiiVue's own
+// built-ins (all lowercase).
+const CUSTOM_DIVERGING_RGB = {
+  bwr: [0,   0, 255, 255,   0,   0],  // blue-white-red
+  gwr: [0, 180,   0, 255,   0,   0],  // green-white-red
+  cwr: [0, 200, 200, 255,   0,   0],  // cyan-white-red
+}
+const DIVERGING_LUTS = {}
+for (const [name, rgb] of Object.entries(CUSTOM_DIVERGING_RGB)) DIVERGING_LUTS[name] = twoColorBaseLUT(...rgb)
+for (const [name, hex] of Object.entries(MPL_DIVERGING_HEX)) DIVERGING_LUTS[name.toLowerCase()] = hexBaseLUT(hex)
+const DIVERGING_NAMES = Object.keys(DIVERGING_LUTS).sort()
+
+// lo/hi are the data range this LUT gets mapped across (cal_min/cal_max);
+// thresh is a half-width "dead zone" around zero held flat white — e.g.
+// lo=-7, hi=7, thresh=2.29 squeezes the base LUT's whole lower-half
+// trajectory into -7..-2.29, holds flat white from -2.29 to +2.29, then
+// squeezes its upper-half trajectory into +2.29..+7. thresh=0 (the default)
+// collapses the dead zone to nothing, exactly reproducing the base LUT
+// (remapped only for an asymmetric [lo, hi]) — this is also what every
+// pre-threshold/pre-matplotlib version of this function always produced.
+function buildDivergingCmap(baseLUT, lo = -1, hi = 1, thresh = 0) {
+  const span = hi - lo || 1e-9
+  let fracNeg = Math.min(1, Math.max(0, (-thresh - lo) / span))
+  let fracPos = Math.min(1, Math.max(0, (thresh - lo) / span))
+  if (fracPos < fracNeg) fracPos = fracNeg   // thresh wider than [lo, hi]: no ramp, all white
+  const center = (baseLUT.R.length - 1) / 2
+  const R = [], G = [], B = [], A = []
+  for (let i = 0; i < 256; i++) {
+    const t = i / 255
+    let r, g, b
+    if (t <= fracNeg) {
+      const s = fracNeg > 0 ? t / fracNeg : 0
+      ;[r, g, b] = sampleBaseLUT(baseLUT, s * center)
+    } else if (t >= fracPos) {
+      const s = fracPos < 1 ? (t - fracPos) / (1 - fracPos) : 1
+      ;[r, g, b] = sampleBaseLUT(baseLUT, center + s * (baseLUT.R.length - 1 - center))
+    } else {
+      r = 255; g = 255; b = 255
+    }
+    R.push(Math.round(r)); G.push(Math.round(g)); B.push(Math.round(b))
     A.push(255)
   }
   return { R, G, B, A }
@@ -258,13 +350,10 @@ function buildDivergingCmap(r0, g0, b0, r1, g1, b1) {
 function buildFlatCmap(r, g, b) {
   return { R: [r, r], G: [g, g], B: [b, b], A: [255, 255] }
 }
-const CUSTOM_CMAPS = {
-  bwr:  buildDivergingCmap(  0,   0, 255, 255,   0,   0),  // blue-white-red
-  gwr:  buildDivergingCmap(  0, 180,   0, 255,   0,   0),  // green-white-red
-  cwr:  buildDivergingCmap(  0, 200, 200, 255,   0,   0),  // cyan-white-red
-  flat_lh: buildFlatCmap(...((LH_SURF?.rgba255 ?? [102, 179, 255]).slice(0, 3))),
-  flat_rh: buildFlatCmap(...((RH_SURF?.rgba255 ?? [255, 133, 77]).slice(0, 3))),
-}
+const CUSTOM_CMAPS = {}
+for (const name of DIVERGING_NAMES) CUSTOM_CMAPS[name] = buildDivergingCmap(DIVERGING_LUTS[name])
+CUSTOM_CMAPS.flat_lh = buildFlatCmap(...((LH_SURF?.rgba255 ?? [102, 179, 255]).slice(0, 3)))
+CUSTOM_CMAPS.flat_rh = buildFlatCmap(...((RH_SURF?.rgba255 ?? [255, 133, 77]).slice(0, 3)))
 for (const nv of [nvLhL, nvRhL, nvAsym, nvSlices]) {
   for (const [name, cmap] of Object.entries(CUSTOM_CMAPS)) {
     try {
@@ -276,10 +365,67 @@ for (const nv of [nvLhL, nvRhL, nvAsym, nvSlices]) {
   }
 }
 
+// Rebuilds one of the diverging colormaps for the given data range +
+// threshold and re-registers it on just the given NiiVue instances — each
+// instance keeps its own colormap registry, so the LH/RH "Data" panels and
+// the Asym panel can show the same-named colormap shaped by independent
+// ranges/thresholds at once. No-op for any other colormap name (sequential
+// colormaps like viridis have no zero to center a dead zone on). Re-applies
+// 'colormap' on every affected layer afterward so already-rendered meshes
+// pick up the new LUT immediately, not just the next time it's selected.
+function refreshDivergingCmap(nvList, name, lo, hi, thresh) {
+  if (!DIVERGING_LUTS[name]) return
+  const lut = buildDivergingCmap(DIVERGING_LUTS[name], lo, hi, thresh)
+  for (const nv of nvList) {
+    nv.addColormap(name, lut)
+    for (const mesh of nv.meshes)
+      if (mesh.layers?.length) nv.setMeshLayerProperty(mesh.id, 0, 'colormap', name)
+  }
+}
+
+// One-sided variant for an UNSIGNED magnitude (the collapse-depth z-score
+// mode's "mean |z|"/"mean |LH-RH z|" overlay — see applyCollapsedOverlays):
+// data only ever runs lo..hi (lo is usually, but not necessarily, 0 — the
+// range is user-editable same as everywhere else), so only the base LUT's
+// upper/"positive" half (its center..255 trajectory) is used, white‑out dead
+// zone retained. Using the full two-sided buildDivergingCmap here would be
+// wrong — it'd paint the lower-half colors at the LOW (not negative)
+// extreme of this axis, which doesn't mean anything for a magnitude that's
+// never negative.
+function buildOneSidedDivergingCmap(baseLUT, lo, hi, thresh = 0) {
+  const span = (hi - lo) || 1e-9
+  const fracThresh = Math.min(1, Math.max(0, (thresh - lo) / span))
+  const center = (baseLUT.R.length - 1) / 2
+  const R = [], G = [], B = [], A = []
+  for (let i = 0; i < 256; i++) {
+    const t = i / 255
+    let r, g, b
+    if (t <= fracThresh) {
+      r = 255; g = 255; b = 255
+    } else {
+      const s = fracThresh < 1 ? (t - fracThresh) / (1 - fracThresh) : 1
+      ;[r, g, b] = sampleBaseLUT(baseLUT, center + s * (baseLUT.R.length - 1 - center))
+    }
+    R.push(Math.round(r)); G.push(Math.round(g)); B.push(Math.round(b))
+    A.push(255)
+  }
+  return { R, G, B, A }
+}
+
+function refreshOneSidedDivergingCmap(nvList, name, lo, hi, thresh) {
+  if (!DIVERGING_LUTS[name]) return
+  const lut = buildOneSidedDivergingCmap(DIVERGING_LUTS[name], lo, hi, thresh)
+  for (const nv of nvList) {
+    nv.addColormap(name, lut)
+    for (const mesh of nv.meshes)
+      if (mesh.layers?.length) nv.setMeshLayerProperty(mesh.id, 0, 'colormap', name)
+  }
+}
+
 // Colormaps for scalar data, shared by BOTH the surface data overlays (cmapSel)
 // and the orthoslice volume (volCmapSel) so the two menus are identical. Built
 // from NiiVue's full registered set (so lipari, navia, etc. are all included),
-// plus our own diverging bwr/cwr/gwr (registered above) — useful on the LH/RH
+// plus our own diverging colormaps (registered above) — useful on the LH/RH
 // (and, via the shared list, the volume) panels for signed data like z-scores,
 // not just the asymmetry-index menu (cmapAsymSel), which keeps its own
 // separate, asym-only list. Only the CT-specific clinical maps and the
@@ -289,11 +435,23 @@ const MASK_CMAP_NAMES = new Set(['flat_lh', 'flat_rh'])
 const SURFACE_CMAPS = (nvSlices.colormaps ? nvSlices.colormaps() : ['gray'])
   .filter(n => !/^ct[-_]/i.test(n) && !MASK_CMAP_NAMES.has(n))
   .sort()
-function fillCmapSelect(sel, selected) {
-  sel.innerHTML = SURFACE_CMAPS.map(n =>
+// divergingOnly restricts the list to bwr/cwr/gwr — used in z-score mode,
+// where every metric shows signed data and a sequential (non-zero-centered)
+// colormap like viridis wouldn't make sense.
+function fillCmapSelect(sel, selected, divergingOnly = false) {
+  const names = divergingOnly ? DIVERGING_NAMES : SURFACE_CMAPS
+  sel.innerHTML = names.map(n =>
     `<option value="${n}"${n === selected ? ' selected' : ''}>${n}</option>`).join('')
 }
 fillCmapSelect(document.getElementById('cmapSel'), currentCmap)
+
+// cmapAsymSel's options are static HTML (it has its own small, asym-only
+// list — see the comment above SURFACE_CMAPS), so unlike cmapSel this just
+// hides the non-diverging ones instead of rebuilding the list.
+function filterAsymCmapOptions(divergingOnly) {
+  for (const opt of document.getElementById('cmapAsymSel').options)
+    opt.hidden = divergingOnly && !DIVERGING_NAMES.includes(opt.value)
+}
 
 function applyShader(nv, name) {
   if (!nv.meshShaders) return
@@ -562,16 +720,29 @@ function applyCollapsedOverlays() {
   // case (unsigned mean |diff|) switches to the data colormap.
   let dataMin, dataMax, dataGMin, dataGMax, asymCmap, asymInv, asymMin, asymMax, asymGMin, asymGMax
   if (zscore) {
+    // collapseClimMax/collapseAsymClimMax are the collapsed data's own
+    // stats — kept for the Auto button (see climAuto/asymAuto) to fit the
+    // range to what this metric's mean |z| actually looks like, but no
+    // longer force-applied: the range is user-editable here exactly like
+    // every other mode (Data/Asym min/max/Auto), not auto-overridden.
     const lhStats   = lhCollapsed   ? collapsedRangeStats(lhCollapsed)   : null
     const rhStats   = rhCollapsed   ? collapsedRangeStats(rhCollapsed)   : null
     const asymStats = asymCollapsed ? collapsedRangeStats(asymCollapsed) : null
     collapseClimMax = Math.max(lhStats?.calMax || 0, rhStats?.calMax || 0) || 1
     collapseAsymClimMax = asymStats?.calMax || 1
-    dataMin = 0; dataMax = collapseClimMax
+    dataMin = currentClimMin; dataMax = currentClimMax
     dataGMin = 0; dataGMax = Math.max(lhStats?.trueMax || 0, rhStats?.trueMax || 0) || 1
     asymCmap = currentCmap; asymInv = dataInvert
-    asymMin = 0; asymMax = collapseAsymClimMax
+    asymMin = currentAsymMin; asymMax = currentAsymMax
     asymGMin = 0; asymGMax = asymStats?.trueMax || 1
+    // Unsigned magnitude (never negative) — use only the colormap's
+    // positive/"hot" half, not the full two-sided diverging shape, or the
+    // cool end would wrongly paint the low (not negative) extreme of this
+    // axis. Asym uses currentCmap here (see asymCmap above) but its own
+    // range/threshold (asymMin/asymMax/currentAsymThresh), independent of
+    // the Data panel's.
+    refreshOneSidedDivergingCmap([nvLhL, nvRhL], currentCmap, dataMin, dataMax, currentClimThresh)
+    refreshOneSidedDivergingCmap([nvAsym], currentCmap, asymMin, asymMax, currentAsymThresh)
   } else {
     dataMin = currentClimMin; dataMax = currentClimMax
     dataGMin = currentClimMin; dataGMax = currentClimMax
@@ -1215,6 +1386,15 @@ function setDataCLim(mn, mx) {
         nv.setMeshLayerProperty(mesh.id, 0, 'cal_min', mn)
         nv.setMeshLayerProperty(mesh.id, 0, 'cal_max', mx)
       }
+  // In collapse-depth + z-score mode, the LH/RH surfaces show an unsigned
+  // "mean |z|" overlay — no negative side, so its colormap needs the
+  // one-sided builder (white up to the cutoff, color only above it) instead
+  // of the normal two-sided diverging shape. See applyCollapsedOverlays.
+  if (collapsedAsymUnsigned()) {
+    refreshOneSidedDivergingCmap([nvLhL, nvRhL], currentCmap, mn, mx, currentClimThresh)
+  } else {
+    refreshDivergingCmap([nvLhL, nvRhL], currentCmap, mn, mx, currentClimThresh)
+  }
   applyDataValueLimits()
   refreshColorbars()
 }
@@ -1244,6 +1424,15 @@ function setAsymCLim(mn, mx) {
       nvAsym.setMeshLayerProperty(mesh.id, 0, 'cal_min', mn)
       nvAsym.setMeshLayerProperty(mesh.id, 0, 'cal_max', mx)
     }
+  // See setDataCLim's matching branch — the asym surface shows the same
+  // kind of unsigned "mean |LH-RH z|" overlay in this mode (using
+  // currentCmap, not currentCmapAsym — see applyCollapsedOverlays), so it
+  // needs the one-sided colormap too, with its own range/threshold.
+  if (collapsedAsymUnsigned()) {
+    refreshOneSidedDivergingCmap([nvAsym], currentCmap, mn, mx, currentAsymThresh)
+  } else {
+    refreshDivergingCmap([nvAsym], currentCmapAsym, mn, mx, currentAsymThresh)
+  }
   applyAsymValueLimits()
   refreshColorbars()
 }
@@ -1265,6 +1454,7 @@ function setDataCmap(cmap, invert) {
         nv.setMeshLayerProperty(mesh.id, 0, 'colormap', cmap)
         nv.setMeshLayerProperty(mesh.id, 0, 'colormapInvert', invert)
       }
+  refreshDivergingCmap([nvLhL, nvRhL], cmap, currentClimMin, currentClimMax, currentClimThresh)
   if (collapsedAsymUnsigned()) {
     for (const mesh of nvAsym.meshes)
       if (mesh.layers?.length) {
@@ -1287,6 +1477,7 @@ function setAsymCmap(cmap, invert) {
         nvAsym.setMeshLayerProperty(mesh.id, 0, 'colormap', cmap)
         nvAsym.setMeshLayerProperty(mesh.id, 0, 'colormapInvert', invert)
       }
+    refreshDivergingCmap([nvAsym], cmap, currentAsymMin, currentAsymMax, currentAsymThresh)
   }
   refreshColorbars()
 }
@@ -1299,12 +1490,33 @@ function setLayerOpacity(op) {
 }
 
 // ── colorbars ─────────────────────────────────────────────────────────────────
-// Build the gradient straight from NiiVue's interpolated colormap LUT so every
-// registered colormap (built-in or our custom diverging ones) renders correctly
-// and the bar always matches the surface. nvSlices.colormap(name, invert) returns
-// the full 256-entry RGBA table with inversion already applied, so no separate
-// per-colormap CSS table to keep in sync.
-function cmapCss(name, invert) {
+// Build CSS gradient stops straight from a {R,G,B,A} LUT (same shape
+// buildDivergingCmap returns).
+function lutToCss(lut, invert) {
+  const n = lut.R.length, STEPS = 16, stops = []
+  for (let s = 0; s <= STEPS; s++) {
+    let idx = Math.round(s / STEPS * (n - 1))
+    if (invert) idx = n - 1 - idx
+    stops.push(`rgb(${lut.R[idx]},${lut.G[idx]},${lut.B[idx]}) ${(s / STEPS * 100).toFixed(1)}%`)
+  }
+  return `linear-gradient(to right, ${stops.join(',')})`
+}
+
+// For diverging colormaps, build the LUT fresh from this panel's own
+// lo/hi/thresh — the shared per-NiiVue-instance registry (see
+// refreshDivergingCmap) can only hold one shape per name at a time, which
+// isn't enough when the Data and Asym panels pick the same diverging
+// colormap but different ranges/thresholds. Every other (sequential,
+// built-in) colormap doesn't have that problem, so those still read
+// straight from nvSlices.colormap(), which returns the full 256-entry RGBA
+// table with inversion already applied.
+function cmapCss(name, invert, lo, hi, thresh, oneSided) {
+  if (DIVERGING_LUTS[name] && lo !== undefined && hi !== undefined) {
+    const lut = oneSided
+      ? buildOneSidedDivergingCmap(DIVERGING_LUTS[name], lo, hi, thresh || 0)
+      : buildDivergingCmap(DIVERGING_LUTS[name], lo, hi, thresh || 0)
+    return lutToCss(lut, !!invert)
+  }
   let lut = null
   try { lut = nvSlices.colormap ? nvSlices.colormap(name, !!invert) : null } catch (e) {}
   if (lut && lut.length >= 8) {
@@ -1321,37 +1533,41 @@ function cmapCss(name, invert) {
 function refreshColorbars() {
   const fmt = v => parseFloat(v).toPrecision(4)
   const zscore = showZscore && hasZscore(currentMetric)
-  let dataLabel, asymLabel, dataMin, dataMax, asymCmap, asymInv, asymMin, asymMax
-  if (collapseDepth && zscore) {
+  const collapsedUnsigned = collapseDepth && zscore   // see applyCollapsedOverlays
+  let dataLabel, asymLabel, dataMin, dataMax, asymCmap, asymInv, asymMin, asymMax, asymThresh
+  if (collapsedUnsigned) {
     dataLabel = currentMetric + ' mean |z|'
     asymLabel = `${currentMetric} mean |LH−RH z|`
-    dataMin = 0; dataMax = collapseClimMax
-    asymCmap = currentCmap; asymInv = dataInvert
-    asymMin = 0; asymMax = collapseAsymClimMax
+    dataMin = currentClimMin; dataMax = currentClimMax
+    asymCmap = currentCmap; asymInv = dataInvert   // asym panel shows currentCmap here, see collapsedAsymUnsigned()
+    asymMin = currentAsymMin; asymMax = currentAsymMax
+    asymThresh = currentAsymThresh
   } else if (collapseDepth) {
     dataLabel = currentMetric + ' mean'
     asymLabel = `${currentMetric} mean asymmetry`
     dataMin = currentClimMin; dataMax = currentClimMax
     asymCmap = currentCmapAsym; asymInv = asymInvert
     asymMin = currentAsymMin; asymMax = currentAsymMax
+    asymThresh = currentAsymThresh
   } else {
     dataLabel = currentMetric + (zscore ? ' (z-score)' : '')
     asymLabel = zscore ? `${currentMetric} LH−RH z-score` : `${currentMetric} asymmetry`
     dataMin = currentClimMin; dataMax = currentClimMax
     asymCmap = currentCmapAsym; asymInv = asymInvert
     asymMin = currentAsymMin; asymMax = currentAsymMax
+    asymThresh = currentAsymThresh
   }
   const pairs = [
-    ['lh',   currentCmap, dataInvert, dataMin, dataMax, dataLabel],
-    ['rh',   currentCmap, dataInvert, dataMin, dataMax, dataLabel],
-    ['asym', asymCmap,    asymInv,    asymMin, asymMax, asymLabel],
+    ['lh',   currentCmap, dataInvert, dataMin, dataMax, dataLabel, currentClimThresh],
+    ['rh',   currentCmap, dataInvert, dataMin, dataMax, dataLabel, currentClimThresh],
+    ['asym', asymCmap,    asymInv,    asymMin, asymMax, asymLabel, asymThresh],
   ]
-  for (const [id, cmap, inv, mn, mx, title] of pairs) {
+  for (const [id, cmap, inv, mn, mx, title, thresh] of pairs) {
     const g = document.getElementById(`cbgrad-${id}`)
     const l = document.getElementById(`cblbl-${id}-min`)
     const r = document.getElementById(`cblbl-${id}-max`)
     const t = document.getElementById(`cbtitle-${id}`)
-    if (g) g.style.background = cmapCss(cmap, inv)
+    if (g) g.style.background = cmapCss(cmap, inv, mn, mx, thresh, collapsedUnsigned)
     if (l) l.textContent = fmt(mn)
     if (r) r.textContent = fmt(mx)
     if (t) t.textContent = title || ''
@@ -1359,10 +1575,14 @@ function refreshColorbars() {
 }
 
 // ── CLim input fields initialisation ─────────────────────────────────────────
-const climMinEl  = document.getElementById('climMin')
-const climMaxEl  = document.getElementById('climMax')
-const asymMinEl  = document.getElementById('asymMin')
-const asymMaxEl  = document.getElementById('asymMax')
+const climMinEl    = document.getElementById('climMin')
+const climMaxEl    = document.getElementById('climMax')
+const asymMinEl    = document.getElementById('asymMin')
+const asymMaxEl    = document.getElementById('asymMax')
+const climThreshEl = document.getElementById('climThresh')
+const asymThreshEl = document.getElementById('asymThresh')
+const climThreshDefaultTitle = climThreshEl.title
+const asymThreshDefaultTitle = asymThreshEl.title
 
 function initClimInputs(info) {
   climMinEl.value = info.cal_min.toFixed(4)
@@ -1371,6 +1591,9 @@ function initClimInputs(info) {
   asymMaxEl.value = info.cal_max_asym.toFixed(4)
   currentClimMin = info.cal_min; currentClimMax = info.cal_max
   currentAsymMin = info.cal_min_asym; currentAsymMax = info.cal_max_asym
+  refreshDivergingCmap([nvLhL, nvRhL], currentCmap, currentClimMin, currentClimMax, currentClimThresh)
+  if (!collapsedAsymUnsigned())
+    refreshDivergingCmap([nvAsym], currentCmapAsym, currentAsymMin, currentAsymMax, currentAsymThresh)
   applyDataValueLimits()
   applyAsymValueLimits()
   refreshColorbars()
@@ -1392,19 +1615,44 @@ function onAsymClimChange() {
 asymMinEl.addEventListener('change', onAsymClimChange)
 asymMaxEl.addEventListener('change', onAsymClimChange)
 
+// ── diverging-colormap threshold ("dead zone" around zero) ───────────────────
+// Negative/blank input is treated as 0 (threshold disabled, plain gradient) —
+// mirrors how the min/max fields already just ignore non-finite input.
+climThreshEl.addEventListener('change', () => {
+  const t = parseFloat(climThreshEl.value)
+  currentClimThresh = (isFinite(t) && t > 0) ? t : 0
+  setDataCLim(currentClimMin, currentClimMax)
+})
+asymThreshEl.addEventListener('change', () => {
+  const t = parseFloat(asymThreshEl.value)
+  currentAsymThresh = (isFinite(t) && t > 0) ? t : 0
+  setAsymCLim(currentAsymMin, currentAsymMax)
+})
+
 document.getElementById('climAuto').addEventListener('click', () => {
   if (!currentMetric) return
-  const info = activeMetricInfo(currentMetric)
-  climMinEl.value = info.cal_min.toFixed(4)
-  climMaxEl.value = info.cal_max.toFixed(4)
-  setDataCLim(info.cal_min, info.cal_max)
+  // The collapsed "mean |z|" overlay's own range (collapseClimMax, from the
+  // actual collapsed data — see applyCollapsedOverlays) fits it far better
+  // than the per-depth z-score stats below: it's unsigned (starts at 0) and
+  // on a different scale (a mean across depths is naturally smaller than any
+  // single depth's z).
+  const [mn, mx] = collapsedAsymUnsigned() ? [0, collapseClimMax] : (() => {
+    const info = activeMetricInfo(currentMetric)
+    return [info.cal_min, info.cal_max]
+  })()
+  climMinEl.value = mn.toFixed(4)
+  climMaxEl.value = mx.toFixed(4)
+  setDataCLim(mn, mx)
 })
 document.getElementById('asymAuto').addEventListener('click', () => {
   if (!currentMetric) return
-  const info = activeMetricInfo(currentMetric)
-  asymMinEl.value = info.cal_min_asym.toFixed(4)
-  asymMaxEl.value = info.cal_max_asym.toFixed(4)
-  setAsymCLim(info.cal_min_asym, info.cal_max_asym)
+  const [mn, mx] = collapsedAsymUnsigned() ? [0, collapseAsymClimMax] : (() => {
+    const info = activeMetricInfo(currentMetric)
+    return [info.cal_min_asym, info.cal_max_asym]
+  })()
+  asymMinEl.value = mn.toFixed(4)
+  asymMaxEl.value = mx.toFixed(4)
+  setAsymCLim(mn, mx)
 })
 
 // ── colormap / invert controls ────────────────────────────────────────────────
@@ -1651,14 +1899,73 @@ function updateZscoreToggleAvailability(metric) {
 }
 updateZscoreToggleAvailability(currentMetric)
 
+// z-score mode shows signed, unitless data for every metric alike, so it
+// gets one fixed default range/threshold/colormap instead of each metric's
+// own computed cal_min/cal_max — and whatever cmap/limits were active in
+// raw mode are saved here and restored exactly on the way back out, rather
+// than recomputed, so z-score tweaks never leak into (or get lost from) the
+// raw-mode view.
+const ZSCORE_DEFAULT_CMAP   = 'cwr'
+const ZSCORE_DEFAULT_MIN    = -3
+const ZSCORE_DEFAULT_MAX    = 3
+const ZSCORE_DEFAULT_THRESH = 2.3
+let savedRawState = null
+
+function saveRawState() {
+  savedRawState = {
+    cmap: currentCmap, cmapAsym: currentCmapAsym,
+    climMin: currentClimMin, climMax: currentClimMax, climThresh: currentClimThresh,
+    asymMin: currentAsymMin, asymMax: currentAsymMax, asymThresh: currentAsymThresh,
+  }
+}
+
+function applyZscoreModeDefaults() {
+  fillCmapSelect(document.getElementById('cmapSel'), ZSCORE_DEFAULT_CMAP, true)
+  filterAsymCmapOptions(true)
+  document.getElementById('cmapAsymSel').value = ZSCORE_DEFAULT_CMAP
+  setDataCmap(ZSCORE_DEFAULT_CMAP, dataInvert)
+  setAsymCmap(ZSCORE_DEFAULT_CMAP, asymInvert)
+  currentClimThresh = ZSCORE_DEFAULT_THRESH
+  currentAsymThresh = ZSCORE_DEFAULT_THRESH
+  climMinEl.value = ZSCORE_DEFAULT_MIN.toFixed(4)
+  climMaxEl.value = ZSCORE_DEFAULT_MAX.toFixed(4)
+  climThreshEl.value = ZSCORE_DEFAULT_THRESH
+  asymMinEl.value = ZSCORE_DEFAULT_MIN.toFixed(4)
+  asymMaxEl.value = ZSCORE_DEFAULT_MAX.toFixed(4)
+  asymThreshEl.value = ZSCORE_DEFAULT_THRESH
+  setDataCLim(ZSCORE_DEFAULT_MIN, ZSCORE_DEFAULT_MAX)
+  setAsymCLim(ZSCORE_DEFAULT_MIN, ZSCORE_DEFAULT_MAX)
+}
+
+function restoreRawState() {
+  const s = savedRawState
+  fillCmapSelect(document.getElementById('cmapSel'), s ? s.cmap : currentCmap, false)
+  filterAsymCmapOptions(false)
+  if (!s) return
+  document.getElementById('cmapAsymSel').value = s.cmapAsym
+  setDataCmap(s.cmap, dataInvert)
+  setAsymCmap(s.cmapAsym, asymInvert)
+  currentClimThresh = s.climThresh
+  currentAsymThresh = s.asymThresh
+  climMinEl.value = s.climMin.toFixed(4)
+  climMaxEl.value = s.climMax.toFixed(4)
+  climThreshEl.value = s.climThresh
+  asymMinEl.value = s.asymMin.toFixed(4)
+  asymMaxEl.value = s.asymMax.toFixed(4)
+  asymThreshEl.value = s.asymThresh
+  setDataCLim(s.climMin, s.climMax)
+  setAsymCLim(s.asymMin, s.asymMax)
+}
+
 document.getElementById('zscoreChk').addEventListener('change', async function() {
   if (!currentMetric) { this.checked = false; return }
   showZscore = this.checked
   updateCollapseDepthToggleAvailability(currentMetric)
   updateCollapseCmapControlsEnabled()
-  const info = activeMetricInfo(currentMetric)
-  initClimInputs(info)
+  if (showZscore) { saveRawState(); applyZscoreModeDefaults() }
+  else restoreRawState()
 
+  const info = activeMetricInfo(currentMetric)
   const nd = info.n_depths
   const sl = document.getElementById('depthSlider')
   sl.max = nd - 1
@@ -1688,12 +1995,23 @@ function updateCollapseDepthToggleAvailability(metric) {
     chk.checked = false
   }
 }
-// The asym-specific diverging colormap/invert controls have nothing to do
-// only in the one unsigned case — collapse-depth AND z-score mode together
-// (mean |LH-RH z| then follows the main data colormap instead, see
-// applyCollapsedOverlays/setDataCmap/setAsymCmap) — disabled then so
-// adjusting them doesn't silently do nothing. The raw collapse-depth asym
-// (mean of the signed ratio) keeps using them normally.
+// collapsedAsymUnsigned() (despite its name) is the one mode where BOTH
+// panels switch to an unsigned "mean |z|"/"mean |LH-RH z|" overlay (see
+// applyCollapsedOverlays) and the asym surface follows the main data
+// colormap instead of its own — cmapAsymSel/cmapAsymInv are disabled then
+// so picking an asym colormap that silently has no effect isn't confusing.
+// Min/max/± all stay enabled, same as every other mode: the range is
+// user-editable here too (collapseClimMax/collapseAsymClimMax are only a
+// sensible Auto-button target, not an override — see applyCollapsedOverlays
+// and climAuto/asymAuto), and ± is the one-sided colormap's significance
+// cutoff (white below it, color only above — see
+// refreshOneSidedDivergingCmap), now independent per panel same as the
+// range is.
+//
+// This function (despite its name) also gates the white-cutoff (±) fields
+// on z-score mode generally, not just this collapse-specific case: outside
+// z-score mode there's no meaningful "zero deviation" to draw a
+// significance cutoff against, so both stay grayed out whenever Z is off.
 function updateCollapseCmapControlsEnabled() {
   const unsigned = collapsedAsymUnsigned()
   const sel = document.getElementById('cmapAsymSel')
@@ -1705,6 +2023,21 @@ function updateCollapseCmapControlsEnabled() {
   sel.title = unsigned
     ? 'Not used in collapse-depth z-score mode — the collapsed asym surface follows the main data colormap instead'
     : 'Colormap for the asymmetry index'
+
+  for (const el of [climThreshEl, asymThreshEl]) {
+    el.disabled = !showZscore
+    el.parentElement.style.opacity = showZscore ? '' : 0.4
+  }
+  climThreshEl.title = !showZscore
+    ? 'Only used in z-score mode (the Z checkbox)'
+    : unsigned
+      ? 'Significance cutoff for the collapsed mean |z| colormap — white below it, color above (one-sided: no negative side to an unsigned magnitude)'
+      : climThreshDefaultTitle
+  asymThreshEl.title = !showZscore
+    ? 'Only used in z-score mode (the Z checkbox)'
+    : unsigned
+      ? 'Significance cutoff for the collapsed mean |LH-RH z| colormap — white below it, color above (one-sided: no negative side to an unsigned magnitude)'
+      : asymThreshDefaultTitle
 }
 updateCollapseDepthToggleAvailability(currentMetric)
 updateCollapseCmapControlsEnabled()
@@ -1722,12 +2055,20 @@ document.getElementById('collapseDepthChk').addEventListener('change', async fun
 // ── metric selector ───────────────────────────────────────────────────────────
 document.getElementById('metricSel').addEventListener('change', async e => {
   currentMetric = e.target.value
-  updateZscoreToggleAvailability(currentMetric)
+  const wasZscore = showZscore
+  updateZscoreToggleAvailability(currentMetric)   // may force showZscore -> false
   updateCollapseDepthToggleAvailability(currentMetric)
   updateCollapseCmapControlsEnabled()
-  const info = activeMetricInfo(currentMetric)
-  initClimInputs(info)
+  // Z-score mode uses one fixed default (see applyZscoreModeDefaults) instead
+  // of each metric's own computed cal_min/cal_max, so switching metrics
+  // re-applies it rather than reading the new metric's stats; falling out of
+  // z-score mode here (the new metric has no z-scored data) restores the
+  // saved raw-mode state exactly like unchecking the checkbox does.
+  if (wasZscore && !showZscore) restoreRawState()
+  else if (showZscore) applyZscoreModeDefaults()
+  else initClimInputs(activeMetricInfo(currentMetric))
 
+  const info = activeMetricInfo(currentMetric)
   const nd = info.n_depths
   const sl = document.getElementById('depthSlider')
   sl.max = nd - 1

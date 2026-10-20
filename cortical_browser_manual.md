@@ -197,12 +197,15 @@ toggle with **Rad**.
 | Control | Description |
 |---|---|
 | **Metric** | Dropdown of the configured metrics found for this subject |
+| **Z** | Show per‑vertex z‑scores against the cohort norm instead of raw values; disabled for metrics with no z‑scored data. Switches the Data/Asym colormap dropdowns to diverging‑only, with their own fixed default range (see *Thresholded diverging colormaps*) |
 | **Depth** (slider + mm) | Cortical depth layer shown on the surfaces; the mm label is distance from the pial surface |
 | **Data** min / max / **Auto** | Color limits for the LH/RH overlays; **Auto** sets them from the data's 2–98th percentile |
 | **Data colormap** / **Inv** | Colormap for the LH/RH overlays and an invert toggle |
+| **Data ±** (threshold) | Half‑width dead zone around zero shown as solid white — only affects the 13 diverging colormaps; 0 disables. Only enabled in **Z** mode (see *Thresholded diverging colormaps*) |
 | **Ov** | Overlay opacity on the surfaces |
 | **Asym** min / max / **Auto** | Color limits for the asymmetry surface (default ±1) |
 | **Asym colormap** / **Inv** | Diverging colormap for the asymmetry surface and invert toggle |
+| **Asym ±** (threshold) | Same dead‑zone threshold as **Data ±**, independent, for the asymmetry surface. Only enabled in **Z** mode (see *Thresholded diverging colormaps*) |
 | **Shader** | Surface lighting model (Matte / Phong / Diffuse) |
 | **Yoke rotation** | Link rotation across the LH/RH/Asym 3‑D panels — mirrored for RH, same as Connectome Workbench's "Yoking" (shortcut `y`; see *Interacting with the surfaces*) |
 | **LH / RH / Asym surf** | Per‑panel surface geometry (white, pial, inflated, very‑inflated, average_*) |
@@ -263,6 +266,68 @@ rotation from that point on.
 Setting **Rings > 0** expands the selection to include mesh neighbors within that many
 edge‑hops. Every plot then shows the **mean ± 1 SD** across the selected vertices — the
 univariate profiles and all three multivariate panels aggregate over the same vertex set.
+
+---
+
+## Thresholded diverging colormaps
+
+13 diverging colormaps support an optional dead zone around zero, shown as solid white
+instead of a gradient: our own 3 hand‑rolled ones — **bwr** (blue‑white‑red), **cwr**
+(cyan‑white‑red), **gwr** (green‑white‑red) — plus 10 straight from matplotlib's
+[diverging set](https://matplotlib.org/stable/users/explain/colors/colormaps.html#diverging)
+(**spectral** excluded — it has no true white stop at its center, so the dead zone wouldn't
+read as "neutral"): **rdbu, rdgy, puor, piyg, prgn, brbg, rdylbu, rdylgn, coolwarm, seismic**.
+This is
+the **Data ±** / **Asym ±** field next to each panel's min/max/**Auto** controls: set it to a
+value `t` and the colormap's whole color trajectory on each side gets squeezed between
+**min**/**max** and **∓t**, holding flat white across **[‑t, +t]** instead of the plain
+gradient you get with `t = 0`. This is useful for z‑score surfaces, where it reads as "not
+significant" vs "significant deviation": e.g. min/max of **‑7/7** with a threshold of **2.29**
+shows color only outside ±2.29, and solid white everywhere in between.
+
+- The threshold only affects these 13 diverging colormaps — it's ignored for every other
+  (sequential) colormap, since those have no "zero" to center a dead zone on.
+- **Data ±** and **Asym ±** are independent, same as the **Data**/**Asym** min/max/colormap
+  controls they sit next to — each panel can use a different diverging colormap with its own
+  range and threshold at the same time.
+- The colorbar legend under each panel always reflects the current threshold, so the dead
+  zone is visible there too, not just on the 3‑D surfaces.
+- **Data ±** / **Asym ±** are only enabled in **Z** (z‑score) mode — outside it they're grayed
+  out, since raw values have no meaningful "zero deviation" to draw a significance cutoff
+  against. Turning **Z** off restores whatever value either field had before (see *Z‑score
+  mode defaults*), same as the colormap/range fields they sit next to.
+
+### Z‑score mode defaults
+
+Turning **Z** on changes the Data and Asym colormap controls:
+
+- Both **Data colormap** and **Asym colormap** dropdowns are restricted to the 13 diverging
+  colormaps (see *Thresholded diverging colormaps*) — every sequential colormap is hidden,
+  since z‑scores are signed and a sequential colormap has no zero to diverge from.
+- Both switch to **cwr** and reset to **min ‑3 / max 3 / threshold ±2.3** — a fixed default
+  that applies the same way to every metric, rather than a per‑metric computed range.
+- Whatever colormap/limits/threshold were active just before turning **Z** on are saved and
+  restored **exactly** when **Z** goes back off — including if the metric has no z‑scored
+  data and the browser disables **Z** for you automatically. Any tweaks made *while* in
+  z‑score mode (a different colormap, a wider threshold, …) are discarded on the way out,
+  not carried into raw mode.
+- Switching **Metric** while **Z** is already on re‑applies the same fixed z‑score default
+  (cwr / ‑3 / 3 / ±2.3) for the new metric, rather than remembering whatever was tweaked for
+  the previous one. Use **Auto** to fit the range to that metric's actual z‑score data
+  instead, same as in raw mode.
+- With **Collapse depth** *also* on, the LH/RH/Asym surfaces instead show an unsigned mean
+  |z| (the collapsed overlay averages |z| across depths, not z itself). Only **Asym
+  colormap**/**Inv** go disabled in this one combination — the asym surface follows the
+  **Data** colormap here, not its own (same as the raw, non‑z‑score collapse-depth case
+  already did), so picking one would silently have no effect. **Data**/**Asym**
+  min/max/**Auto**/± all stay fully editable and independent of each other, same as every
+  other mode — set any range you like; **Auto** fits each to that panel's own collapsed
+  data (which starts at 0 and is usually a different scale than the fixed z‑score default,
+  since a mean across depths is smaller than any single depth's z).
+- The colormap itself also changes shape here: since mean |z| is never negative, only the
+  colormap's "hot" half is used (e.g. cwr's white‑to‑red) — white below **±**, ramping into
+  color above it, with no "cool" half, since there's no negative side to an unsigned
+  magnitude.
 
 ---
 

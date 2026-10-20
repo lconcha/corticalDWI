@@ -443,6 +443,9 @@ canvas.nv-canvas { display: block; width: 100% !important; height: 100% !importa
       <input type="number" id="climMax" step="0.001" title="Color max">
       <button class="cbtn" id="climAuto">Auto</button>
     </div>
+    <div class="cmap-rng">
+      <label title="Half-width dead zone around zero shown as solid white/neutral — only affects the diverging bwr/cwr/gwr colormaps; 0 disables">±<input type="number" id="climThresh" step="0.001" min="0" value="0"></label>
+    </div>
   </div>
   <!-- Row 1: surface 3-D renders -->
   <div class="cell grow1 cell-lh">
@@ -477,6 +480,16 @@ canvas.nv-canvas { display: block; width: 100% !important; height: 100% !importa
         <option value="bwr">blue-white-red</option>
                 <option value="cwr">cyan-white-red</option>
                 <option value="gwr">green-white-red</option>
+                <option value="rdbu">red-blue (RdBu)</option>
+                <option value="rdgy">red-gray (RdGy)</option>
+                <option value="puor">purple-orange (PuOr)</option>
+                <option value="piyg">pink-green (PiYG)</option>
+                <option value="prgn">purple-green (PRGn)</option>
+                <option value="brbg">brown-teal (BrBG)</option>
+                <option value="rdylbu">red-yellow-blue (RdYlBu)</option>
+                <option value="rdylgn">red-yellow-green (RdYlGn)</option>
+                <option value="coolwarm">cool-warm</option>
+                <option value="seismic">seismic</option>
                 <option value="blue2red">blue2red (hue)</option>
                 <option value="blue2magenta">blue2magenta</option>
                 <option value="hsv">hsv</option>
@@ -489,6 +502,9 @@ canvas.nv-canvas { display: block; width: 100% !important; height: 100% !importa
       <span>–</span>
       <input type="number" id="asymMax" step="0.001" title="Asym color max">
       <button class="cbtn" id="asymAuto">Auto</button>
+    </div>
+      <div class="cmap-rng">
+      <label title="Half-width dead zone around zero shown as solid white/neutral — only affects the diverging bwr/cwr/gwr colormaps; 0 disables">±<input type="number" id="asymThresh" step="0.001" min="0" value="0"></label>
     </div>
     </div>
   </div>
