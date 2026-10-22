@@ -3411,6 +3411,13 @@ function setProfiles(lhStat, rhStat, asymStat, count, lhArea, rhArea, normStat) 
       y: [depth, sdDepth, sdDepth, normDepth, normDepth, normDepth],
     }, [0, 1, 2, 3, 4, 5])
     Plotly.restyle(chart, { name: [label, normLabel] }, [0, 3])
+    // LH/RH shade the area under the curve (against x=0) the same way the
+    // Asymmetry plot always does, but only in z-score mode — a raw metric's
+    // x=0 isn't a meaningful reference line the way "0 deviation" is for a
+    // z-score, so there's nothing to usefully shade against outside it.
+    // Asym itself is unaffected (built with fillToZero=true — see
+    // profileTraces/makeChart — and never toggled here).
+    if (chart !== chartAsym) Plotly.restyle(chart, { fill: [zscore ? 'tozerox' : 'none'] }, [0])
   }
   if (zscore) {
     // Pinned to the symmetric, zero-centered data CLim (applyDataValueLimits)
