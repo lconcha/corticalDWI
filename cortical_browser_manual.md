@@ -440,13 +440,20 @@ loaded volumes.
 
 ## Depth‑profile plots
 
-Three charts show, per depth (x‑axis = mm from the pial surface):
+Three charts show, per depth (y‑axis = mm from the pial surface, reversed so pial is at the
+top; x‑axis = the value itself):
 
 1. **LH depth profile** and **RH depth profile** — the metric value, with a dashed ± SD band
    when Rings > 0, and (optionally) a **Normative** cohort mean ± SD band.
 2. **Asymmetry profile** — `(LH − RH) / mean(LH, RH)` per depth, with a zero reference line.
 
 A vertical marker tracks the currently selected depth; clicking a chart sets the depth.
+
+In **Z** (z‑score) mode, **LH**/**RH** also shade the area between the curve and the zero
+reference line — the same way **Asymmetry** always does — since a z‑score's deviation from 0
+is the whole point of the plot. Outside **Z** mode, LH/RH go back to a plain unfilled line: a
+raw metric's x=0 isn't a meaningful reference to shade against. Asymmetry itself is unaffected
+either way.
 
 
 > :heavy_exclamation_mark:  **Invalid data** (the `-1` sentinel or depths beyond a short track) is treated as *no data*: it is **excluded from the averages** and drawn as a **gap** rather than a spurious value.
