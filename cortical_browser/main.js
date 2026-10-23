@@ -52,6 +52,13 @@ let pivotAtVertex = false
 // neighbor spheres (always 30% of the seed's radius) scale right along
 // with the main one.
 let vertexSphereScale = 1
+// Hidden feature (Alt+Shift+V / Alt+Shift+N — see promptVertexMarkerColor/
+// promptNeighborMarkerColor): [r,g,b] (0-255) override for the selected-
+// vertex / neighbor-ring marker spheres, otherwise hardcoded to 'warm'
+// (yellow) / 'gray' (white) — see markerConnectomeJSON/neighborConnectomeJSON.
+// null means "use the default colormap", not "any override yet applied".
+let vertexMarkerColorOverride = null
+let neighborMarkerColorOverride = null
 let showNormative = false
 // Z-score mode: surfaces/profiles read the metric's _zscore tsf siblings
 // instead of its raw values. Per-metric (hasZscore), not global — see
@@ -2322,12 +2329,27 @@ function pickTriangle(mesh, origin, azimuthDeg, elevationDeg, scale, whratio, nd
 }
 
 // ── vertex marker (connectome sphere) ────────────────────────────────────────
+// Custom-color registry for the hidden Alt+Shift+V/N recolor feature (see
+// promptVertexMarkerColor/promptNeighborMarkerColor below): a flat (single-
+// color) colormap, same mechanism as flat_lh/flat_rh's "no data" tint —
+// registered fresh on every nv instance whenever the override color
+// changes, under a fixed name each marker/neighbor JSON can reference.
+const MARKER_COLOR_CMAP   = 'vertex_marker_custom'
+const NEIGHBOR_COLOR_CMAP = 'vertex_neighbor_custom'
+function registerMarkerColorCmap(name, rgb) {
+  const cmap = buildFlatCmap(rgb[0], rgb[1], rgb[2])
+  for (const nv of [nvLhL, nvRhL, nvAsym]) {
+    try { nv.addColormap(name, cmap) } catch (e) {}
+  }
+}
+
 function markerConnectomeJSON(x, y, z, size) {
+  const cmap = vertexMarkerColorOverride ? MARKER_COLOR_CMAP : 'warm'
   return {
     name: 'vertex-marker',
-    nodeColormap: 'warm', nodeColormapNegative: 'winter',
+    nodeColormap: cmap, nodeColormapNegative: cmap,
     nodeMinColor: 0, nodeMaxColor: 1, nodeScale: 1,
-    edgeColormap: 'warm', edgeColormapNegative: 'winter',
+    edgeColormap: cmap, edgeColormapNegative: cmap,
     edgeMin: 0, edgeMax: 1, edgeScale: 1,
     showLegend: false,   // suppress the floating "vertex" text label over the sphere
     nodes: { names: ['vertex'], X: [x], Y: [y], Z: [z], Color: [1], Size: [size] },
@@ -2356,11 +2378,12 @@ function placeMarker(nvInst, x, y, z) {
 
 // ── neighbor-ring markers (white spheres, 30% of the seed's radius) ─────────
 function neighborConnectomeJSON(node0, size) {
+  const cmap = neighborMarkerColorOverride ? NEIGHBOR_COLOR_CMAP : 'gray'
   return {
     name: 'vertex-neighbors',
-    nodeColormap: 'gray', nodeColormapNegative: 'gray',
+    nodeColormap: cmap, nodeColormapNegative: cmap,
     nodeMinColor: 0, nodeMaxColor: 1, nodeScale: 1,
-    edgeColormap: 'gray', edgeColormapNegative: 'gray',
+    edgeColormap: cmap, edgeColormapNegative: cmap,
     edgeMin: 0, edgeMax: 1, edgeScale: 1,
     showLegend: false,   // suppress the floating "nbrN" text labels over each sphere
     nodes: { names: [node0.name], X: [node0.x], Y: [node0.y], Z: [node0.z], Color: [1], Size: [size] },
@@ -2430,6 +2453,70 @@ function placeVertexMarkers() {
     syncNeighborMarkers(nvRhL, rhNbrPts, seedRr * 0.3)
     if (pivotAtVertex) setCustomPivot(nvRhL, [rx, ry, rz])
   }
+}
+
+// Drops any existing marker/neighbor meshes so the next placeVertexMarkers()
+// rebuilds them from scratch — needed because placeMarker()/syncNeighborMarkers()
+// otherwise just update an existing connectome's node position/size in place,
+// without re-reading nodeColormap from a fresh markerConnectomeJSON()/
+// neighborConnectomeJSON() call. Used when the marker color changes (see
+// promptVertexMarkerColor/promptNeighborMarkerColor below) — removeMesh()+
+// recreate is also what syncNeighborMarkers() already does when a ring set
+// becomes empty, and simpler than reaching into NiiVue's connectome
+// internals to patch an existing mesh's colormap directly.
+function rebuildVertexMarkers() {
+  for (const nv of [nvLhL, nvRhL, nvAsym]) {
+    const marker = markerMeshes.get(nv)
+    if (marker) { nv.removeMesh(marker); markerMeshes.delete(nv) }
+    const nbr = neighborMeshes.get(nv)
+    if (nbr) { nv.removeMesh(nbr); neighborMeshes.delete(nv) }
+  }
+  placeVertexMarkers()
+}
+
+// Parses "R,G,B" / "R G B" (0-255 each) or "#RRGGBB" / "RRGGBB" hex into an
+// [r,g,b] array, clamped to 0-255; returns null if the input doesn't parse.
+function parseRgbInput(str) {
+  str = str.trim()
+  if (!str) return null
+  const hex = str.match(/^#?([0-9a-f]{6})$/i)
+  if (hex) {
+    const n = parseInt(hex[1], 16)
+    return [(n >> 16) & 255, (n >> 8) & 255, n & 255]
+  }
+  const parts = str.split(/[\s,/]+/).map(Number)
+  if (parts.length === 3 && parts.every(Number.isFinite))
+    return parts.map(v => Math.max(0, Math.min(255, Math.round(v))))
+  return null
+}
+
+// Hidden feature (shortcut: Alt+Shift+V): prompts for an RGB (or #hex) color
+// and recolors the selected-vertex marker sphere — hardcoded 'warm' (yellow)
+// otherwise. Leave the field blank to reset to the default.
+function promptVertexMarkerColor() {
+  const current = vertexMarkerColorOverride ? vertexMarkerColorOverride.join(',') : ''
+  const input = prompt('Selected-vertex marker color — "R,G,B" (0-255) or "#RRGGBB".\nLeave blank to reset to the default (yellow).', current)
+  if (input === null) return   // cancelled
+  if (input.trim() === '') { vertexMarkerColorOverride = null; rebuildVertexMarkers(); return }
+  const rgb = parseRgbInput(input)
+  if (!rgb) { alert('Could not parse that color — use "R,G,B" (0-255) or "#RRGGBB".'); return }
+  vertexMarkerColorOverride = rgb
+  registerMarkerColorCmap(MARKER_COLOR_CMAP, rgb)
+  rebuildVertexMarkers()
+}
+
+// Hidden feature (shortcut: Alt+Shift+N): same, for the neighbor-ring marker
+// spheres — hardcoded 'gray' (white) otherwise.
+function promptNeighborMarkerColor() {
+  const current = neighborMarkerColorOverride ? neighborMarkerColorOverride.join(',') : ''
+  const input = prompt('Neighbor-ring marker color — "R,G,B" (0-255) or "#RRGGBB".\nLeave blank to reset to the default (white).', current)
+  if (input === null) return
+  if (input.trim() === '') { neighborMarkerColorOverride = null; rebuildVertexMarkers(); return }
+  const rgb = parseRgbInput(input)
+  if (!rgb) { alert('Could not parse that color — use "R,G,B" (0-255) or "#RRGGBB".'); return }
+  neighborMarkerColorOverride = rgb
+  registerMarkerColorCmap(NEIGHBOR_COLOR_CMAP, rgb)
+  rebuildVertexMarkers()
 }
 
 async function selectVertex(vertIdx, nvInst) {
@@ -2918,6 +3005,16 @@ document.addEventListener('keydown', e => {
   const t = e.target
   if (t && (t.tagName === 'INPUT' || t.tagName === 'SELECT' ||
             t.tagName === 'TEXTAREA' || t.isContentEditable)) return
+  // Hidden feature: Alt+Shift+V / Alt+Shift+N prompt for an RGB color to
+  // recolor the selected-vertex / neighbor-ring marker spheres — carved out
+  // of the modifier-key guard just below, since every other shortcut here
+  // is a bare, unmodified key.
+  if (e.altKey && e.shiftKey && !e.ctrlKey && !e.metaKey) {
+    const key = e.key.toLowerCase()
+    if (key === 'v') { promptVertexMarkerColor(); e.preventDefault(); return }
+    if (key === 'n') { promptNeighborMarkerColor(); e.preventDefault(); return }
+    return
+  }
   if (e.ctrlKey || e.metaKey || e.altKey) return
   // Numpad +/- adjust the ring count (distinct from the main-keyboard +/-,
   // which change depth); keyed off e.code since e.key is identical for both.

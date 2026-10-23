@@ -245,7 +245,8 @@ toggle with **Rad**.
     switches the **LH/RH/Asym surf** dropdowns to the surface you clicked, so the 3‑D panels,
     crosshair, and markers all end up showing that same surface.
 - The selected vertex is marked with a sphere on every panel; neighbor‑ring vertices get
-  smaller markers. `>` / `<` grow or shrink them (see *Vertex marker size*).
+  smaller markers. `>` / `<` grow or shrink them (see *Vertex marker size*); `Alt+Shift+V` /
+  `Alt+Shift+N` recolor them (see *Vertex marker color*).
 - The orthoslices **snap** to the selected vertex's world coordinate.
 - The depth‑profile and multivariate charts update to that vertex (and its ring neighbors
   when **Rings > 0**).
@@ -525,6 +526,16 @@ require a real numeric keypad with NumLock on.
 
 Both scale together — the neighbor‑ring spheres always stay 30% of the main sphere's size.
 No‑op if no vertex is currently selected.
+
+### Vertex marker color
+| Key | Action |
+| --- | --- |
+| `Alt+Shift+V` | Prompt for a color for the selected‑vertex marker sphere (default: yellow) |
+| `Alt+Shift+N` | Prompt for a color for the neighbor‑ring marker spheres (default: white) |
+
+Enter either `R,G,B` (0–255 each) or `#RRGGBB` hex. Leave the field blank and confirm to
+reset that marker back to its default color. The two are independent — recoloring one doesn't
+touch the other.
 
 ### Orthoslice volume
 | Key | Action |
