@@ -196,7 +196,7 @@ toggle with **Rad**.
 
 | Control | Description |
 |---|---|
-| **Metric** | Dropdown of the configured metrics found for this subject |
+| **Metric** | Dropdown of the configured metrics found for this subject; its last entry, **other…**, loads an arbitrary local overlay file instead (see *Custom metric overlay*) |
 | **Z** | Show per‑vertex z‑scores against the cohort norm instead of raw values; disabled for metrics with no z‑scored data. Switches the Data/Asym colormap dropdowns to diverging‑only, with their own fixed default range (see *Thresholded diverging colormaps*) |
 | **Depth** (slider + mm) | Cortical depth layer shown on the surfaces; the mm label is distance from the pial surface |
 | **Data** min / max / **Auto** | Color limits for the LH/RH overlays; **Auto** sets them from the data's 2–98th percentile |
@@ -329,6 +329,31 @@ Turning **Z** on changes the Data and Asym colormap controls:
   colormap's "hot" half is used (e.g. cwr's white‑to‑red) — white below **±**, ramping into
   color above it, with no "cool" half, since there's no negative side to an unsigned
   magnitude.
+
+---
+
+## Custom metric overlay
+
+**Metric → other…** loads an arbitrary local file as the overlay on one surface panel —
+useful for a one-off file that isn't part of this subject's configured metric set (e.g.
+something from `cortical_indices2gifti.py`, or a `.tsf` you haven't run through the full
+pipeline). Picking it opens a file picker, then a prompt asking which surface to show it
+on — **"left"**, **"right"**, or **"asym"** (`l`/`r`/`a` also work).
+
+- Accepts **.func.gii**/**.gii** (one darray = one depth frame, same as any regular
+  metric's overlay — a single darray behaves like collapsed depth) or **.tsf** (MRtrix
+  track-scalar, parsed in the browser itself; its own `-1` invalid-sample sentinel is
+  zero‑filled, same convention the server already uses for every other overlay).
+- It replaces that one panel's overlay only — not a real metric switch. The other two
+  panels, the **Metric** dropdown, and the depth slider are unaffected, and switching
+  **Metric** to anything else (including loading another **other…** file) replaces it like
+  any normal metric change would.
+- The **Data**/**Asym** colormap, **Inv**, and **Ov** (opacity) controls keep working on it
+  normally — whichever panel it's on shares that panel's usual color controls. **Data**/
+  **Asym** min/max/**Auto** don't: its range is set once at load time (from the file's own
+  data), not kept in sync with those fields.
+- If the file's vertex count doesn't match the surface's, it's loaded anyway with a warning
+  — likely means it was built against a different surface/template.
 
 ---
 

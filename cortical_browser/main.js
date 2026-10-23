@@ -2085,6 +2085,14 @@ document.getElementById('collapseDepthChk').addEventListener('change', async fun
 
 // ── metric selector ───────────────────────────────────────────────────────────
 document.getElementById('metricSel').addEventListener('change', async e => {
+  if (e.target.value === '__other__') {
+    // "other…" — a one-off custom overlay (see its own section below), not a
+    // real metric switch: revert the dropdown and hand off to its own file
+    // picker instead of running any of the logic below.
+    e.target.value = currentMetric ?? ''
+    document.getElementById('metricOtherFile').click()
+    return
+  }
   currentMetric = e.target.value
   const wasZscore = showZscore
   updateZscoreToggleAvailability(currentMetric)   // may force showZscore -> false
@@ -2919,6 +2927,185 @@ document.getElementById('ringsInput').addEventListener('change', e => {
     loadedVertexIds = null
     setLoadedUiState(false)
     statusEl.textContent = ''
+  })
+}
+
+// ── custom metric overlay ("other…" in the Metric dropdown) ──────────────────
+// Drops an arbitrary local .func.gii/.gii (one or more darrays — one per
+// depth, same as any regular metric) or .tsf (MRtrix track-scalar, the
+// format cortical_*.sh writes — parsed client-side here, since NiiVue has no
+// TSF support of its own) file onto one surface panel, outside the normal
+// metric/z-score/collapse-depth pipeline (which assumes one metric drives
+// all three panels together — this is a one-off, single-panel override
+// instead, picked by a prompt after the file). It replaces mesh.layers[0]
+// directly, the same slot every regular metric occupies, so the existing
+// Data/Asym colormap/invert/opacity controls keep working on it afterward;
+// only Data/Asym min/max/Auto don't — those are tied to currentMetric's own
+// server-computed stats, which a custom file has none of, so its cal_min/
+// cal_max are set once here, from the file's own finite data range, and
+// left alone after that.
+{
+  const metricSel = document.getElementById('metricSel')
+  const otherOpt = document.createElement('option')
+  otherOpt.value = '__other__'
+  otherOpt.textContent = 'other…'
+  metricSel.appendChild(otherOpt)
+
+  const otherFile = document.getElementById('metricOtherFile')
+
+  // Finite-only min/max scan. A naive Math.min/max over raw values breaks
+  // (NaN poisons the whole range) the moment any single value is NaN or
+  // ±Inf — a real risk for an arbitrary externally-sourced gifti, unlike
+  // the pipeline's own server-generated ones, which are always zero-filled
+  // first (see cortical_browser.py's write_func_gii).
+  function finiteRange(values) {
+    let mn = Infinity, mx = -Infinity
+    for (let i = 0; i < values.length; i++) {
+      const v = values[i]
+      if (Number.isFinite(v)) { if (v < mn) mn = v; if (v > mx) mx = v }
+    }
+    return Number.isFinite(mn) ? [mn, mx] : [0, 1]
+  }
+
+  // MRtrix track-scalar (.tsf) parser — mirrors cortical_io.py's
+  // read_mrtrix_tsf(): a short ASCII "key: value" header terminated by a
+  // line reading "END", then binary Float32LE/Float64LE data starting at
+  // the byte offset the header's own "file" key gives, NaN-delimited
+  // between tracks, optionally Inf-terminated (end-of-file marker).
+  function parseTsf(buf) {
+    const bytes = new Uint8Array(buf)
+    const decoder = new TextDecoder('utf-8')
+    let pos = 0
+    function readLine() {
+      const start = pos
+      while (pos < bytes.length && bytes[pos] !== 10) pos++
+      const line = decoder.decode(bytes.subarray(start, pos)).replace(/\r$/, '')
+      pos++
+      return line.trim()
+    }
+    const header = {}
+    while (true) {
+      if (pos >= bytes.length) throw new Error('no END header line found')
+      const line = readLine()
+      if (line === 'END') break
+      const i = line.indexOf(':')
+      if (i < 0) continue
+      header[line.slice(0, i).trim()] = line.slice(i + 1).trim()
+    }
+    let TypedArrayCtor, bytesPerEl
+    if (header.datatype === 'Float32LE') { TypedArrayCtor = Float32Array; bytesPerEl = 4 }
+    else if (header.datatype === 'Float64LE') { TypedArrayCtor = Float64Array; bytesPerEl = 8 }
+    else throw new Error(`unsupported datatype ${header.datatype}`)
+    if (!header.file || !header.count) throw new Error('missing "file" or "count" header key')
+    const offset = parseInt(header.file.split(/\s+/)[1], 10)
+    const count = parseInt(header.count, 10)
+    // Slice to a fresh buffer first: a typed-array view needs its byteOffset
+    // aligned to its element size, which an arbitrary header offset isn't
+    // guaranteed to be — slice() always starts a new buffer at 0.
+    const sliced = buf.slice(offset)
+    const data = new TypedArrayCtor(sliced, 0, Math.floor(sliced.byteLength / bytesPerEl))
+
+    let end = data.length
+    for (let i = 0; i < data.length; i++) {
+      if (data[i] === Infinity || data[i] === -Infinity) { end = i; break }
+    }
+    const tracks = []
+    let start = 0
+    for (let i = 0; i < end; i++) {
+      if (Number.isNaN(data[i])) { tracks.push(data.subarray(start, i)); start = i + 1 }
+    }
+    if (tracks.length !== count) throw new Error(`expected ${count} tracks, parsed ${tracks.length}`)
+    return tracks
+  }
+
+  // Frame-major flattened values — NiiVue's own multi-darray GIFTI reader
+  // concatenates each darray the same way: all vertices for frame 0, then
+  // all vertices for frame 1, … — from a .tsf's per-vertex track arrays.
+  // MRtrix's own -1 invalid-sample sentinel is zero-filled, the same
+  // convention cortical_browser.py's write_func_gii() already uses
+  // server-side ("NaN ... on the surface overlay would render unpredictably").
+  function tsfTracksToLayerValues(tracks, nVert) {
+    const maxLen = tracks.reduce((m, t) => Math.max(m, t.length), 1)
+    const values = new Float32Array(nVert * maxLen)   // zero-filled by default
+    const n = Math.min(nVert, tracks.length)
+    for (let v = 0; v < n; v++) {
+      const t = tracks[v]
+      for (let d = 0; d < t.length; d++) {
+        const x = t[d]
+        values[d * nVert + v] = (x === -1) ? 0 : x
+      }
+    }
+    return { values, nFrame4D: maxLen }
+  }
+
+  // Builds a complete NiiVue mesh-layer object (same shape applyCollapsedDataLayer
+  // uses) from raw values + frame count, with a safe cal_min/cal_max.
+  function buildLayer(values, nFrame4D, colormap, invert) {
+    const [cal_min, cal_max] = finiteRange(values)
+    return {
+      values, nFrame4D, frame4D: 0,
+      colormap, colormapNegative: 'winter', useNegativeCmap: false,
+      colormapInvert: invert, colormapType: 0, colormapLabel: null,
+      isTransparentBelowCalMin: false, isAdditiveBlend: false, colorbarVisible: true,
+      outlineBorder: 0, opacity: layerOpacity, cal_min, cal_max,
+      cal_minNeg: NaN, cal_maxNeg: NaN, global_min: cal_min, global_max: cal_max,
+    }
+  }
+
+  async function loadCustomOverlay(nvInst, file, colormap, invert) {
+    const mesh = nvInst.meshes[0]
+    if (!mesh?.pts) { alert('That surface has no mesh loaded yet.'); return }
+    const nVert = mesh.pts.length / 3
+    let layer
+    if (file.name.toLowerCase().endsWith('.tsf')) {
+      const tracks = parseTsf(await file.arrayBuffer())
+      if (tracks.length !== nVert) {
+        alert(`[warn] ${file.name}: ${tracks.length} tracks vs ${nVert} surface vertices — loading anyway`)
+      }
+      const { values, nFrame4D } = tsfTracksToLayerValues(tracks, nVert)
+      layer = buildLayer(values, nFrame4D, colormap, invert)
+    } else {
+      // .func.gii / .gii: NiiVue's own GIFTI reader, via its public loadLayer()
+      // API — reused instead of hand-parsing GIFTI's XML+base64/binary format.
+      // It APPENDS to mesh.layers rather than replacing, so pop it back off
+      // and place it at [0] ourselves, the same slot every regular metric uses.
+      const blobUrl = URL.createObjectURL(file)
+      const before = mesh.layers.length
+      try {
+        await niivue.NVMesh.loadLayer({ url: blobUrl, name: file.name, colormap, colormapInvert: invert, opacity: layerOpacity }, mesh)
+      } finally {
+        URL.revokeObjectURL(blobUrl)
+      }
+      if (mesh.layers.length <= before) { alert(`Could not parse ${file.name} as a gifti overlay.`); return }
+      layer = mesh.layers.pop()
+      if (layer.values.length % nVert !== 0) {
+        alert(`[warn] ${file.name}: ${layer.values.length} values vs ${nVert} surface vertices — loading anyway`)
+      }
+      const [cal_min, cal_max] = finiteRange(layer.values)
+      layer.cal_min = cal_min; layer.cal_max = cal_max   // override NiiVue's own NaN-unsafe auto-range
+    }
+    mesh.layers[0] = layer
+    mesh.updateMesh(nvInst.gl)
+    nvInst.drawScene()
+  }
+
+  otherFile.addEventListener('change', async () => {
+    const file = otherFile.files && otherFile.files[0]
+    otherFile.value = ''   // reset so the same file can be re-picked later
+    if (!file) return
+    const answer = (prompt('Show this overlay on which surface — "left", "right", or "asym"?') || '').trim().toLowerCase()
+    if (!answer) return   // cancelled
+    const target = answer.startsWith('l') ? { nv: nvLhL, colormap: currentCmap, invert: dataInvert }
+                 : answer.startsWith('r') ? { nv: nvRhL, colormap: currentCmap, invert: dataInvert }
+                 : answer.startsWith('a') ? { nv: nvAsym, colormap: currentCmapAsym, invert: asymInvert }
+                 : null
+    if (!target) { alert(`"${answer}" is not "left", "right", or "asym".`); return }
+    try {
+      await loadCustomOverlay(target.nv, file, target.colormap, target.invert)
+    } catch (e) {
+      console.error('[other metric] failed to load', file.name, e)
+      alert(`Could not load ${file.name}: ${e.message}`)
+    }
   })
 }
 
