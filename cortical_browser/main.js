@@ -46,6 +46,12 @@ let currentClimThresh = 0, currentAsymThresh = 0
 let nRings = 0
 let currentVertex = null
 let pivotAtVertex = false
+// Multiplier on the selected-vertex/neighbor-ring marker spheres' base
+// radius (itself a fraction of the mesh bounding radius — see placeMarker)
+// — adjustable via the '>'/'<' shortcuts, applied uniformly so the
+// neighbor spheres (always 30% of the seed's radius) scale right along
+// with the main one.
+let vertexSphereScale = 1
 let showNormative = false
 // Z-score mode: surfaces/profiles read the metric's _zscore tsf siblings
 // instead of its raw values. Per-metric (hasZscore), not global — see
@@ -2331,7 +2337,7 @@ function markerConnectomeJSON(x, y, z, size) {
 
 function placeMarker(nvInst, x, y, z) {
   const surf = nvInst.meshes[0]   // the loaded brain surface, always added before any marker
-  const radius = surf?.pts ? meshBounds(surf.pts).radius * 0.015 : 2
+  const radius = (surf?.pts ? meshBounds(surf.pts).radius * 0.015 : 2) * vertexSphereScale
 
   let marker = markerMeshes.get(nvInst)
   if (marker) {
@@ -2391,36 +2397,15 @@ function syncNeighborMarkers(nvInst, points, size) {
   nvInst.drawScene()
 }
 
-async function selectVertex(vertIdx, nvInst) {
-  if (!currentMetric) return
-  const mesh = nvInst.meshes[0]
-  if (!mesh?.pts) return
-  const nVerts = mesh.pts.length / 3
-  if (vertIdx < 0 || vertIdx >= nVerts) return
-
-  // Snap orthoslice crosshairs to vertex world position — using this
-  // subject's own white surface instead if the clicked panel isn't currently
-  // showing white/pial (see anatomicalPts). Setting crosshairPos directly
-  // doesn't fire onLocationChange (only user slice interaction does), so call
-  // createOnLocationChange() to refresh the position readout.
-  const clickedSurfSelId = nvInst === nvRhL ? 'rhSurfSel' : nvInst === nvAsym ? 'asymSurfSel' : 'lhSurfSel'
-  const clickedHemi = nvInst === nvRhL ? 'rh' : 'lh'   // nvAsym shares LH geometry
-  const { pt: [vx, vy, vz] } = await anatomicalPts(clickedSurfSelId, clickedHemi, mesh.pts, vertIdx)
-  if (nvSlices.volumes.length && typeof nvSlices.mm2frac === 'function') {
-    const frac = nvSlices.mm2frac([vx, vy, vz])
-    if (frac) {
-      nvSlices.scene.crosshairPos = [...frac]
-      if (typeof nvSlices.createOnLocationChange === 'function') nvSlices.createOnLocationChange()
-      nvSlices.drawScene()
-    }
-  }
-
-  selectedVertices  = currentRingSet(vertIdx)
-  const ringSet     = selectedVertices
-  const neighborIdx = ringSet.filter(v => v !== vertIdx)
-
-  // Drop a marker sphere on this vertex (plus smaller white spheres on its
-  // neighbor-ring vertices) in every surface panel
+// (Re)places the selected-vertex + neighbor-ring marker spheres for the
+// current selection (currentVertex/selectedVertices) at the current
+// vertexSphereScale — shared by selectVertex() (a fresh selection) and the
+// '>'/'<' size shortcuts (same selection, just resized). No-op if nothing
+// is selected.
+function placeVertexMarkers() {
+  if (currentVertex === null) return
+  const vertIdx = currentVertex
+  const neighborIdx = selectedVertices.filter(v => v !== vertIdx)
   const lhMesh = nvLhL.meshes[0]
   const rhMesh = nvRhL.meshes[0]
   if (lhMesh?.pts) {
@@ -2445,8 +2430,41 @@ async function selectVertex(vertIdx, nvInst) {
     syncNeighborMarkers(nvRhL, rhNbrPts, seedRr * 0.3)
     if (pivotAtVertex) setCustomPivot(nvRhL, [rx, ry, rz])
   }
+}
 
+async function selectVertex(vertIdx, nvInst) {
+  if (!currentMetric) return
+  const mesh = nvInst.meshes[0]
+  if (!mesh?.pts) return
+  const nVerts = mesh.pts.length / 3
+  if (vertIdx < 0 || vertIdx >= nVerts) return
+
+  // Snap orthoslice crosshairs to vertex world position — using this
+  // subject's own white surface instead if the clicked panel isn't currently
+  // showing white/pial (see anatomicalPts). Setting crosshairPos directly
+  // doesn't fire onLocationChange (only user slice interaction does), so call
+  // createOnLocationChange() to refresh the position readout.
+  const clickedSurfSelId = nvInst === nvRhL ? 'rhSurfSel' : nvInst === nvAsym ? 'asymSurfSel' : 'lhSurfSel'
+  const clickedHemi = nvInst === nvRhL ? 'rh' : 'lh'   // nvAsym shares LH geometry
+  const { pt: [vx, vy, vz] } = await anatomicalPts(clickedSurfSelId, clickedHemi, mesh.pts, vertIdx)
+  if (nvSlices.volumes.length && typeof nvSlices.mm2frac === 'function') {
+    const frac = nvSlices.mm2frac([vx, vy, vz])
+    if (frac) {
+      nvSlices.scene.crosshairPos = [...frac]
+      if (typeof nvSlices.createOnLocationChange === 'function') nvSlices.createOnLocationChange()
+      nvSlices.drawScene()
+    }
+  }
+
+  selectedVertices = currentRingSet(vertIdx)
+  const ringSet    = selectedVertices
+  const lhMesh     = nvLhL.meshes[0]
+  const rhMesh     = nvRhL.meshes[0]
   currentVertex = vertIdx
+
+  // Drop a marker sphere on this vertex (plus smaller white spheres on its
+  // neighbor-ring vertices) in every surface panel
+  placeVertexMarkers()
   applyStreamlineSelection()   // respects the mode selector; no-op if streamlines haven't been loaded yet
   currentHemi = (nvInst === nvRhL) ? 'rh' : 'lh'   // nvAsym shares LH geometry, counts as 'lh'
   broadcastDwiCrosshair()
@@ -2878,6 +2896,15 @@ function stepRings(delta) {
   el.dispatchEvent(new Event('change'))
 }
 
+// Step the vertex-marker sphere size multiplicatively (same 1.1-per-tick
+// feel as the surface scroll-zoom), clamped to a sane range, then redraw
+// at the current selection — placeVertexMarkers() itself no-ops if nothing
+// is selected, so this is safe to call from the '>'/'<' shortcuts any time.
+function stepVertexSphereScale(factor) {
+  vertexSphereScale = Math.max(0.2, Math.min(5, vertexSphereScale * factor))
+  placeVertexMarkers()
+}
+
 // Show the nth loaded orthoslice volume (1-based), in dropdown order; no-op if
 // there's no volume at that position.
 function showVolumeByIndex(n) {
@@ -2902,7 +2929,8 @@ document.addEventListener('keydown', e => {
       reset3DSurfaceView()
       e.preventDefault()
       break
-    case 'x': {   // toggle the crosshair via its checkbox so the UI stays in sync
+    case 'x':
+    case ' ': {   // toggle the crosshair via its checkbox so the UI stays in sync
       const chk = document.getElementById('crosshairChk')
       chk.checked = !chk.checked
       chk.dispatchEvent(new Event('change'))
@@ -2937,6 +2965,11 @@ document.addEventListener('keydown', e => {
       e.preventDefault()
       break
     }
+    // Vertex marker size: '>' grows, '<' shrinks the selected-vertex sphere
+    // and its neighbor-ring spheres together (the latter always stay 30% of
+    // the former — see placeMarker/syncNeighborMarkers).
+    case '>': stepVertexSphereScale(1.15); e.preventDefault(); break
+    case '<': stepVertexSphereScale(1 / 1.15); e.preventDefault(); break
     // Orthoslice navigation: arrows/PgUp/PgDn step through the three planes.
     case 'arrowup':    stepCrosshair(0, 0,  1); e.preventDefault(); break  // axial → superior
     case 'arrowdown':  stepCrosshair(0, 0, -1); e.preventDefault(); break  // axial → inferior

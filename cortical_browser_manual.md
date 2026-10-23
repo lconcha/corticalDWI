@@ -210,7 +210,7 @@ toggle with **Rad**.
 | **Yoke rotation** | Link rotation across the LH/RH/Asym 3‑D panels — mirrored for RH, same as Connectome Workbench's "Yoking" (shortcut `y`; see *Interacting with the surfaces*) |
 | **LH / RH / Asym surf** | Per‑panel surface geometry (white, pial, inflated, very‑inflated, average_*) |
 | **Rad** | Radiological vs neurological orthoslice orientation |
-| **X‑hair** | Show/hide the orthoslice crosshair |
+| **X‑hair** | Show/hide the orthoslice crosshair (shortcut: `x` or `Space`) |
 | **WM** / **pial** | Overlay white‑matter / pial surface contours on the orthoslices (loaded on first use — also loaded lazily by Shift/Ctrl‑click vertex picking on the orthoslices, see *Interacting with the surfaces*) |
 | **3D cutaway** / **Invert** | Carve the octant nearest the crosshair out of the orthoslice viewer's 3‑D volume render, revealing the three slice surfaces in 3‑D (shortcut `c`); **Invert** removes the opposite octant instead (see *Orthoslice volume*) |
 | **Volume** | Choose which volume the orthoslices show; **other…** opens a file picker to load an extra volume (see *Orthoslice volume*) |
@@ -245,7 +245,7 @@ toggle with **Rad**.
     switches the **LH/RH/Asym surf** dropdowns to the surface you clicked, so the 3‑D panels,
     crosshair, and markers all end up showing that same surface.
 - The selected vertex is marked with a sphere on every panel; neighbor‑ring vertices get
-  smaller markers.
+  smaller markers. `>` / `<` grow or shrink them (see *Vertex marker size*).
 - The orthoslices **snap** to the selected vertex's world coordinate.
 - The depth‑profile and multivariate charts update to that vertex (and its ring neighbors
   when **Rings > 0**).
@@ -485,7 +485,7 @@ its own smaller, independent set (see *DWI space*).
 | Key | Action |
 | --- | --- |
 | `r` | Reset everything: orthoslice zoom/pan, orthoslice grayscale contrast, and the 3‑D surface framing (camera angles, zoom, rotation pivot). |
-| `x` | Toggle the orthoslice crosshair on/off (mirrors the **X‑hair** checkbox). |
+| `x` / `Space` | Toggle the orthoslice crosshair on/off (mirrors the **X‑hair** checkbox). |
 | `p` | Toggle **Pivot@vertex** — orbit the 3‑D surfaces around the selected vertex vs. the whole‑brain centre. |
 | `i` | Toggle orthoslice interpolation — smooth (linear) vs nearest‑neighbor (mirrors the **Interp** checkbox). |
 | `c` | Toggle **3D cutaway** in the orthoslice viewer's 3‑D panel (mirrors the **3D cutaway** checkbox). |
@@ -516,6 +516,15 @@ slider stays in sync.
 
 The numpad keys are distinct from the main‑keyboard `+`/`-` (which control depth); they
 require a real numeric keypad with NumLock on.
+
+### Vertex marker size
+| Key | Action |
+| --- | --- |
+| `>` | Grow the selected‑vertex marker sphere (and its neighbor‑ring spheres) |
+| `<` | Shrink them |
+
+Both scale together — the neighbor‑ring spheres always stay 30% of the main sphere's size.
+No‑op if no vertex is currently selected.
 
 ### Orthoslice volume
 | Key | Action |
