@@ -202,7 +202,7 @@ toggle with **Rad**.
 | **Data** min / max / **Auto** | Color limits for the LH/RH overlays; **Auto** sets them from the data's 2–98th percentile |
 | **Data colormap** / **Inv** | Colormap for the LH/RH overlays and an invert toggle |
 | **Data ±** (threshold) | Half‑width dead zone around zero shown as solid white — only affects the 13 diverging colormaps; 0 disables. Only enabled in **Z** mode (see *Thresholded diverging colormaps*) |
-| **Ov** | Overlay opacity on the surfaces |
+| **Ov** | Overlay opacity on the surfaces — lower it to reveal the base tint underneath (see *Surface base color*) |
 | **Asym** min / max / **Auto** | Color limits for the asymmetry surface (default ±1) |
 | **Asym colormap** / **Inv** | Diverging colormap for the asymmetry surface and invert toggle |
 | **Asym ±** (threshold) | Same dead‑zone threshold as **Data ±**, independent, for the asymmetry surface. Only enabled in **Z** mode (see *Thresholded diverging colormaps*) |
@@ -536,6 +536,19 @@ No‑op if no vertex is currently selected.
 Enter either `R,G,B` (0–255 each) or `#RRGGBB` hex. Leave the field blank and confirm to
 reset that marker back to its default color. The two are independent — recoloring one doesn't
 touch the other.
+
+### Surface base color
+| Key | Action |
+| --- | --- |
+| `Alt+Shift+L` | Prompt for a color for the LH surface's base tint (default: blue) — also applies to the **Asymmetry** panel, which shares LH's geometry |
+| `Alt+Shift+R` | Prompt for a color for the RH surface's base tint (default: orange) |
+| `Alt+Shift+W` | Set every surface's base tint to white in one step — no prompt |
+
+This is the color a surface shows through wherever the **Data**/**Asym** overlay doesn't
+cover it — lower opacity (**Ov**), or an explicit "no data" patch — not the overlay itself,
+which is untouched by any of these. Same input format and blank‑to‑reset behavior as *Vertex
+marker color*; the color persists across metric/mode switches (which reload the surfaces)
+until reset or changed again.
 
 ### Orthoslice volume
 | Key | Action |

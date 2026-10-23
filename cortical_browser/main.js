@@ -59,6 +59,17 @@ let vertexSphereScale = 1
 // null means "use the default colormap", not "any override yet applied".
 let vertexMarkerColorOverride = null
 let neighborMarkerColorOverride = null
+// Hidden feature (Alt+Shift+L / Alt+Shift+R / Alt+Shift+W — see
+// promptLhSurfColor/promptRhSurfColor/setAllSurfacesWhite): [r,g,b]
+// (0-255) override for each hemisphere's surface base tint — the color a
+// vertex shows through at wherever the data overlay doesn't cover it (e.g.
+// opacity < 1, or an explicit "no data" mask), normally LH_SURF/RH_SURF.
+// rgba255 (the same blue/orange used for the LH/RH plot lines). null means
+// "use the default", not "any override yet applied". The Asym panel always
+// mirrors the LH override, same as it already shares LH's geometry and
+// "no data" mask color (MASK_CMAP_FOR) — see applyLhSurfColor.
+let lhSurfColorOverride = null
+let rhSurfColorOverride = null
 let showNormative = false
 // Z-score mode: surfaces/profiles read the metric's _zscore tsf siblings
 // instead of its raw values. Per-metric (hasZscore), not global — see
@@ -779,11 +790,18 @@ function applyCollapsedOverlays() {
   refreshColorbars()
 }
 
+// Effective base tint for each hemisphere — lhSurfColorOverride/
+// rhSurfColorOverride if the hidden Alt+Shift+L/R/W feature has set one,
+// else the default LH_SURF/RH_SURF.rgba255 (same fallback chain as
+// CUSTOM_CMAPS.flat_lh/flat_rh's initial registration above).
+function lhSurfRgb() { return lhSurfColorOverride ?? (LH_SURF?.rgba255?.slice(0, 3) ?? [102, 179, 255]) }
+function rhSurfRgb() { return rhSurfColorOverride ?? (RH_SURF?.rgba255?.slice(0, 3) ?? [255, 133, 77]) }
+
 async function loadLhPanel(metric) {
   if (!LH_SURF || !lhSurfUrl) return
   console.time('loadLhPanel')
   markerMeshes.delete(nvLhL); neighborMeshes.delete(nvLhL)
-  await nvLhL.loadMeshes([{ url: lhSurfUrl, rgba255: LH_SURF.rgba255, layers: layerDataFor('lh', metric) }])
+  await nvLhL.loadMeshes([{ url: lhSurfUrl, rgba255: new Uint8Array([...lhSurfRgb(), 255]), layers: layerDataFor('lh', metric) }])
   disableTransparentBelowCalMin(nvLhL)
   applyShader(nvLhL, currentShader)
   console.timeEnd('loadLhPanel')
@@ -793,7 +811,7 @@ async function loadRhPanel(metric) {
   if (!RH_SURF || !rhSurfUrl) return
   console.time('loadRhPanel')
   markerMeshes.delete(nvRhL); neighborMeshes.delete(nvRhL)
-  await nvRhL.loadMeshes([{ url: rhSurfUrl, rgba255: RH_SURF.rgba255, layers: layerDataFor('rh', metric) }])
+  await nvRhL.loadMeshes([{ url: rhSurfUrl, rgba255: new Uint8Array([...rhSurfRgb(), 255]), layers: layerDataFor('rh', metric) }])
   disableTransparentBelowCalMin(nvRhL)
   applyShader(nvRhL, currentShader)
   console.timeEnd('loadRhPanel')
@@ -803,7 +821,7 @@ async function loadAsymPanel(metric) {
   if (!LH_SURF || !asymSurfUrl) return
   console.time('loadAsymPanel')
   markerMeshes.delete(nvAsym); neighborMeshes.delete(nvAsym)
-  await nvAsym.loadMeshes([{ url: asymSurfUrl, rgba255: LH_SURF.rgba255, layers: layerAsymFor(metric) }])
+  await nvAsym.loadMeshes([{ url: asymSurfUrl, rgba255: new Uint8Array([...lhSurfRgb(), 255]), layers: layerAsymFor(metric) }])
   disableTransparentBelowCalMin(nvAsym)
   applyShader(nvAsym, currentShader)
   console.timeEnd('loadAsymPanel')
@@ -2519,6 +2537,72 @@ function promptNeighborMarkerColor() {
   rebuildVertexMarkers()
 }
 
+// Re-colors the LH (+ Asym, which mirrors LH) surfaces' base tint and their
+// shared "no data" mask color (flat_lh — see MASK_CMAP_FOR) to match
+// lhSurfRgb() (either lhSurfColorOverride or the default), on both the
+// already-rendered mesh (nv.setMeshProperty, same public API used for the
+// streamline fixed-color picker — see applyStreamlineColor) and the
+// colormap registry, re-touching any currently-visible mask layer so an
+// already-masked "no data" patch updates immediately too, not just
+// newly-masked vertices from here on.
+function applyLhSurfColor() {
+  const rgb = lhSurfRgb()
+  const rgba255 = new Uint8Array([...rgb, 255])
+  registerMarkerColorCmap('flat_lh', rgb)
+  for (const nv of [nvLhL, nvAsym]) {
+    const mesh = nv.meshes[0]
+    if (!mesh) continue
+    nv.setMeshProperty(mesh.id, 'rgba255', rgba255)
+    if (mesh.layers?.length > 1) nv.setMeshLayerProperty(mesh.id, 1, 'colormap', 'flat_lh')
+  }
+}
+function applyRhSurfColor() {
+  const rgb = rhSurfRgb()
+  const rgba255 = new Uint8Array([...rgb, 255])
+  registerMarkerColorCmap('flat_rh', rgb)
+  const mesh = nvRhL.meshes[0]
+  if (!mesh) return
+  nvRhL.setMeshProperty(mesh.id, 'rgba255', rgba255)
+  if (mesh.layers?.length > 1) nvRhL.setMeshLayerProperty(mesh.id, 1, 'colormap', 'flat_rh')
+}
+
+// Hidden feature (shortcut: Alt+Shift+L): prompts for an RGB (or #hex) color
+// for the LH surface's base tint (and the Asym panel, which mirrors it) —
+// hardcoded blue otherwise. Leave the field blank to reset to the default.
+function promptLhSurfColor() {
+  const current = lhSurfColorOverride ? lhSurfColorOverride.join(',') : ''
+  const input = prompt('LH surface color — "R,G,B" (0-255) or "#RRGGBB" (also applies to the Asymmetry panel).\nLeave blank to reset to the default (blue).', current)
+  if (input === null) return
+  if (input.trim() === '') { lhSurfColorOverride = null; applyLhSurfColor(); return }
+  const rgb = parseRgbInput(input)
+  if (!rgb) { alert('Could not parse that color — use "R,G,B" (0-255) or "#RRGGBB".'); return }
+  lhSurfColorOverride = rgb
+  applyLhSurfColor()
+}
+
+// Hidden feature (shortcut: Alt+Shift+R): same, for the RH surface's base
+// tint — hardcoded orange otherwise.
+function promptRhSurfColor() {
+  const current = rhSurfColorOverride ? rhSurfColorOverride.join(',') : ''
+  const input = prompt('RH surface color — "R,G,B" (0-255) or "#RRGGBB".\nLeave blank to reset to the default (orange).', current)
+  if (input === null) return
+  if (input.trim() === '') { rhSurfColorOverride = null; applyRhSurfColor(); return }
+  const rgb = parseRgbInput(input)
+  if (!rgb) { alert('Could not parse that color — use "R,G,B" (0-255) or "#RRGGBB".'); return }
+  rhSurfColorOverride = rgb
+  applyRhSurfColor()
+}
+
+// Hidden feature (shortcut: Alt+Shift+W): sets every surface's base tint to
+// white in one go (no prompt) — the data overlay (colormap, opacity) is
+// untouched, only the tint showing through where it doesn't cover.
+function setAllSurfacesWhite() {
+  lhSurfColorOverride = [255, 255, 255]
+  rhSurfColorOverride = [255, 255, 255]
+  applyLhSurfColor()
+  applyRhSurfColor()
+}
+
 async function selectVertex(vertIdx, nvInst) {
   if (!currentMetric) return
   const mesh = nvInst.meshes[0]
@@ -3006,13 +3090,18 @@ document.addEventListener('keydown', e => {
   if (t && (t.tagName === 'INPUT' || t.tagName === 'SELECT' ||
             t.tagName === 'TEXTAREA' || t.isContentEditable)) return
   // Hidden feature: Alt+Shift+V / Alt+Shift+N prompt for an RGB color to
-  // recolor the selected-vertex / neighbor-ring marker spheres — carved out
+  // recolor the selected-vertex / neighbor-ring marker spheres; Alt+Shift+L
+  // / Alt+Shift+R do the same for the LH/RH surfaces' base tint; Alt+Shift+W
+  // sets every surface to white (overlay untouched) in one go — carved out
   // of the modifier-key guard just below, since every other shortcut here
   // is a bare, unmodified key.
   if (e.altKey && e.shiftKey && !e.ctrlKey && !e.metaKey) {
     const key = e.key.toLowerCase()
     if (key === 'v') { promptVertexMarkerColor(); e.preventDefault(); return }
     if (key === 'n') { promptNeighborMarkerColor(); e.preventDefault(); return }
+    if (key === 'l') { promptLhSurfColor(); e.preventDefault(); return }
+    if (key === 'r') { promptRhSurfColor(); e.preventDefault(); return }
+    if (key === 'w') { setAllSurfacesWhite(); e.preventDefault(); return }
     return
   }
   if (e.ctrlKey || e.metaKey || e.altKey) return
