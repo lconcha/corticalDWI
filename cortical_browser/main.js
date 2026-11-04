@@ -89,6 +89,10 @@ function activeMetricInfo(metric) {
 // stops pushing that depth onto the surfaces (frame4D) while this is on.
 let collapseDepth = false
 function canCollapseDepth(metric) { return !!metric }
+// When on, the LH/RH depth-profile plots' x-axis is pinned to the surface
+// data CLim (currentClimMin/Max) instead of auto-fitting to the selected
+// vertex/ring's own data range — see applyDataValueLimits()/setProfiles().
+let syncClimXlim = false
 const markerMeshes = new Map()   // nv instance -> its vertex-marker connectome mesh
 const neighborMeshes = new Map() // nv instance -> its neighbor-rings connectome mesh
 
@@ -1430,14 +1434,15 @@ function setDataCLim(mn, mx) {
   refreshColorbars()
 }
 
-// In z-score mode, pin the LH/RH plots' value axis (x) to the (symmetric,
-// zero-centered) data CLim — same role as applyAsymValueLimits() for the
-// asym plot — instead of setProfiles()'s usual auto-fit-to-data range, which
-// would recenter on whatever the current vertex/ring happens to show and
-// lose the at-a-glance "0 = no deviation" reading z-scores depend on.
+// Pin the LH/RH plots' value axis (x) to the data CLim — same role as
+// applyAsymValueLimits() for the asym plot — instead of setProfiles()'s
+// usual auto-fit-to-data range, which recenters on whatever the current
+// vertex/ring happens to show. Forced in z-score mode (so the "0 = no
+// deviation" fixed scale always reads consistently) and otherwise only
+// while the "Sync clim/xlim" toggle is on.
 function applyDataValueLimits() {
   if (!chartLH || !chartRH) return
-  if (!(showZscore && hasZscore(currentMetric))) return
+  if (!(syncClimXlim || (showZscore && hasZscore(currentMetric)))) return
   for (const c of [chartLH, chartRH]) Plotly.relayout(c, { 'xaxis.range': [currentClimMin, currentClimMax] })
 }
 
@@ -3109,6 +3114,12 @@ document.getElementById('ringsInput').addEventListener('change', e => {
   })
 }
 
+// ── sync clim/xlim toggle ─────────────────────────────────────────────────────
+document.getElementById('syncClimXlimChk').addEventListener('change', function() {
+  syncClimXlim = this.checked
+  if (currentVertex !== null) selectVertex(currentVertex, nvLhL)   // re-run setProfiles under the new mode
+})
+
 // ── pivot@vertex toggle + reset 3D orbit pivot back to the whole-brain center ─
 document.getElementById('pivotAtVertexChk').addEventListener('change', function() {
   pivotAtVertex = this.checked
@@ -3825,10 +3836,10 @@ function setProfiles(lhStat, rhStat, asymStat, count, lhArea, rhArea, normStat) 
     // profileTraces/makeChart — and never toggled here).
     if (chart !== chartAsym) Plotly.restyle(chart, { fill: [zscore ? 'tozerox' : 'none'] }, [0])
   }
-  if (zscore) {
-    // Pinned to the symmetric, zero-centered data CLim (applyDataValueLimits)
-    // rather than auto-fit to this vertex's data — a z-score plot's whole
-    // point is reading deviation from 0 against a fixed scale.
+  if (zscore || syncClimXlim) {
+    // Pinned to the data CLim (applyDataValueLimits) rather than auto-fit to
+    // this vertex's data — forced in z-score mode (reading deviation from 0
+    // against a fixed scale) or whenever "Sync clim/xlim" is on.
     applyDataValueLimits()
   } else if (Number.isFinite(lo) && Number.isFinite(hi)) {
     const pad = (hi - lo) * 0.05 || 0.5
