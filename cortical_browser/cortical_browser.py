@@ -269,6 +269,31 @@ def find_zscore_metrics(tsf_metrics):
     return found
 
 
+def find_scalar_metrics(subj_dir, template=TEMPLATE, verbose=True):
+    """Locate single-scalar-per-vertex surface metrics (FreeSurfer-derived,
+    e.g. thickness/curv/sulc, resampled by cortical_resample_metrics_to_ico6_sym.sh)
+    under surf/{hemi}.<name>.{template}.func.gii — distinct from the
+    depth-wise {hemi}_{template}_<name>.tsf metrics find_tsf_metrics() looks
+    for (underscore-joined, no per-vertex dot-name). A metric is included
+    only when both hemispheres are present. Returns {name: {'lh': path,
+    'rh': path}}, in the order lh files are found on disk."""
+    surf_dir = os.path.join(subj_dir, 'surf')
+    suffix = f'.{template}.func.gii'
+    found = {}
+    for lh_path in sorted(glob.glob(os.path.join(surf_dir, f'lh.*{suffix}'))):
+        name = os.path.basename(lh_path)[len('lh.'):-len(suffix)]
+        rh_path = os.path.join(surf_dir, f'rh.{name}{suffix}')
+        if os.path.isfile(rh_path):
+            found[name] = {'lh': lh_path, 'rh': rh_path}
+            if verbose:
+                print(f'  found    {name:24s} surf/{os.path.basename(lh_path)}')
+        elif verbose:
+            print(f'\033[31m  MISSING  {name:24s} lh in surf/ but no rh sibling\033[0m')
+    if verbose:
+        print(f'  -> {len(found)} scalar surface metric(s) available: {list(found) or "none"}')
+    return found
+
+
 # ── TSF → func.gii conversion ─────────────────────────────────────────────────
 # Split into a cheap in-memory "stats" pass (needed up front for every metric,
 # so the dropdown/depth-slider/CLim inputs work before its overlay exists) and
@@ -373,6 +398,58 @@ def scan_overlay_stats(tsf_metrics):
         }
         arrays[metric] = (lh_M, rh_M)
         print(f'  {metric}: {lh_M.shape[1]} depths  [{cmin:.3f}, {cmax:.3f}]  asym [{amin:.3f}, {amax:.3f}]')
+    return info, arrays
+
+
+def read_gifti_scalar(path):
+    """One value per vertex from a single-darray .func.gii (thickness, curv,
+    sulc, ...) -> float32 (nVerts,) array."""
+    img = nib.load(path)
+    return np.asarray(img.darrays[0].data, dtype=np.float32)
+
+
+def tile_scalar_matrix(vec, n_depths):
+    """Repeat a (nVerts,) scalar across n_depths columns -> (nVerts, n_depths)
+    float32, so a single-value-per-vertex metric slots into the same
+    (nVerts, n_depths) matrix shape every depth-wise metric uses and needs no
+    special-cased handling anywhere downstream (materialize_overlay, the
+    depth slider, asym computation, etc.)."""
+    return np.tile(vec.astype(np.float32)[:, None], (1, n_depths))
+
+
+def scalar_cal_range(M):
+    """2nd/98th percentile of ALL finite values (unlike matrix_cal_range,
+    which only looks at values > 0 — fine for strictly-positive metrics like
+    FA, but wrong for signed ones like curv/sulc, which this range must also
+    cover)."""
+    finite = M[np.isfinite(M)]
+    if finite.size == 0:
+        return 0.0, 1.0
+    return round(float(np.percentile(finite, 2)), 4), round(float(np.percentile(finite, 98)), 4)
+
+
+def scan_scalar_stats(scalar_metrics, n_depths):
+    """Same shape of result as scan_overlay_stats (info, arrays), but for
+    single-scalar-per-vertex metrics: each is read once and tiled to
+    n_depths columns up front (cheap — no TSF parsing), so it can be merged
+    straight into the depth-wise metrics' overlay_info/overlay_arrays and
+    ride the existing materialize/serve pipeline unchanged."""
+    info = {}
+    arrays = {}
+    for metric, hemis in scalar_metrics.items():
+        lh_M = tile_scalar_matrix(read_gifti_scalar(hemis['lh']), n_depths)
+        rh_M = tile_scalar_matrix(read_gifti_scalar(hemis['rh']), n_depths)
+        cmin, cmax = scalar_cal_range(lh_M)
+        amin, amax = asym_cal_range()
+        info[metric] = {
+            'n_depths':     n_depths,
+            'cal_min':      cmin,
+            'cal_max':      cmax,
+            'cal_min_asym': amin,
+            'cal_max_asym': amax,
+        }
+        arrays[metric] = (lh_M, rh_M)
+        print(f'  {metric} [scalar, tiled to {n_depths} depths]: [{cmin:.3f}, {cmax:.3f}]')
     return info, arrays
 
 
@@ -1066,6 +1143,19 @@ def main():
     print(f'\nScanning {len(tsf_metrics)} metric(s) (stats only, no conversion yet)…')
     overlay_info, overlay_arrays = scan_overlay_stats(tsf_metrics)
 
+    print(f'\nFinding scalar surface metrics under {subj_dir}/surf:')
+    scalar_metrics = find_scalar_metrics(subj_dir)
+    if scalar_metrics:
+        # Tile each single-scalar-per-vertex metric to match the deepest
+        # depth-wise metric already found, so its depth slider spans the
+        # same mm range as everything else (falls back to 1 depth-slot if
+        # this subject has no depth-wise metrics at all).
+        tile_depths = max((v['n_depths'] for v in overlay_info.values()), default=1)
+        print(f'  tiling to {tile_depths} depth-slot(s) (this subject\'s deepest depth-wise metric)')
+        scalar_info, scalar_arrays = scan_scalar_stats(scalar_metrics, tile_depths)
+        overlay_info.update(scalar_info)
+        overlay_arrays.update(scalar_arrays)
+
     # Build file map: surfaces and volume are ready immediately; overlays are
     # materialized lazily by the request handler as each metric is selected —
     # except the default (first) metric, which we prepare now so the initial
@@ -1092,7 +1182,7 @@ def main():
         materialized.add(first_metric)
 
     print('\nChecking for cohort normative data (metadata only — computed lazily on request)…')
-    normative_info = scan_normative_info(args.subjects_dir, tsf_metrics.keys())
+    normative_info = scan_normative_info(args.subjects_dir, overlay_info.keys())
     print(f'Normative metrics: {list(normative_info) or "none"}')
     normative_materialized = set()
 
