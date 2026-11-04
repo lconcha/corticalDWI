@@ -3379,9 +3379,12 @@ document.addEventListener('keydown', e => {
 // ── depth-profile charts (Plotly) ─────────────────────────────────────────────
 // Depth runs down the y-axis (reversed autorange — pial surface at the top),
 // the metric value runs along x. Each profile chart holds six traces, same
-// roles the old Chart.js datasets played: 0 mean, 1/2 subject ±SD (dashed,
-// hidden from the legend), 3 normative mean, 4/5 normative ±SD (4 is an
-// invisible line, 5 fills back to it for the shaded band).
+// roles the old Chart.js datasets played: 0 mean, 1/2 subject ±1 SD (dashed,
+// hidden from the legend), 3 normative mean, 4/5 normative ±1 SD (4 is an
+// invisible line, 5 fills back to it for the shaded band) — exactly ±1
+// standard deviation either side of the mean, NOT ±2 SD/95%; see normPlus/
+// normMinus below and the "(±1 SD)" legend label, so this never needs
+// re-deriving from the plotted numbers again.
 const PLOTLY_CONFIG = { displayModeBar: false, responsive: true, scrollZoom: false }
 
 function depthProfileLayout() {
@@ -3413,7 +3416,7 @@ function profileTraces(color, label, fillToZero) {
     { x: [], y: [], mode: 'lines', legendgroup: 'subject', line: { width: 0 }, showlegend: false, hoverinfo: 'skip' },
     { x: [], y: [], mode: 'lines', legendgroup: 'subject', line: { width: 0 }, fill: 'tonextx',
       fillcolor: hexToRgba(color, 0.18), showlegend: false, hoverinfo: 'skip' },
-    { x: [], y: [], name: 'Normative', mode: 'lines', legendgroup: 'normative',
+    { x: [], y: [], name: 'Normative (±1 SD)', mode: 'lines', legendgroup: 'normative',
       line: { color: '#ffffff', width: 1.5 },
       hovertemplate: '%{y:.1f} mm: %{x:.2g}<extra>%{fullData.name}</extra>' },
     { x: [], y: [], mode: 'lines', legendgroup: 'normative', line: { width: 0 }, showlegend: false, hoverinfo: 'skip' },
@@ -3815,9 +3818,10 @@ function setProfiles(lhStat, rhStat, asymStat, count, lhArea, rhArea, normStat) 
 
     const normDepth = norm ? depthsFor(norm.mean) : []
     const normMean  = norm ? xs(norm.mean) : []
+    // ±1 SD, not ±2 — see the "depth-profile charts" comment above makeChart.
     const normPlus  = norm ? xs(norm.mean.map((m, i) => m + norm.sd[i])) : []
     const normMinus = norm ? xs(norm.mean.map((m, i) => m - norm.sd[i])) : []
-    const normLabel = norm ? `Normative (nSubj=${Math.max(...norm.n)})` : 'Normative'
+    const normLabel = norm ? `Normative (±1 SD, nSubj=${Math.max(...norm.n)})` : 'Normative (±1 SD)'
 
     if (chart !== chartAsym)
       for (const arr of [mean, plus, minus, normMean, normPlus, normMinus])
