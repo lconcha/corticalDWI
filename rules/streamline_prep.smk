@@ -30,13 +30,24 @@ rule resample_surface_ico6_sym:
         pial=f"{SUBJECTS_DIR}/{{subject}}/surf/lh.pial",
         orig=f"{SUBJECTS_DIR}/{{subject}}/mri/orig.mgz",
     output:
-        # Downstream-consumed surfaces only. The script also writes per-metric
-        # (sulc/curv/thickness) func.gii files and inflated variants that no
-        # tracked step reads — not declared here, still produced on disk.
+        # Surfaces consumed by downstream Snakemake rules, plus the
+        # per-metric (sulc/curv/thickness) func.gii files written by the
+        # shared cortical_resample_metrics_to_ico6_sym.sh helper — those have
+        # no Snakemake consumer of their own, but ARE read interactively by
+        # cortical_browser.py's scalar-metric overlay dropdown
+        # (find_scalar_metrics()), so they're declared here too. The script
+        # also writes inflated surface variants that stay undeclared, since
+        # nothing (tracked or interactive) reads those yet.
         lh_white=f"{SUBJECTS_DIR}/{{subject}}/surf/lh_white_ico6_sym.surf.gii",
         rh_white=f"{SUBJECTS_DIR}/{{subject}}/surf/rh_white_ico6_sym.surf.gii",
         lh_pial=f"{SUBJECTS_DIR}/{{subject}}/surf/lh_pial_ico6_sym.surf.gii",
         rh_pial=f"{SUBJECTS_DIR}/{{subject}}/surf/rh_pial_ico6_sym.surf.gii",
+        lh_sulc=f"{SUBJECTS_DIR}/{{subject}}/surf/lh.sulc.ico6_sym.func.gii",
+        rh_sulc=f"{SUBJECTS_DIR}/{{subject}}/surf/rh.sulc.ico6_sym.func.gii",
+        lh_curv=f"{SUBJECTS_DIR}/{{subject}}/surf/lh.curv.ico6_sym.func.gii",
+        rh_curv=f"{SUBJECTS_DIR}/{{subject}}/surf/rh.curv.ico6_sym.func.gii",
+        lh_thickness=f"{SUBJECTS_DIR}/{{subject}}/surf/lh.thickness.ico6_sym.func.gii",
+        rh_thickness=f"{SUBJECTS_DIR}/{{subject}}/surf/rh.thickness.ico6_sym.func.gii",
         spec=f"{SUBJECTS_DIR}/{{subject}}/surf/ico6_sym.spec",
     shell:
         MRTRIX_ENV + "cortical_resample_surface_ico6_sym.sh {wildcards.subject}"

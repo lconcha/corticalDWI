@@ -213,47 +213,9 @@ echo ""
 echo ">>> Step 7: Resample sulc, curv, thickness to ico6"
 
 for METRIC in sulc curv thickness; do
-
-    # Left hemisphere
-    mris_convert -c \
-        $SURF/lh.${METRIC} \
-        $SURF/lh.white \
-        $SURF/lh.${METRIC}.func.gii
-
-    $WB -metric-resample \
-        $SURF/lh.${METRIC}.func.gii \
-        $SURF/lh.fsaverage_sym.sphere.reg.surf.gii \
-        $TEMPLATE \
-        ADAP_BARY_AREA \
-        $SURF/lh.${METRIC}.ico6_sym.func.gii \
-        -area-surfs \
-        $SURF/lh.white.surf.gii \
-        $SURF/lh_white_ico6_sym.surf.gii
-
-    $WB -set-structure \
-        $SURF/lh.${METRIC}.ico6_sym.func.gii \
-        CORTEX_LEFT
-
-    # Right hemisphere (from xhemi)
-    mris_convert -c \
-        $XHEMI/lh.${METRIC} \
-        $XHEMI/lh.white \
-        $XHEMI/lh.${METRIC}.func.gii
-
-    $WB -metric-resample \
-        $XHEMI/lh.${METRIC}.func.gii \
-        $XHEMI/lh.fsaverage_sym.sphere.reg.surf.gii \
-        $TEMPLATE \
-        ADAP_BARY_AREA \
-        $SURF/rh.${METRIC}.ico6_sym.func.gii \
-        -area-surfs \
-        $XHEMI/lh.white.surf.gii \
-        $SURF/rh_white_ico6_sym.surf.gii
-
-    $WB -set-structure \
-        $SURF/rh.${METRIC}.ico6_sym.func.gii \
-        CORTEX_RIGHT
-
+    for hemi in rh lh; do
+        cortical_resample_metrics_to_ico6_sym.sh $SUBJECT surf/${hemi}.${METRIC} 
+    done
 done
 
 

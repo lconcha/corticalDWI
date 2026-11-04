@@ -275,20 +275,25 @@ def find_scalar_metrics(subj_dir, template=TEMPLATE, verbose=True):
     under surf/{hemi}.<name>.{template}.func.gii — distinct from the
     depth-wise {hemi}_{template}_<name>.tsf metrics find_tsf_metrics() looks
     for (underscore-joined, no per-vertex dot-name). A metric is included
-    only when both hemispheres are present. Returns {name: {'lh': path,
-    'rh': path}}, in the order lh files are found on disk."""
+    only when both hemispheres are present. Returns {label: {'lh': path,
+    'rh': path}}, in the order lh files are found on disk, with label
+    'surf/<name>' — the same <folder>/<name> convention find_tsf_metrics'
+    labels use (folder being where the file lives, relative to subj_dir), so
+    these show up in the dropdown with their folder visible like every other
+    metric instead of a bare, context-less name."""
     surf_dir = os.path.join(subj_dir, 'surf')
     suffix = f'.{template}.func.gii'
     found = {}
     for lh_path in sorted(glob.glob(os.path.join(surf_dir, f'lh.*{suffix}'))):
         name = os.path.basename(lh_path)[len('lh.'):-len(suffix)]
         rh_path = os.path.join(surf_dir, f'rh.{name}{suffix}')
+        label = f'surf/{name}'
         if os.path.isfile(rh_path):
-            found[name] = {'lh': lh_path, 'rh': rh_path}
+            found[label] = {'lh': lh_path, 'rh': rh_path}
             if verbose:
-                print(f'  found    {name:24s} surf/{os.path.basename(lh_path)}')
+                print(f'  found    {label:24s} surf/{os.path.basename(lh_path)}')
         elif verbose:
-            print(f'\033[31m  MISSING  {name:24s} lh in surf/ but no rh sibling\033[0m')
+            print(f'\033[31m  MISSING  {label:24s} lh in surf/ but no rh sibling\033[0m')
     if verbose:
         print(f'  -> {len(found)} scalar surface metric(s) available: {list(found) or "none"}')
     return found
