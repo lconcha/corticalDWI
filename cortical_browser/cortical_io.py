@@ -97,6 +97,17 @@ def metric_label(tsf_path, hemi, template, subj_dir):
     return f'{folder}/{fname[len(prefix):-len(".tsf")]}'
 
 
+def scalar_gii_label(path, hemi, template, subj_dir):
+    """Inverse of find_scalar_gii: label for a {hemi}.{name}.{template}.func.gii
+    path, folder = its full path relative to subj_dir."""
+    fname = os.path.basename(path)
+    prefix, suffix = f'{hemi}.', f'.{template}.func.gii'
+    if not (fname.startswith(prefix) and fname.endswith(suffix)):
+        raise ValueError(f'{fname} is not a {prefix}<name>{suffix} file')
+    folder = os.path.relpath(os.path.dirname(path), subj_dir)
+    return f'{folder}/{fname[len(prefix):-len(suffix)]}'
+
+
 def metric_id(label):
     """File-name / URL-safe form of a metric label (dwi/dti/fa -> dwi__dti__fa)."""
     return label.replace('/', '__')
@@ -110,6 +121,27 @@ def find_tsf(subj_dir, hemi, template, label):
     the old glob-based multi-match version."""
     folder, name = split_metric(label)
     path = os.path.join(subj_dir, folder, f'{hemi}_{template}_{name}.tsf')
+    return [path] if os.path.isfile(path) else []
+
+
+def read_gifti_scalar(path):
+    """One value per vertex from a single-darray .func.gii (thickness, curv,
+    sulc, ...) -> float32 (nVerts,) array."""
+    img = nib.load(path)
+    return np.asarray(img.darrays[0].data, dtype=np.float32)
+
+
+def find_scalar_gii(subj_dir, hemi, template, label):
+    """Path of {subj_dir}/{folder}/{hemi}.{name}.{template}.func.gii — the
+    single-scalar-per-vertex naming convention cortical_resample_metrics_to_ico6_sym.sh
+    writes (e.g. surf/lh.thickness.ico6_sym.func.gii) — as a single-item list
+    if it exists (else empty). Same <folder>/<name> label convention as
+    find_tsf, just a different on-disk naming pattern and file type (one
+    value per vertex, not a depth-wise track-scalar); {folder} can be any
+    subfolder, not just surf/, so a caller can tell a metric's type apart by
+    which of find_tsf/find_scalar_gii actually finds a file."""
+    folder, name = split_metric(label)
+    path = os.path.join(subj_dir, folder, f'{hemi}.{name}.{template}.func.gii')
     return [path] if os.path.isfile(path) else []
 
 

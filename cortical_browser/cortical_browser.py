@@ -15,7 +15,7 @@ import nibabel as nib
 import h5py
 
 sys.path.insert(0, os.path.dirname(__file__))
-from cortical_io import read_mrtrix_tsf, pad_to_matrix, find_tsf, metric_id
+from cortical_io import read_mrtrix_tsf, pad_to_matrix, find_tsf, metric_id, read_gifti_scalar
 from cortical_browser_config import TEMPLATE, METRICS, print_config_report   # shared with the normative builder
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from urllib.parse import urlparse, parse_qs
@@ -269,6 +269,21 @@ def find_zscore_metrics(tsf_metrics):
     return found
 
 
+def find_scalar_zscore_metrics(scalar_metrics):
+    """Same role as find_zscore_metrics, for single-scalar-per-vertex metrics
+    (curv/sulc/thickness): metrics (subset of scalar_metrics) that also have
+    a per-hemisphere <name>_zscore.func.gii sitting next to the raw scalar
+    gifti (written by cortical_zscore_tsf.py / the zscore_scalar_gii
+    snakemake rule). Both hemispheres must be present. Returns {metric:
+    {'lh': path, 'rh': path}} of the z-score gifti paths (not the raw ones)."""
+    found = {}
+    for metric, hemis in scalar_metrics.items():
+        zpaths = {hemi: p[:-len('.func.gii')] + '_zscore.func.gii' for hemi, p in hemis.items()}
+        if all(os.path.isfile(p) for p in zpaths.values()):
+            found[metric] = zpaths
+    return found
+
+
 def find_scalar_metrics(subj_dir, template=TEMPLATE, verbose=True):
     """Locate single-scalar-per-vertex surface metrics (FreeSurfer-derived,
     e.g. thickness/curv/sulc, resampled by cortical_resample_metrics_to_ico6_sym.sh)
@@ -406,13 +421,6 @@ def scan_overlay_stats(tsf_metrics):
     return info, arrays
 
 
-def read_gifti_scalar(path):
-    """One value per vertex from a single-darray .func.gii (thickness, curv,
-    sulc, ...) -> float32 (nVerts,) array."""
-    img = nib.load(path)
-    return np.asarray(img.darrays[0].data, dtype=np.float32)
-
-
 def tile_scalar_matrix(vec, n_depths):
     """Repeat a (nVerts,) scalar across n_depths columns -> (nVerts, n_depths)
     float32, so a single-value-per-vertex metric slots into the same
@@ -477,16 +485,27 @@ def materialize_overlay(metric, lh_M, rh_M, out_dir, template=TEMPLATE):
     return [(f'/data/{os.path.basename(p)}', p) for p in paths]
 
 
-def scan_zscore_stats(zscore_metrics):
-    """Same split as scan_overlay_stats, but for the z-scored tsf siblings:
-    reads each metric's z-score matrices and computes symmetric cal ranges
-    (for lh/rh and for the LH_z-RH_z hemisphere difference), without writing
-    any files. Returns (info, arrays) where arrays[metric] = (lh_Mz, rh_Mz)."""
+def scan_zscore_stats(zscore_metrics, overlay_info):
+    """Same split as scan_overlay_stats, but for the z-scored siblings:
+    reads each metric's z-score data and computes symmetric cal ranges (for
+    lh/rh and for the LH_z-RH_z hemisphere difference), without writing any
+    files. A depth-wise metric's z-score sibling is a .tsf (read_tsf_matrix);
+    a single-scalar-per-vertex metric's (curv/sulc/thickness) is a
+    single-darray .func.gii with no depth axis, so it's read via
+    read_gifti_scalar and tiled to that metric's own n_depths in
+    overlay_info — the same depth count its raw overlay was already tiled to
+    (see scan_scalar_stats) — rather than special-cased any further here.
+    Returns (info, arrays) where arrays[metric] = (lh_Mz, rh_Mz)."""
     info = {}
     arrays = {}
     for metric, hemis in zscore_metrics.items():
-        lh_Mz = read_tsf_matrix(hemis['lh'])
-        rh_Mz = read_tsf_matrix(hemis['rh'])
+        if hemis['lh'].endswith('.func.gii'):
+            n_depths = overlay_info[metric]['n_depths']
+            lh_Mz = tile_scalar_matrix(read_gifti_scalar(hemis['lh']), n_depths)
+            rh_Mz = tile_scalar_matrix(read_gifti_scalar(hemis['rh']), n_depths)
+        else:
+            lh_Mz = read_tsf_matrix(hemis['lh'])
+            rh_Mz = read_tsf_matrix(hemis['rh'])
         common_d = min(lh_Mz.shape[1], rh_Mz.shape[1])
         lh_Mz = lh_Mz[:, :common_d]
         rh_Mz = rh_Mz[:, :common_d]
@@ -674,6 +693,21 @@ def _subject_tsf_nan(tsf_path):
     return M
 
 
+def _subject_metric_nan(path, n_depths):
+    """One subject metric/hemi as an (nVerts, n_depths) matrix, for either
+    kind of metric file. A depth-wise .tsf is read as-is (_subject_tsf_nan);
+    a single-scalar-per-vertex .func.gii (curv/sulc/thickness) has no depth
+    axis at all, so its one value per vertex is read once and tiled across
+    n_depths — the same depth-invariant convention the cohort h5
+    (build_normative_stack, in cortical_create_normative_data_from_tsf.py)
+    and the live display path (tile_scalar_matrix) both already use for
+    these metrics, so it reads as a constant value at every depth here too,
+    instead of only at depth 0."""
+    if path.endswith('.func.gii'):
+        return np.tile(read_gifti_scalar(path)[:, None], (1, n_depths))
+    return _subject_tsf_nan(path)
+
+
 def _mahal_sq(x, mu, cov, n_valid, n_metrics):
     """Squared Mahalanobis distance of vector x from a distribution with mean
     mu and covariance cov (matching MATLAB mahal, which returns the squared
@@ -703,7 +737,7 @@ def _jsonable(arr):
     return [[conv(v) for v in row] for row in a]
 
 
-def compute_multivariate(subjects_dir, tsf_metrics, subj_cache, vertices,
+def compute_multivariate(subjects_dir, mv_metrics, subj_cache, vertices,
                          primary=None, template=TEMPLATE):
     """Per-depth squared Mahalanobis distance and per-metric z-scores (LH and
     RH), aggregated over a set of vertices (the selected vertex plus its
@@ -711,7 +745,12 @@ def compute_multivariate(subjects_dir, tsf_metrics, subj_cache, vertices,
     yields a Mahalanobis-by-depth vector and per-depth z-vectors, and we return
     the mean ± sd across vertices. With a single vertex the sd arrays are all
     None (no band). Returns a JSON-ready dict, or None if there's no cohort
-    file / no shared metrics / no in-range vertex."""
+    file / no shared metrics / no in-range vertex.
+
+    mv_metrics is the subject's combined {metric: {'lh': path, 'rh': path}}
+    map — both depth-wise .tsf metrics AND single-scalar-per-vertex .func.gii
+    metrics (curv/sulc/thickness) — see _subject_metric_nan, which dispatches
+    on the file itself rather than needing the caller to say which kind."""
     if isinstance(vertices, int):
         vertices = [vertices]
     h5_path = os.path.join(subjects_dir, 'templates', 'normative', f'{template}_multivariate.h5')
@@ -723,7 +762,7 @@ def compute_multivariate(subjects_dir, tsf_metrics, subj_cache, vertices,
         n_cohort_verts = h5f['lh_M'].shape[0]
         # Metrics the cohort AND this subject both have, ordered by the cohort's
         # metric axis so the subject vector lines up with lh_M/rh_M column-wise.
-        metrics = [m for m in cohort_metrics if m in tsf_metrics]
+        metrics = [m for m in cohort_metrics if m in mv_metrics]
         # Unique, in-range, sorted so h5py fancy indexing is happy (order does
         # not matter — we aggregate across vertices).
         verts = sorted({int(v) for v in vertices if 0 <= int(v) < n_cohort_verts})
@@ -733,15 +772,18 @@ def compute_multivariate(subjects_dir, tsf_metrics, subj_cache, vertices,
         lh_c = np.asarray(h5f['lh_M'][verts])[:, :, :, midx].astype(np.float64)  # (nV, nDepthsL, nSub, nUsed)
         rh_c = np.asarray(h5f['rh_M'][verts])[:, :, :, midx].astype(np.float64)  # (nV, nDepthsR, nSub, nUsed)
 
-    # Subject's own per-metric matrices (NaN-masked), cached for the session.
-    for m in metrics:
-        if m not in subj_cache:
-            subj_cache[m] = (_subject_tsf_nan(tsf_metrics[m]['lh']),
-                             _subject_tsf_nan(tsf_metrics[m]['rh']))
-
     n_used   = len(metrics)
     n_depths = min(lh_c.shape[1], rh_c.shape[1])   # combine both hemis per depth
     nV       = len(verts)
+
+    # Subject's own per-metric matrices (NaN-masked), cached for the session.
+    # n_depths is a cohort-wide constant (same for every call against this
+    # subject/cohort pair), so a scalar metric's tile width never needs to
+    # change once cached.
+    for m in metrics:
+        if m not in subj_cache:
+            subj_cache[m] = (_subject_metric_nan(mv_metrics[m]['lh'], n_depths),
+                             _subject_metric_nan(mv_metrics[m]['rh'], n_depths))
 
     def subj_vec(vertex, hemi_i):
         out = np.full((n_depths, n_used), np.nan)
@@ -903,7 +945,7 @@ def make_dwi_html(subj_id, dwi_files, port, cache_bust=''):
 
 def make_handler(html_bytes, file_map, overlay_arrays, materialized, out_dir,
                   subjects_dir=None, normative_materialized=None, template=TEMPLATE,
-                  tsf_metrics=None, dwi_html_bytes=None, main_js_bytes=None, dwi_js_bytes=None,
+                  mv_metrics=None, dwi_html_bytes=None, main_js_bytes=None, dwi_js_bytes=None,
                   zscore_arrays=None, zscore_materialized=None):
     # Session cache of the subject's NaN-masked per-metric matrices, populated
     # lazily on the first /mahal request and reused across vertices.
@@ -1017,9 +1059,9 @@ def make_handler(html_bytes, file_map, overlay_arrays, materialized, out_dir,
 
         def _serve_mahal(self):
             """On-demand multivariate stats (squared Mahalanobis + z-scores) for
-            one vertex, as JSON — computed fresh from the cohort h5 + subject
-            tsf files (no static file to materialize)."""
-            if not subjects_dir or not tsf_metrics:
+            one vertex, as JSON — computed fresh from the cohort h5 + the
+            subject's own tsf/scalar-gifti files (no static file to materialize)."""
+            if not subjects_dir or not mv_metrics:
                 self._reply(404, 'text/plain', b'no cohort data\n')
                 return
             qs = parse_qs(urlparse(self.path).query)
@@ -1036,7 +1078,7 @@ def make_handler(html_bytes, file_map, overlay_arrays, materialized, out_dir,
             except (ValueError, TypeError):
                 verts = [vtx]
             try:
-                payload = compute_multivariate(subjects_dir, tsf_metrics, mv_subject_cache,
+                payload = compute_multivariate(subjects_dir, mv_metrics, mv_subject_cache,
                                                verts, primary=vtx, template=template)
             except Exception as exc:   # noqa: BLE001 — report, don't crash the server
                 self._reply(500, 'text/plain', f'mahal error: {exc}\n'.encode('utf-8'))
@@ -1191,10 +1233,10 @@ def main():
     print(f'Normative metrics: {list(normative_info) or "none"}')
     normative_materialized = set()
 
-    zscore_metrics = find_zscore_metrics(tsf_metrics)
+    zscore_metrics = {**find_zscore_metrics(tsf_metrics), **find_scalar_zscore_metrics(scalar_metrics)}
     print(f'Z-score metrics: {list(zscore_metrics) or "none"}')
     print(f'Scanning {len(zscore_metrics)} z-score metric(s) (stats only, no conversion yet)…')
-    zscore_info, zscore_arrays = scan_zscore_stats(zscore_metrics)
+    zscore_info, zscore_arrays = scan_zscore_stats(zscore_metrics, overlay_info)
     zscore_materialized = set()
 
     # Unique per launch (tempfile guarantees a fresh suffix), so every session's
@@ -1215,9 +1257,14 @@ def main():
         dwi_html_bytes = dwi_html.encode('utf-8')
         dwi_js_bytes   = dwi_js.encode('utf-8')
 
+    # Mahalanobis/z-score panels compare against whatever the cohort has for
+    # EITHER file convention — depth-wise tsf metrics and single-scalar
+    # gifti metrics (curv/sulc/thickness) alike — so they both go in here;
+    # compute_multivariate (via _subject_metric_nan) tells them apart itself.
+    mv_metrics = {**tsf_metrics, **scalar_metrics}
     server = HTTPServer(('localhost', args.port),
         make_handler(html_bytes, file_map, overlay_arrays, materialized, out_dir,
-                      args.subjects_dir, normative_materialized, tsf_metrics=tsf_metrics,
+                      args.subjects_dir, normative_materialized, mv_metrics=mv_metrics,
                       dwi_html_bytes=dwi_html_bytes, main_js_bytes=main_js_bytes,
                       dwi_js_bytes=dwi_js_bytes, zscore_arrays=zscore_arrays,
                       zscore_materialized=zscore_materialized))

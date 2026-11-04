@@ -1,39 +1,44 @@
 """Vertex- and depth-wise z-scores of a subject's streamline-sampled metrics
-against the normative (control cohort) data.
+and single-scalar-per-vertex surface metrics against the normative (control
+cohort) data.
 
-cortical_zscore_tsf.py compares each {hemi}_{target_type}_<metric>.tsf with
-the cohort HDF5 built by cortical_create_normative_data_from_tsf.py
+cortical_zscore_tsf.py compares each {hemi}_{target_type}_<metric>.tsf, and
+each {hemi}.<metric>.ico6_sym.func.gii (curv/sulc/thickness), with the cohort
+HDF5 built by cortical_create_normative_data_from_tsf.py
 ($SUBJECTS_DIR/templates/normative/{target_type}_multivariate.h5), and writes,
-next to the tsf:
-    <metric>_zscore.tsf                 z per streamline point
-    <metric>_zscore_absmean.func.gii    mean |z| per vertex
-    <metric>_zscore_abssum.func.gii     sum  |z| per vertex
+next to each:
+    <metric>_zscore.tsf                 z per streamline point (depth-wise)
+    <metric>_zscore_absmean.func.gii    mean |z| per vertex     (depth-wise)
+    <metric>_zscore_abssum.func.gii     sum  |z| per vertex     (depth-wise)
+    <metric>_zscore.func.gii            z per vertex            (scalar — no
+                                         depth axis, so no absmean/abssum)
 
 That HDF5 is not produced automatically by any subject-dependent rule (the
-cohort is chosen by hand, in templates/subjects_to_average.txt) — zscore_stats
-and zscore_tsf only enter a subject's DAG once it already exists, see
-zscore_eligible(). Cohort subjects ARE z-scored too, same as everyone else —
-a cohort subject's own value is part of the mean/std it's compared against,
-so its z-scores are biased toward 0 (not a true held-out deviation), but
-seeing them land near 0 is itself a useful sanity check on the normative
-stats, see cortical_zscore_tsf.py's own docstring.
+cohort is chosen by hand, in templates/subjects_to_average.txt) — zscore_stats,
+zscore_tsf, and zscore_scalar_gii only enter a subject's DAG once it already
+exists, see zscore_eligible(). Cohort subjects ARE z-scored too, same as
+everyone else — a cohort subject's own value is part of the mean/std it's
+compared against, so its z-scores are biased toward 0 (not a true held-out
+deviation), but seeing them land near 0 is itself a useful sanity check on
+the normative stats, see cortical_zscore_tsf.py's own docstring.
 
 There IS a rule to build it, build_normative_data below, but it is deliberately
-never an input of zscore_stats/zscore_tsf, nor of any subject's default
-target — it must be triggered by name (`cortical_snakerun.py
-build_normative_data` or `snakemake build_normative_data`). Wiring it in
-automatically would mean the normative baseline (and therefore everyone's
-z-scores) silently rebuilds and shifts whenever some unrelated subject's .tsf
-output happens to change, instead of only when a human deliberately decides
-the cohort or its data should change.
+never an input of zscore_stats/zscore_tsf/zscore_scalar_gii, nor of any
+subject's default target — it must be triggered by name
+(`cortical_snakerun.py build_normative_data` or `snakemake
+build_normative_data`). Wiring it in automatically would mean the normative
+baseline (and therefore everyone's z-scores) silently rebuilds and shifts
+whenever some unrelated subject's .tsf output happens to change, instead of
+only when a human deliberately decides the cohort or its data should change.
 
-Three rules:
+Four rules:
   build_normative_data once per dataset, by hand: builds the cohort HDF5
                 itself from templates/subjects_to_average.txt. Re-run whenever
                 browser_metrics, target_type, or that subject list changes —
                 its declared input is just the cohort list file, not every
-                cohort subject's .tsf files, so Snakemake has no way to notice
-                a changed/added .tsf on its own and won't rebuild for you.
+                cohort subject's .tsf/.func.gii files, so Snakemake has no way
+                to notice a changed/added one on its own and won't rebuild
+                for you.
   zscore_stats  once per dataset: control mean/SD/n per vertex+depth, cached
                 beside the HDF5. A rule of its own so parallel subject jobs
                 never race to build it, and so it is rebuilt automatically
@@ -46,6 +51,10 @@ Three rules:
                 so a metric several methods (or MRDS model-selection variants)
                 produce under the same name is z-scored per method, each
                 against its own cohort statistics.
+  zscore_scalar_gii  once per single-scalar-per-vertex file (curv/sulc/
+                thickness) — same idea as zscore_tsf, for the metrics
+                resample_surface_ico6_sym writes under surf/ instead of a
+                depth-wise .tsf.
 """
 
 NORMATIVE_H5 = f"{SUBJECTS_DIR}/templates/normative/{TARGET_TYPE}_multivariate.h5"
@@ -92,6 +101,32 @@ def zscore_outputs(subject, tsf_files):
     return outputs
 
 
+# Single-scalar-per-vertex metrics (curv/sulc/thickness) have no z-score
+# consumer of their own file list the way tsf metrics do (those come from
+# various dwi/mri processing rules, collected into final_outputs' own
+# `outputs` list) — there are only ever these three, always written by
+# resample_surface_ico6_sym under surf/, hardcoded to the "ico6_sym" naming
+# regardless of target_type (see that rule's own comment in
+# rules/streamline_prep.smk), so the path is built directly here to match —
+# NOT via rules.resample_surface_ico6_sym.output, which still carries an
+# unresolved {subject} wildcard outside that rule's own job context.
+_SCALAR_SURF_METRICS = ("sulc", "curv", "thickness")
+
+
+def zscore_scalar_inputs(subject):
+    subj_dir = f"{SUBJECTS_DIR}/{subject}"
+    paths = []
+    for hemi in ("lh", "rh"):
+        for name in _SCALAR_SURF_METRICS:
+            if f"surf/{name}" in NORMATIVE_METRICS:
+                paths.append(f"{subj_dir}/surf/{hemi}.{name}.ico6_sym.func.gii")
+    return paths
+
+
+def zscore_scalar_outputs(subject):
+    return [path[: -len(".func.gii")] + "_zscore.func.gii" for path in zscore_scalar_inputs(subject)]
+
+
 rule build_normative_data:
     # Convenience wrapper, not a dependency link — see module docstring above
     # for why zscore_stats/zscore_tsf must never depend on this. COHORT_FILE
@@ -135,3 +170,23 @@ rule zscore_tsf:
     threads: 2
     shell:
         "cortical_zscore_tsf.py {wildcards.subject} {SUBJECTS_DIR} --tsf {input.tsf}"
+
+
+rule zscore_scalar_gii:
+    # Single-scalar-per-vertex sibling of zscore_tsf above — same shell tool,
+    # just --gii instead of --tsf (cortical_zscore_tsf.py tells the two kinds
+    # apart by file convention, not by an outputs list filtered here). Always
+    # under surf/, hardcoded "ico6_sym" (not TARGET_TYPE) to match
+    # resample_surface_ico6_sym's own pinned naming — see zscore_scalar_inputs.
+    wildcard_constraints:
+        subject="[^/]+",
+        hemi="lh|rh",
+        metric="[^/]+",
+    input:
+        gii=f"{SUBJECTS_DIR}/{{subject}}/surf/{{hemi}}.{{metric}}.ico6_sym.func.gii",
+        stats=ZSCORE_STATS,
+    output:
+        gii=f"{SUBJECTS_DIR}/{{subject}}/surf/{{hemi}}.{{metric}}.ico6_sym_zscore.func.gii",
+    threads: 2
+    shell:
+        "cortical_zscore_tsf.py {wildcards.subject} {SUBJECTS_DIR} --gii {input.gii}"

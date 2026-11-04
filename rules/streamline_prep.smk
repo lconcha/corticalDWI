@@ -32,12 +32,14 @@ rule resample_surface_ico6_sym:
     output:
         # Surfaces consumed by downstream Snakemake rules, plus the
         # per-metric (sulc/curv/thickness) func.gii files written by the
-        # shared cortical_resample_metrics_to_ico6_sym.sh helper — those have
-        # no Snakemake consumer of their own, but ARE read interactively by
-        # cortical_browser.py's scalar-metric overlay dropdown
-        # (find_scalar_metrics()), so they're declared here too. The script
-        # also writes inflated surface variants that stay undeclared, since
-        # nothing (tracked or interactive) reads those yet.
+        # shared cortical_resample_metrics_to_ico6_sym.sh helper — those are
+        # read interactively by cortical_browser.py's scalar-metric overlay
+        # dropdown (find_scalar_metrics()), AND, once a normative cohort
+        # exists for the study, consumed by zscore_scalar_gii (see
+        # rules/zscore.smk) the same way the depth-wise .tsf outputs
+        # elsewhere feed zscore_tsf. The script also writes inflated surface
+        # variants that stay undeclared, since nothing (tracked or
+        # interactive) reads those yet.
         lh_white=f"{SUBJECTS_DIR}/{{subject}}/surf/lh_white_ico6_sym.surf.gii",
         rh_white=f"{SUBJECTS_DIR}/{{subject}}/surf/rh_white_ico6_sym.surf.gii",
         lh_pial=f"{SUBJECTS_DIR}/{{subject}}/surf/lh_pial_ico6_sym.surf.gii",

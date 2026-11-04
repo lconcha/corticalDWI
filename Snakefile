@@ -224,6 +224,7 @@ def final_outputs(subject):
     # excluded, but because their own value pulls the mean/std toward them)
     if zscore_eligible():
         outputs += zscore_outputs(subject, outputs)
+        outputs += zscore_scalar_outputs(subject)
     return outputs
 
 

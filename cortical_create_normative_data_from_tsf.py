@@ -32,18 +32,8 @@ import numpy as np
 import h5py
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'cortical_browser'))
-from cortical_io import read_mrtrix_tsf, pad_to_matrix, find_tsf
+from cortical_io import read_mrtrix_tsf, pad_to_matrix, find_tsf, find_scalar_gii, read_gifti_scalar
 from cortical_browser_config import TEMPLATE, METRICS, print_config_report   # shared with cortical_browser.py
-
-
-def find_one_subject_file(subjects_dir, subject, hemi, template, metric):
-    """Path of one subject's {hemi} tsf for a <folder>/<name> metric, or None.
-    The folder in the label makes the match unambiguous; if the same folder
-    name still occurs twice under the subject, the first (sorted) is used."""
-    matches = find_tsf(os.path.join(subjects_dir, subject), hemi, template, metric)
-    if len(matches) > 1:
-        print(f'    [warn] {subject} {hemi} {metric}: {len(matches)} matches, using {matches[0]}')
-    return matches[0] if matches else None
 
 
 def load_subject_matrix(tsf_path):
@@ -56,17 +46,41 @@ def load_subject_matrix(tsf_path):
 
 
 def stack_subjects(subjects_dir, subjects, hemi, template, metric):
-    """(nVerts, maxDepth, nSubjects) NaN-padded stack for one metric/hemi,
-    aligned to `subjects` by index. A subject missing this file contributes
-    an all-NaN slice, keeping the subject axis consistent across metrics."""
+    """(stack, is_scalar). stack is a (nVerts, maxDepth, nSubjects) NaN-padded
+    stack for one metric/hemi, aligned to `subjects` by index (maxDepth is 1
+    when is_scalar). A subject missing this file contributes an all-NaN
+    slice, keeping the subject axis consistent across metrics.
+
+    A metric is either depth-wise (a <folder>/{hemi}_{template}_<name>.tsf
+    per subject — find_tsf) or single-scalar-per-vertex (a
+    <folder>/{hemi}.<name>.{template}.func.gii per subject — find_scalar_gii,
+    e.g. surf/thickness, in any subfolder, not just surf/). Its type is
+    decided once, from whichever convention the first matching subject's
+    file follows, then used for every subject — a metric is expected to be
+    consistently one type across a cohort, so once a type is chosen the
+    other convention is no longer even checked."""
+    is_scalar = None
     per_subj = [None] * len(subjects)
     n_found = 0
     for i, subj in enumerate(subjects):
-        path = find_one_subject_file(subjects_dir, subj, hemi, template, metric)
-        if path is not None:
-            per_subj[i] = load_subject_matrix(path)
-            n_found += 1
-    print(f'    {hemi} {metric}: {n_found}/{len(subjects)} subjects found')
+        subj_dir = os.path.join(subjects_dir, subj)
+        if is_scalar is not False:
+            hits = find_scalar_gii(subj_dir, hemi, template, metric)
+            if hits:
+                is_scalar = True
+                per_subj[i] = read_gifti_scalar(hits[0])[:, None]   # (nVerts, 1)
+                n_found += 1
+                continue
+        if is_scalar is not True:
+            hits = find_tsf(subj_dir, hemi, template, metric)
+            if len(hits) > 1:
+                print(f'    [warn] {subj} {hemi} {metric}: {len(hits)} matches, using {hits[0]}')
+            if hits:
+                is_scalar = False
+                per_subj[i] = load_subject_matrix(hits[0])
+                n_found += 1
+    is_scalar = bool(is_scalar)
+    print(f'    {hemi} {metric}: {n_found}/{len(subjects)} subjects found' + (' [scalar]' if is_scalar else ''))
 
     n_verts = next((m.shape[0] for m in per_subj if m is not None), 0)
     max_len = max((m.shape[1] for m in per_subj if m is not None), default=0)
@@ -74,16 +88,27 @@ def stack_subjects(subjects_dir, subjects, hemi, template, metric):
     for s, M in enumerate(per_subj):
         if M is not None:
             stack[:, :M.shape[1], s] = M
-    return stack
+    return stack, is_scalar
 
 
 def build_normative_stack(subjects_dir, subjects, metrics, hemi, template=TEMPLATE):
     """(nVerts, nDepths, nSubjects, nMetrics) stack for one hemisphere,
     across all metrics, NaN-padded to the deepest metric's depth and
-    trimmed of any trailing depth columns that are all-NaN everywhere."""
-    per_metric_stacks = []
-    for metric in metrics:
-        per_metric_stacks.append(stack_subjects(subjects_dir, subjects, hemi, template, metric))
+    trimmed of any trailing depth columns that are all-NaN everywhere.
+
+    A scalar metric (is_scalar, see stack_subjects) only ever has real data
+    at depth 0 up to this point — same as any depth-wise metric that happens
+    to be shallower than the cohort's deepest one, EXCEPT a scalar isn't
+    "missing" past depth 0, it's constant, so after the normal NaN-pad +
+    trim (which must run first, on the un-broadcast data, or every depth
+    would look "non-empty" because of the scalar and nothing would ever get
+    trimmed) its depth-0 value is broadcast across the full, now-final depth
+    axis — matching the same depth-invariant convention cortical_browser.py's
+    own display path (tile_scalar_matrix) already uses, so z-scoring/
+    Mahalanobis see a real, constant value at every depth instead of NaN."""
+    per_metric = [stack_subjects(subjects_dir, subjects, hemi, template, metric) for metric in metrics]
+    per_metric_stacks = [s for s, _ in per_metric]
+    is_scalar          = [sc for _, sc in per_metric]
 
     n_verts   = per_metric_stacks[0].shape[0]
     n_subj    = len(subjects)
@@ -94,7 +119,12 @@ def build_normative_stack(subjects_dir, subjects, metrics, hemi, template=TEMPLA
         M[:, :stack.shape[1], :, m] = stack
 
     keep = ~np.all(np.isnan(M), axis=(0, 2, 3))
-    return M[:, keep, :, :]
+    M = M[:, keep, :, :]
+
+    for m, scalar in enumerate(is_scalar):
+        if scalar:
+            M[:, :, :, m] = M[:, 0:1, :, m]
+    return M
 
 
 def main():

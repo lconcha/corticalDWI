@@ -1,24 +1,35 @@
 #!/usr/bin/env python3
 """
 cortical_zscore_tsf.py — vertex- and depth-wise z-scores of one subject's
-.tsf files against the precomputed normative dataset.
+depth-wise and single-scalar-per-vertex metrics against the precomputed
+normative dataset.
 
 For every metric in the normative HDF5 (templates/normative/{TEMPLATE}_multivariate.h5,
 built by cortical_create_normative_data_from_tsf.py) and each hemisphere, finds
-<folder>/{hemi}_{TEMPLATE}_<name>.tsf under the subject's directory and writes, next to it
-(metrics are labelled <folder>/<name>, folder = the full path from the subject
-directory down, e.g. dwi/dti/fa vs dwi/dki/fa):
+whichever of the two file conventions that metric actually uses under the
+subject's directory and writes, next to it (metrics are labelled
+<folder>/<name>, folder = the full path from the subject directory down, e.g.
+dwi/dti/fa vs dwi/dki/fa):
 
-    {hemi}_{TEMPLATE}_<metric>_zscore.tsf            z per streamline point
-    {hemi}_{TEMPLATE}_<metric>_zscore_absmean.func.gii   mean |z| over each vertex's streamline
-    {hemi}_{TEMPLATE}_<metric>_zscore_abssum.func.gii    sum  |z| over each vertex's streamline
+  Depth-wise:  <folder>/{hemi}_{TEMPLATE}_<name>.tsf ->
+    {hemi}_{TEMPLATE}_<name>_zscore.tsf            z per streamline point
+    {hemi}_{TEMPLATE}_<name>_zscore_absmean.func.gii   mean |z| over each vertex's streamline
+    {hemi}_{TEMPLATE}_<name>_zscore_abssum.func.gii    sum  |z| over each vertex's streamline
+
+  Single-scalar-per-vertex (curv/sulc/thickness):
+  <folder>/{hemi}.<name>.{TEMPLATE}.func.gii ->
+    {hemi}.<name>.{TEMPLATE}_zscore.func.gii       z per vertex (no depth axis,
+                                                    so no absmean/abssum — the
+                                                    z-score IS already the
+                                                    per-vertex summary)
 
 z = (x - mean) / std across control subjects (sample std, ddof=1), computed per
-vertex and per depth index. A point is invalid, and written as -1 (the
-sentinel the rest of the pipeline masks to NaN), when the subject value is
-missing (-1), fewer than MIN_N controls have a value there, or the control std
-is 0. Invalid points are excluded from the mean |z|; a vertex with no valid
-points gets NaN in the giftis.
+vertex (and per depth index, for depth-wise metrics). A point/vertex is
+invalid, when the subject value is missing (-1 for a depth-wise point, the
+sentinel the rest of the pipeline masks to NaN; non-finite for a scalar),
+fewer than MIN_N controls have a value there, or the control std is 0.
+Invalid points are excluded from the mean |z|; a vertex with no valid points
+gets NaN in the giftis.
 
 Runs for every subject, including those in subjects_to_average.txt — a
 cohort subject's own value is part of the mean/std it's compared against, so
@@ -29,12 +40,14 @@ expected on the data that built them.
 Usage:
     python cortical_zscore_tsf.py <subjid> [subjects_dir] [--min-n 4]
     python cortical_zscore_tsf.py <subjid> [subjects_dir] --tsf FILE [FILE ...]
+    python cortical_zscore_tsf.py <subjid> [subjects_dir] --gii FILE [FILE ...]
     python cortical_zscore_tsf.py --stats-only [subjects_dir]
 
---tsf processes exactly the given files (used by the Snakemake rule) instead
-of searching the subject's directory. --stats-only just builds/refreshes the
-normative stats cache and exits (also used by the Snakemake rule, so the cache
-is built once rather than raced for by parallel subject jobs).
+--tsf/--gii each process exactly the given files (used by their own Snakemake
+rule) instead of searching the subject's directory; either or both may be
+given together. --stats-only just builds/refreshes the normative stats cache
+and exits (also used by the Snakemake rule, so the cache is built once rather
+than raced for by parallel subject jobs).
 """
 import os, sys, glob, argparse, warnings
 from concurrent.futures import ProcessPoolExecutor
@@ -43,7 +56,8 @@ import h5py
 import nibabel as nib
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), 'cortical_browser'))
-from cortical_io import read_mrtrix_tsf, write_mrtrix_tsf, pad_to_matrix, find_tsf, metric_label
+from cortical_io import (read_mrtrix_tsf, write_mrtrix_tsf, pad_to_matrix, find_tsf, metric_label,
+                          find_scalar_gii, scalar_gii_label, read_gifti_scalar)
 from cortical_browser_config import TEMPLATE
 
 MIN_N = 4
@@ -76,6 +90,22 @@ def zscore_tracks(tracks, mu, sd, n, min_n=MIN_N):
     Zout = np.where(ok, Z, -1.0).astype(np.float32)
     z_tracks = [Zout[v, :lens[v]] for v in range(len(tracks))]
     return z_tracks, abs_mean, abs_sum
+
+
+def zscore_scalar(x, mu, sd, n, min_n=MIN_N):
+    """z-score one subject's single-scalar-per-vertex metric (curv/sulc/
+    thickness) against cohort (mu, sd, n) — same validity rule as
+    zscore_tracks (NaN where the subject value is missing/non-finite, fewer
+    than min_n controls have a value there, or the control SD is 0), but
+    there's only one value per vertex, no depth axis and no -1 point
+    sentinel to encode (a gifti scalar is never -1-as-invalid the way an
+    MRtrix track point is), so this returns a plain (nVerts,) float32 array
+    with NaN for invalid vertices, and there's nothing to summarize across
+    depth (no absmean/abssum — they'd just be |z| again)."""
+    with np.errstate(all='ignore'):
+        ok = np.isfinite(x) & np.isfinite(mu) & (n >= min_n) & (sd > 0)
+        z = np.where(ok, (x - mu) / sd, np.nan)
+    return z.astype(np.float32)
 
 
 BLOCK = 5122   # vertices per HDF5 read (2 x the file's 2561-vertex chunk)
@@ -158,6 +188,7 @@ def main():
     ap.add_argument('subjid', nargs='?')
     ap.add_argument('subjects_dir', nargs='?', default=os.environ.get('SUBJECTS_DIR'))
     ap.add_argument('--tsf', nargs='+', metavar='FILE', help='z-score exactly these .tsf files instead of searching the subject dir')
+    ap.add_argument('--gii', nargs='+', metavar='FILE', help='z-score exactly these single-scalar-per-vertex .func.gii files (curv/sulc/thickness) instead of searching the subject dir')
     ap.add_argument('--stats-only', action='store_true', help='only build/refresh the normative stats cache, then exit')
     ap.add_argument('--no-cache', action='store_true', help='do not read/write the normative stats cache')
     ap.add_argument('--workers', type=int, default=4, help='processes for computing normative stats (default 4)')
@@ -198,41 +229,73 @@ def main():
         load_normative_stats(h5_path, metrics, use_cache=True, workers=args.workers)
         return
 
-    # (hemi, metric) -> tsf path: explicit --tsf files, else a search of the subject dir
+    # (hemi, metric) -> (path, is_scalar): explicit --tsf/--gii files, else a
+    # search of the subject dir trying both file conventions per metric —
+    # depth-wise .tsf (find_tsf) and single-scalar-per-vertex .func.gii
+    # (find_scalar_gii, e.g. curv/sulc/thickness) — whichever actually exists.
     files = {}
-    if args.tsf:
-        for path in args.tsf:
+    if args.tsf or args.gii:
+        for path in (args.tsf or []):
             for hemi in ('lh', 'rh'):
                 if os.path.basename(path).startswith(f'{hemi}_{TEMPLATE}_'):
                     if os.path.basename(path).endswith('_zscore.tsf'):
                         sys.exit(f'{path} is itself a z-score file')
-                    files[(hemi, metric_label(path, hemi, TEMPLATE, subj_dir))] = path
+                    files[(hemi, metric_label(path, hemi, TEMPLATE, subj_dir))] = (path, False)
                     break
             else:
                 sys.exit(f'Cannot parse hemisphere from {os.path.basename(path)} (expected lh|rh_{TEMPLATE}_<name>.tsf)')
+        for path in (args.gii or []):
+            for hemi in ('lh', 'rh'):
+                if os.path.basename(path).startswith(f'{hemi}.'):
+                    if os.path.basename(path).endswith(f'_zscore.{TEMPLATE}.func.gii'):
+                        sys.exit(f'{path} is itself a z-score file')
+                    files[(hemi, scalar_gii_label(path, hemi, TEMPLATE, subj_dir))] = (path, True)
+                    break
+            else:
+                sys.exit(f'Cannot parse hemisphere from {os.path.basename(path)} (expected lh|rh.<name>.{TEMPLATE}.func.gii)')
     else:
         for hemi in ('lh', 'rh'):
             for metric in metrics:
                 hits = find_tsf(subj_dir, hemi, TEMPLATE, metric)
-                if len(hits) > 1:
-                    print(f'  [warn] {hemi} {metric}: {len(hits)} files found, using {hits[0]}')
                 if hits:
-                    files[(hemi, metric)] = hits[0]
-                else:
-                    print(f'  [skip] {hemi} {metric}: no such .tsf under {subj_dir}')
+                    if len(hits) > 1:
+                        print(f'  [warn] {hemi} {metric}: {len(hits)} files found, using {hits[0]}')
+                    files[(hemi, metric)] = (hits[0], False)
+                    continue
+                hits = find_scalar_gii(subj_dir, hemi, TEMPLATE, metric)
+                if hits:
+                    files[(hemi, metric)] = (hits[0], True)
+                    continue
+                print(f'  [skip] {hemi} {metric}: no such .tsf or .func.gii under {subj_dir}')
 
     todo = []
-    for (hemi, metric), path in files.items():
+    for (hemi, metric), (path, is_scalar) in files.items():
         if metric in metrics:
-            todo.append((hemi, metric, path))
+            todo.append((hemi, metric, path, is_scalar))
         else:
             print(f'  [skip] {hemi} {metric}: not in the normative data')
-    needed = {(h, metrics.index(m)) for h, m, _ in todo}
+    needed = {(h, metrics.index(m)) for h, m, _, _ in todo}
     stats = load_normative_stats(h5_path, metrics, use_cache=not args.no_cache, workers=args.workers, needed=needed)
 
-    for hemi, metric, path in todo:
-        _, tracks = read_mrtrix_tsf(path)
+    for hemi, metric, path, is_scalar in todo:
         mu, sd, n = stats[(hemi, metrics.index(metric))]
+
+        if is_scalar:
+            # Every depth column of (mu, sd, n) is identical for a scalar
+            # metric (see build_normative_stack's broadcast) — column 0 is
+            # as good as any.
+            x = read_gifti_scalar(path)
+            if mu.shape[0] != x.shape[0]:
+                print(f'  [skip] {hemi} {metric}: {x.shape[0]} vertices vs {mu.shape[0]} normative vertices')
+                continue
+            z = zscore_scalar(x, mu[:, 0], sd[:, 0], n[:, 0], args.min_n)
+            out_path = path[:-len('.func.gii')] + '_zscore.func.gii'
+            write_gifti(out_path, z)
+            print(f'  {hemi} {metric}: wrote {os.path.basename(out_path)} '
+                  f'(z computed for {np.isfinite(z).sum()}/{len(z)} vertices)')
+            continue
+
+        _, tracks = read_mrtrix_tsf(path)
         if mu.shape[0] != len(tracks):
             print(f'  [skip] {hemi} {metric}: {len(tracks)} streamlines vs {mu.shape[0]} normative vertices')
             continue
