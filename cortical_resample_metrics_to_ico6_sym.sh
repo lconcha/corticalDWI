@@ -13,15 +13,22 @@ inScalar=$2; # relative path to scalar file in $SUBJECTS_DIR/$subjid
 full_inScalar=$SUBJECTS_DIR/$subjid/$inScalar
 
 if [[ -z "$subjid" || -z "$inScalar" ]]; then
-    echo "Usage: $(basename $0) <subject_id> <lh|rh.scalar_name>"
+    echolor red "Usage: $(basename $0) <subject_id> <lh|rh.scalar_name>"
     exit 1
 fi
 
 if [[ ! -f $TEMPLATE ]]; then
-    echo "ERROR: ico6_sym template sphere not found: $TEMPLATE"
-    echo "Run cortical_resample_surface_ico6_sym.sh for at least one subject first."
+    echolor red "ERROR: ico6_sym template sphere not found: $TEMPLATE"
+    echolor red "Run cortical_resample_surface_ico6_sym.sh for at least one subject first."
     exit 1
 fi
+
+echolor green "Looking for input scalar file: $full_inScalar"
+if [[ ! -f $full_inScalar ]]; then
+    echolor red "[ERROR] input scalar file not found: $full_inScalar"
+    exit 1
+fi
+
 
 ff=$(basename $inScalar)
 hemi=${ff:0:2}
@@ -33,14 +40,14 @@ SURF=$SUBJECTS_DIR/$subjid/surf
 XHEMI=$SUBJECTS_DIR/$subjid/xhemi/surf
 
 if [[ "$hemi" != "lh" && "$hemi" != "rh" ]]; then
-    echo "ERROR: could not determine hemisphere (lh/rh) from scalar filename: $inScalar"
+    echolor red "[ERROR] could not determine hemisphere (lh/rh) from scalar filename: $inScalar"
     rm -fR $tmpDir
     exit 1
 fi
 
 if [[ ! -f $SURF/lh.fsaverage_sym.sphere.reg.surf.gii || ! -f $XHEMI/lh.fsaverage_sym.sphere.reg.surf.gii ]]; then
-    echo "ERROR: symmetric sphere registration not found for subject $subjid."
-    echo "Run cortical_resample_surface_ico6_sym.sh $subjid first."
+    echolor red "[ERROR] symmetric sphere registration not found for subject $subjid."
+    echolor red "Run cortical_resample_surface_ico6_sym.sh $subjid first."
     rm -fR $tmpDir
     exit 1
 fi
