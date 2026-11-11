@@ -120,11 +120,37 @@ for hemi in lh rh; do
         $OUT/${hemi}_very-inflated.ico6_sym.surf.gii
 done    
 
+
+# ── Prepare a mask ─────────────────────────────
+
+# Convert the native label to GIFTI (on fsaverage_sym's own lh surface)
+mris_convert --label $FS_SYM/label/lh.cortex.label cortex \
+    $FS_SYM/surf/lh.white $OUT/lh.cortex.label.gii
+
+# Resample the LABEL (not a metric -- keeps it discrete, no blending) using
+# the exact same sphere-to-sphere pair the surfaces were resampled with
+my_do_cmd $WB -label-resample \
+    $OUT/lh.cortex.label.gii \
+    $OUT/lh.sphere.surf.gii \
+    $TEMPLATE \
+    BARYCENTRIC \
+    $OUT/lh.cortex.ico6_sym.label.gii
+
+# rh = mirror of lh, exactly like the surfaces (ico6_sym treats lh/rh as
+# mirror images -- see the script's own comment on why)
+my_do_cmd cp $OUT/lh.cortex.ico6_sym.label.gii $OUT/rh.cortex.ico6_sym.label.gii
+my_do_cmd $WB -set-structure $OUT/lh.cortex.ico6_sym.label.gii CORTEX_LEFT
+my_do_cmd $WB -set-structure $OUT/rh.cortex.ico6_sym.label.gii CORTEX_RIGHT
+my_do_cmd $WB -add-to-spec-file $specfile CORTEX_LEFT  $OUT/lh.cortex.ico6_sym.label.gii
+my_do_cmd $WB -add-to-spec-file $specfile CORTEX_RIGHT $OUT/rh.cortex.ico6_sym.label.gii
+
+
+
 echo ""
 echo "========================================"
 echo " Done."
 echo " Output files in $OUT:"
-ls $OUT/*_*.ico6_sym.surf.gii
+ls -rt $OUT/*ico6_sym*.gii
 echo "========================================"
 echolor green "[INFO] wb_view `readlink -f $specfile`"
 echo "========================================"
