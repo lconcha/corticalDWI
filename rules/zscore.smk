@@ -55,11 +55,71 @@ Four rules:
                 thickness) — same idea as zscore_tsf, for the metrics
                 resample_surface_ico6_sym writes under surf/ instead of a
                 depth-wise .tsf.
+
+Covariate adjustment (zscore_adjust_for / zscore_covariates_file in
+corticalDWI_params.conf — see that file's own comment and
+cortical_zscore_tsf.py's --adjust-for docstring) is OFF by default
+(ZSCORE_ADJUST_FOR == ""), in which case every rule below behaves exactly as
+described above. Set zscore_adjust_for to a continuous covariate column
+(e.g. age_scan) to additionally produce, next to each z-score file above, a
+<metric>_zscore_adj-<col>.* sibling.
+
+That sibling is no longer a cheap per-vertex OLS computed on the fly — it's
+gated on a real group-level significance test. A new rule, zscore_glm_stats,
+fits a BrainStat SLM (metric ~ covariate, both hemispheres combined into one
+bilateral mesh, smoothed, FDR+RFT corrected — see cortical_glm_covariate.py)
+once per metric/depth and writes slope/intercept/r/p-uncorrected/p-fdr/
+p-rft/resid-sd as .func.gii under templates/normative/glm/. zscore_tsf and
+zscore_scalar_gii then pass --adjust-for/--covariates/--rft-threshold to
+cortical_zscore_tsf.py, which reads those GIFTIs and uses the BrainStat
+slope/intercept/resid-sd as the predicted value+SD ONLY where that vertex/
+depth's RFT CLUSTER-corrected p-value (p-rft) is below --rft-threshold
+(zscore_adjust_rft_threshold, default 0.05); everywhere else it's not
+adjusted at all (same as the plain z-score there). zscore_glm_stats must
+therefore complete, for every metric zscore_tsf/zscore_scalar_gii touch,
+before --adjust-for can be used — cortical_zscore_tsf.py hard-errors if a
+metric's GLM stats are missing rather than silently skipping the adjustment.
+
+zscore_stats still separately builds/caches the OLD fast per-vertex OLS
+(ZSCORE_ADJUST_STATS) when zscore_adjust_for is set — that one is no longer
+read by the production z-scoring path above, but cortical_var_explorer.py
+still uses it for its own interactive, no-BrainStat-run-required exploration
+of any covariate; see that script's own docstring.
 """
+
+import re
 
 NORMATIVE_H5 = f"{SUBJECTS_DIR}/templates/normative/{TARGET_TYPE}_multivariate.h5"
 ZSCORE_STATS = NORMATIVE_H5[: -len(".h5")] + "_zscore_stats.npz"
 COHORT_FILE = f"{SUBJECTS_DIR}/templates/subjects_to_average.txt"
+
+# Optional covariate adjustment (see corticalDWI_params.conf's own comment
+# and cortical_zscore_tsf.py's --adjust-for docstring). ZSCORE_ADJUST_FOR
+# empty (the default) disables this block entirely: ZSCORE_ADJUST_FLAGS is
+# "", so every shell: command below is byte-for-byte what it was before this
+# feature existed, and _adj_outputs() below returns [] everywhere it's used.
+ZSCORE_ADJUST_FOR = config.get("zscore_adjust_for", "").strip()
+ZSCORE_COVARIATES_FILE = config.get("zscore_covariates_file", "").strip()
+ZSCORE_ADJUST_FWHM = config.get("zscore_adjust_fwhm", "10.0").strip()
+ZSCORE_ADJUST_RFT_THRESHOLD = config.get("zscore_adjust_rft_threshold", "0.05").strip()
+# Same sanitizing as cortical_zscore_tsf.py's _sanitize_label — must match,
+# since that script is what actually names the files this predicts.
+ZSCORE_ADJUST_TAG = re.sub(r"[^A-Za-z0-9_.-]+", "_", ZSCORE_ADJUST_FOR) if ZSCORE_ADJUST_FOR else ""
+ZSCORE_ADJUST_STATS = (NORMATIVE_H5[: -len(".h5")] + f"_zscore_stats_adj-{ZSCORE_ADJUST_TAG}.npz"
+                        if ZSCORE_ADJUST_FOR else None)
+ZSCORE_ADJUST_FLAGS = ""
+if ZSCORE_ADJUST_FOR:
+    ZSCORE_ADJUST_FLAGS = f" --adjust-for {ZSCORE_ADJUST_FOR} --rft-threshold {ZSCORE_ADJUST_RFT_THRESHOLD}"
+    if ZSCORE_COVARIATES_FILE:
+        ZSCORE_ADJUST_FLAGS += f" --covariates {ZSCORE_COVARIATES_FILE}"
+
+# GLM significance stats (cortical_glm_covariate.py): one set of 7 stat
+# .func.gii per hemisphere per metric, same metric list as NORMATIVE_METRICS
+# below (defined once that's read) — see zscore_glm_stats.
+GLM_DIR = f"{SUBJECTS_DIR}/templates/normative/glm"
+GLM_STATS = ("slope", "intercept", "r", "p-uncorrected", "p-fdr", "p-rft", "resid-sd")
+CORTEX_LABEL_FILES = [f"{SUBJECTS_DIR}/templates/surf/{h}.cortex.{TARGET_TYPE}.label.gii" for h in ("lh", "rh")]
+WHITE_SURF_FILES = [f"{SUBJECTS_DIR}/templates/surf/{h}_white.{TARGET_TYPE}.surf.gii" for h in ("lh", "rh")]
 
 
 def _read_normative_metrics():
@@ -75,6 +135,26 @@ NORMATIVE_METRICS = _read_normative_metrics()
 
 def zscore_eligible():
     return bool(NORMATIVE_METRICS)
+
+
+def _glm_outputs():
+    """Every {hemi}.{metric}_{covariate}_{stat}.{template}.func.gii
+    cortical_glm_covariate.py writes, for every metric currently in the
+    normative HDF5 — enumerated here (same trick as NORMATIVE_METRICS) so
+    Snakemake can track them as ordinary static outputs without a metric
+    wildcard. [] whenever covariate adjustment is off."""
+    if not ZSCORE_ADJUST_FOR:
+        return []
+    outs = []
+    for metric in NORMATIVE_METRICS:
+        base = metric.replace("/", "_")
+        for hemi in ("lh", "rh"):
+            for stat in GLM_STATS:
+                outs.append(f"{GLM_DIR}/{hemi}.{base}_{ZSCORE_ADJUST_FOR}_{stat}.{TARGET_TYPE}.func.gii")
+    return outs
+
+
+ZSCORE_GLM_OUTPUTS = _glm_outputs()
 
 
 def zscore_inputs(subject, tsf_files):
@@ -93,11 +173,19 @@ def zscore_inputs(subject, tsf_files):
     return chosen
 
 
+def _adj_tsf_outputs(base):
+    if not ZSCORE_ADJUST_FOR:
+        return []
+    abase = f"{base}_zscore_adj-{ZSCORE_ADJUST_TAG}"
+    return [f"{abase}.tsf", f"{abase}_absmean.func.gii", f"{abase}_abssum.func.gii"]
+
+
 def zscore_outputs(subject, tsf_files):
     outputs = []
     for path in zscore_inputs(subject, tsf_files):
         base = path[: -len(".tsf")]
         outputs += [f"{base}_zscore.tsf", f"{base}_zscore_absmean.func.gii", f"{base}_zscore_abssum.func.gii"]
+        outputs += _adj_tsf_outputs(base)
     return outputs
 
 
@@ -124,7 +212,13 @@ def zscore_scalar_inputs(subject):
 
 
 def zscore_scalar_outputs(subject):
-    return [path[: -len(".func.gii")] + "_zscore.func.gii" for path in zscore_scalar_inputs(subject)]
+    outputs = []
+    for path in zscore_scalar_inputs(subject):
+        base = path[: -len(".func.gii")]
+        outputs.append(f"{base}_zscore.func.gii")
+        if ZSCORE_ADJUST_FOR:
+            outputs.append(f"{base}_zscore_adj-{ZSCORE_ADJUST_TAG}.func.gii")
+    return outputs
 
 
 rule build_normative_data:
@@ -147,10 +241,37 @@ rule zscore_stats:
     input:
         h5=NORMATIVE_H5,
     output:
-        ZSCORE_STATS,
+        [ZSCORE_STATS] + ([ZSCORE_ADJUST_STATS] if ZSCORE_ADJUST_FOR else []),
     threads: config["python_threads"]  # parallel workers reading the gzip'd HDF5
     shell:
-        "cortical_zscore_tsf.py --stats-only {SUBJECTS_DIR} --workers {threads}"
+        "cortical_zscore_tsf.py --stats-only {SUBJECTS_DIR} --workers {threads}" + ZSCORE_ADJUST_FLAGS
+
+
+if ZSCORE_ADJUST_FOR:
+    # Only defined when covariate adjustment is on — ZSCORE_GLM_OUTPUTS is []
+    # otherwise, and a rule can't declare zero output files.
+    rule zscore_glm_stats:
+        # Group-level significance test cortical_zscore_tsf.py's --adjust-for
+        # gates on (see module docstring and cortical_glm_covariate.py) — one
+        # whole-dataset invocation, like zscore_stats, not wildcarded per metric.
+        input:
+            # ZSCORE_COVARIATES_FILE is NOT declared here even when set: it may
+            # contain an unexpanded $SUBJECTS_DIR (a real value seen in this
+            # repo's own study configs), which only expands inside the shell:
+            # string's actual bash invocation below, not when Snakemake checks
+            # an input: path directly against the filesystem — same limitation
+            # zscore_stats/zscore_tsf/zscore_scalar_gii already accept for it.
+            h5=NORMATIVE_H5,
+            cortex=CORTEX_LABEL_FILES,
+            white=WHITE_SURF_FILES,
+        output:
+            ZSCORE_GLM_OUTPUTS,
+        threads: config["python_threads"]
+        shell:
+            "cortical_glm_covariate.py {SUBJECTS_DIR} --covariate " + ZSCORE_ADJUST_FOR
+            + (f" --covariates {ZSCORE_COVARIATES_FILE}" if ZSCORE_COVARIATES_FILE else "")
+            + f" --fwhm {ZSCORE_ADJUST_FWHM} --out-dir {GLM_DIR}"
+            + " --workers {threads}"
 
 
 rule zscore_tsf:
@@ -160,16 +281,21 @@ rule zscore_tsf:
         metric="[^/]+",
     input:
         tsf=f"{SUBJECTS_DIR}/{{subject}}/{{subdir}}/{{hemi}}_{TARGET_TYPE}_{{metric}}.tsf",
-        stats=ZSCORE_STATS,
+        stats=[ZSCORE_STATS] + (ZSCORE_GLM_OUTPUTS if ZSCORE_ADJUST_FOR else []),
     output:
         tsf=f"{SUBJECTS_DIR}/{{subject}}/{{subdir}}/{{hemi}}_{TARGET_TYPE}_{{metric}}_zscore.tsf",
         absmean=f"{SUBJECTS_DIR}/{{subject}}/{{subdir}}/{{hemi}}_{TARGET_TYPE}_{{metric}}_zscore_absmean.func.gii",
         abssum=f"{SUBJECTS_DIR}/{{subject}}/{{subdir}}/{{hemi}}_{TARGET_TYPE}_{{metric}}_zscore_abssum.func.gii",
+        **(dict(
+            tsf_adj=f"{SUBJECTS_DIR}/{{subject}}/{{subdir}}/{{hemi}}_{TARGET_TYPE}_{{metric}}_zscore_adj-{ZSCORE_ADJUST_TAG}.tsf",
+            absmean_adj=f"{SUBJECTS_DIR}/{{subject}}/{{subdir}}/{{hemi}}_{TARGET_TYPE}_{{metric}}_zscore_adj-{ZSCORE_ADJUST_TAG}_absmean.func.gii",
+            abssum_adj=f"{SUBJECTS_DIR}/{{subject}}/{{subdir}}/{{hemi}}_{TARGET_TYPE}_{{metric}}_zscore_adj-{ZSCORE_ADJUST_TAG}_abssum.func.gii",
+        ) if ZSCORE_ADJUST_FOR else {}),
     # numpy on one tsf; threads: 2 (not 1) only so the Snakefile's blanket
     # mrtrix_threads default, which claims every threads: 1 rule, doesn't reserve 7 cores for it.
     threads: 2
     shell:
-        "cortical_zscore_tsf.py {wildcards.subject} {SUBJECTS_DIR} --tsf {input.tsf}"
+        "cortical_zscore_tsf.py {wildcards.subject} {SUBJECTS_DIR} --tsf {input.tsf}" + ZSCORE_ADJUST_FLAGS
 
 
 rule zscore_scalar_gii:
@@ -184,9 +310,12 @@ rule zscore_scalar_gii:
         metric="[^/]+",
     input:
         gii=f"{SUBJECTS_DIR}/{{subject}}/surf/{{hemi}}.{{metric}}.ico6_sym.func.gii",
-        stats=ZSCORE_STATS,
+        stats=[ZSCORE_STATS] + (ZSCORE_GLM_OUTPUTS if ZSCORE_ADJUST_FOR else []),
     output:
         gii=f"{SUBJECTS_DIR}/{{subject}}/surf/{{hemi}}.{{metric}}.ico6_sym_zscore.func.gii",
+        **(dict(
+            gii_adj=f"{SUBJECTS_DIR}/{{subject}}/surf/{{hemi}}.{{metric}}.ico6_sym_zscore_adj-{ZSCORE_ADJUST_TAG}.func.gii",
+        ) if ZSCORE_ADJUST_FOR else {}),
     threads: 2
     shell:
-        "cortical_zscore_tsf.py {wildcards.subject} {SUBJECTS_DIR} --gii {input.gii}"
+        "cortical_zscore_tsf.py {wildcards.subject} {SUBJECTS_DIR} --gii {input.gii}" + ZSCORE_ADJUST_FLAGS
