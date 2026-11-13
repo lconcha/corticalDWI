@@ -5,7 +5,7 @@ read_mrtrix_tsf     -> read_mrtrix_tsf()   for MRtrix track-scalar files
 cortical_cell2mat   -> pad_to_matrix()
 buildVolGeom        -> build_vol_geom()
 """
-import os, glob
+import os, csv, glob
 import numpy as np
 import nibabel as nib
 
@@ -143,6 +143,66 @@ def find_scalar_gii(subj_dir, hemi, template, label):
     folder, name = split_metric(label)
     path = os.path.join(subj_dir, folder, f'{hemi}.{name}.{template}.func.gii')
     return [path] if os.path.isfile(path) else []
+
+
+def read_covariates(path, id_col='participant_id'):
+    """{subject_id: {column: float|str}} from a TSV/CSV participants table
+    (e.g. a BIDS participants.tsv, which typically mixes numeric columns
+    like age with categorical ones like sex or group). Every column except
+    id_col is parsed as a float where possible, with '', 'n/a', 'na', 'nan'
+    (case-insensitive) read as a missing value (nan); a column that doesn't
+    parse as a float (categorical) is kept as its raw string instead of
+    raising, since a caller only ever reads ONE named column and the rest
+    are none of its business — callers that need a specific column numeric
+    (cortical_zscore_tsf.py's --adjust-for, a continuous covariate only) are
+    responsible for checking that column's values themselves. Delimiter is
+    sniffed (tab vs comma); subject IDs are matched later by exact string
+    equality against whatever convention the rest of the pipeline already
+    uses for subject directory names (e.g. 'sub-00058'), not normalized
+    here. utf-8-sig so a leading BOM (seen in the wild, e.g. ds004199's
+    participants.tsv) doesn't glue itself onto id_col's name and make the
+    column lookup below fail.
+    """
+    with open(path, newline='', encoding='utf-8-sig') as f:
+        sample = f.read(4096)
+        f.seek(0)
+        try:
+            dialect = csv.Sniffer().sniff(sample, delimiters='\t,')
+        except csv.Error:
+            dialect = csv.excel_tab if '\t' in sample else csv.excel
+        reader = csv.DictReader(f, dialect=dialect)
+        if reader.fieldnames is None or id_col not in reader.fieldnames:
+            raise ValueError(f"{path}: no {id_col!r} column (found: {reader.fieldnames})")
+        cols = [c for c in reader.fieldnames if c != id_col]
+        out = {}
+        for row in reader:
+            subj = (row[id_col] or '').strip()
+            if not subj:
+                continue
+            values = {}
+            for c in cols:
+                raw = (row.get(c) or '').strip()
+                if raw.lower() in ('', 'n/a', 'na', 'nan'):
+                    values[c] = float('nan')
+                    continue
+                try:
+                    values[c] = float(raw)
+                except ValueError:
+                    values[c] = raw   # categorical column — left as-is, see docstring
+            out[subj] = values
+        return out
+
+
+def default_covariates_path(subjects_dir):
+    """Default --covariates location for cortical_zscore_tsf.py's
+    --adjust-for and cortical_var_explorer.py, in priority order: a BIDS
+    participants.tsv, else a plain templates/covariates.tsv — both under
+    subjects_dir. None if neither exists (caller must supply its own path)."""
+    for p in (os.path.join(subjects_dir, 'bids', 'participants.tsv'),
+              os.path.join(subjects_dir, 'templates', 'covariates.tsv')):
+        if os.path.isfile(p):
+            return p
+    return None
 
 
 def write_mrtrix_tsf(path, tracks, template_path=None):

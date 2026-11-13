@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>cortical_var_explorer</title>
+<style>
+  :root {
+    --bg: #101214; --panel-bg: #16181b; --text: #d7dadd; --muted: #8a9099;
+    --border: #2a2e33; --accent: #F5C842; --lh: #66B3FF; --rh: #FF854D;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; overflow: hidden; background: var(--bg); color: var(--text);
+               font: 13px/1.4 -apple-system, Segoe UI, Helvetica, Arial, sans-serif; }
+  body { display: flex; flex-direction: column; }
+  #controls {
+    display: flex; flex-wrap: wrap; flex: 0 0 auto; gap: 14px; align-items: center;
+    padding: 8px 12px; border-bottom: 1px solid var(--border); background: var(--panel-bg);
+  }
+  #controls label { color: var(--muted); margin-right: 4px; }
+  #controls select, #controls input[type=range], #controls input[type=number] { background: #1d2024; color: var(--text);
+    border: 1px solid var(--border); border-radius: 4px; padding: 3px 6px; }
+  #controls button { background: #1d2024; color: var(--text); border: 1px solid var(--border);
+    border-radius: 4px; padding: 3px 10px; cursor: pointer; }
+  #controls button:hover { border-color: var(--accent); }
+  #depthWrap { display: none; align-items: center; gap: 6px; }
+  #status { color: var(--muted); margin-left: auto; }
+  #grid {
+    display: grid; grid-template-columns: 1fr 1fr 1.2fr;
+    flex: 1 1 auto; min-height: 0;
+  }
+  .cell { position: relative; overflow: hidden; border-right: 1px solid var(--border); }
+  .cell:last-child { border-right: none; }
+  .clabel {
+    position: absolute; top: 6px; left: 8px; z-index: 5; font-size: 10px;
+    letter-spacing: 0.4px; text-transform: uppercase; color: #0b0c0d;
+    background: var(--accent); padding: 2px 6px; border-radius: 3px; pointer-events: none;
+  }
+  canvas.nv-canvas { display: block; width: 100% !important; height: 100% !important; cursor: crosshair; }
+  #scatter { width: 100%; height: 100%; }
+  #hint { position: absolute; bottom: 6px; left: 8px; color: var(--muted); font-size: 11px; pointer-events: none; }
+</style>
+</head>
+<body>
+  <div id="controls">
+    <span><label for="metricSel">Metric</label>
+      <select id="metricSel">
+__METRIC_OPTIONS__
+      </select></span>
+    <span><label for="covariateSel">Covariate</label>
+      <select id="covariateSel">
+__COVARIATE_OPTIONS__
+      </select></span>
+    <span id="depthWrap"><label for="depthRange">Depth</label>
+      <input type="range" id="depthRange" min="0" max="__MAX_DEPTH__" value="0">
+      <span id="depthVal">0</span></span>
+    <span><label for="vertexHemiSel">Vertex</label>
+      <select id="vertexHemiSel">
+        <option value="lh">LH</option>
+        <option value="rh">RH</option>
+      </select>
+      <input type="number" id="vertexInput" min="0" step="1" placeholder="id" style="width:80px">
+      <button id="vertexGoBtn" type="button">Go</button></span>
+    <span id="status">click a vertex on either surface</span>
+  </div>
+  <div id="grid">
+    <div class="cell"><div class="clabel" style="background:var(--lh)">LH</div>
+      <canvas id="gl-lh" class="nv-canvas"></canvas>
+      <div id="hint">drag to rotate · scroll to zoom · click to pick a vertex</div>
+    </div>
+    <div class="cell"><div class="clabel" style="background:var(--rh)">RH</div>
+      <canvas id="gl-rh" class="nv-canvas"></canvas>
+    </div>
+    <div class="cell"><div id="scatter"></div></div>
+  </div>
+<script src="__PLOTLY_CDN__"></script>
+<script type="module" src="/static/var_explorer.js"></script>
+</body>
+</html>

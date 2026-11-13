@@ -18,3 +18,12 @@ dependencies:
     - scikit-fmm==2025.01.29
     - streamtracer
     - dmri-amico
+    # cortical_glm_covariate.py's group-level significance test
+    # (rules/zscore.smk's zscore_glm_stats). Pinned together: newer
+    # netneurotools drops the civet submodule brainstat needs, and
+    # netneurotools==0.2.3 only supports nilearn's pre-0.10.3 _fetch_files
+    # location — see reference_brainstat_env_setup memory for the exact
+    # ImportError chain if these drift.
+    - brainstat
+    - netneurotools==0.2.3
+    - nilearn<0.10.3
