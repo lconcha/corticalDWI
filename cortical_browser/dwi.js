@@ -288,6 +288,20 @@ const [lhMesh, rhMesh] = await Promise.all([
   STREAMLINES.lh ? niivue.NVMesh.loadFromUrl({ url: STREAMLINES.lh, gl: nv.gl, rgba255: [102, 179, 255, 255] }) : null,
   STREAMLINES.rh ? niivue.NVMesh.loadFromUrl({ url: STREAMLINES.rh, gl: nv.gl, rgba255: [255, 133, 77, 255] }) : null,
 ])
+// Workaround for an off-by-one in niivue's own TCK reader — see
+// fixStreamlineOffsets()'s comment in main.js for the full root cause.
+// offsetPt0 ends up missing its leading 0, which quietly shifts every
+// "streamline i" by one .tck streamline, so vertex v's crosshair/mode-
+// selection here would otherwise land on vertex v+1's line.
+function fixStreamlineOffsets(mesh, gl) {
+  if (!mesh?.offsetPt0 || mesh.offsetPt0[0] === 0) return mesh
+  const fixed = new Uint32Array(mesh.offsetPt0.length + 1)
+  fixed.set(mesh.offsetPt0, 1)
+  mesh.offsetPt0 = fixed
+  mesh.updateFibers(gl)
+  return mesh
+}
+for (const m of [lhMesh, rhMesh]) if (m) fixStreamlineOffsets(m, nv.gl)
 for (const m of [lhMesh, rhMesh]) if (m) nv.addMesh(m)
 streamMeshes.lh = lhMesh
 streamMeshes.rh = rhMesh

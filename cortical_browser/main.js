@@ -924,6 +924,32 @@ const STREAMLINE_THICKNESS_MM = 2
 let streamlineMeshes = null    // { lh, rh } once loaded
 let streamlinesVisible = true  // toggled by the "Show" checkbox once streamlines are loaded
 
+// Workaround for an off-by-one in niivue's own TCK reader (NVMesh.readTCK in
+// nvmesh-loaders.ts, as of the CDN build pinned by NIIVUE_CDN): offsetPt0 is
+// pre-seeded with a leading 0 (start of streamline 0), but the parsing loop's
+// own offset counter starts at 0 too, so streamline 0's end-of-line NaN
+// overwrites that leading 0 instead of landing after it — and the strict
+// `pos + 12 < len` loop guard then skips the file's final EOF Inf marker
+// whenever it's the buffer's last 12 bytes (the normal case for
+// tckedit/tckresample_and_truncate output, which is all of ours), so the one
+// extra write that would otherwise restore the missing entry never happens
+// either. Net result: offsetPt0 ends up missing its leading 0, so every
+// "streamline i" (offsetPt0[i]..offsetPt0[i+1]) everything below this file
+// computes is actually the .tck file's streamline i+1 — i.e. selecting
+// vertex v highlights/samples vertex v+1's line, confirmed by comparing
+// parsed points against the source surface vertices directly. Restoring the
+// missing leading 0 undoes the shift for every streamline at once; the
+// mesh's GL index/vertex buffers were already built from the broken array in
+// the NVMesh constructor (inside loadFromUrl), so they need rebuilding too.
+function fixStreamlineOffsets(mesh, gl) {
+  if (!mesh?.offsetPt0 || mesh.offsetPt0[0] === 0) return mesh   // already correct (or not a fiber mesh)
+  const fixed = new Uint32Array(mesh.offsetPt0.length + 1)
+  fixed.set(mesh.offsetPt0, 1)   // fixed[0] stays 0 (Uint32Array default)
+  mesh.offsetPt0 = fixed
+  mesh.updateFibers(gl)
+  return mesh
+}
+
 async function ensureStreamlines() {
   if (streamlineMeshes) return streamlineMeshes
   console.time('ensureStreamlines')
@@ -931,6 +957,7 @@ async function ensureStreamlines() {
     STREAMLINES.lh ? niivue.NVMesh.loadFromUrl({ url: STREAMLINES.lh, gl: nvSlices.gl, rgba255: LH_SURF.rgba255 }) : null,
     STREAMLINES.rh ? niivue.NVMesh.loadFromUrl({ url: STREAMLINES.rh, gl: nvSlices.gl, rgba255: RH_SURF.rgba255 }) : null,
   ])
+  for (const m of [lhMesh, rhMesh]) if (m) fixStreamlineOffsets(m, nvSlices.gl)
   for (const m of [lhMesh, rhMesh]) if (m) nvSlices.addMesh(m)
   streamlineMeshes = { lh: lhMesh, rh: rhMesh }
   nvSlices.setMeshThicknessOn2D(STREAMLINE_THICKNESS_MM)
