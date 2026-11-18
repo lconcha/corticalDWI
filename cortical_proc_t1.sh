@@ -64,37 +64,40 @@ tmpDir=$(mktemp -d)
 
 my_do_cmd mrconvert $T1w ${tmpDir}/T1w.nii
 
-my_do_cmd DenoiseImage -d 3 -v \
-  -i ${tmpDir}/T1w.nii \
-  -o ${tmpDir}/T1w_denoised.nii
 
 T1w_brain=$SUBJECTS_DIR/${sID}/mri/brain.mgz
+mask=${tmpDir}/T1w_brain_mask.nii
 my_do_cmd mrcalc \
   $T1w_brain \
   0 -gt \
-  ${tmpDir}/T1w_denoised.nii \
-  -mul \
-  ${tmpDir}/T1w_brain.nii
+  $mask
 
 
-# my_do_cmd mri_synthstrip \
-#   -i $T1w \
-#   -o ${tmpDir}/T1w_brain.nii.gz
-
-
+# N4 works muuuuch better if a mask is supplied.
 my_do_cmd N4BiasFieldCorrection \
   -d 3 \
-  -i ${tmpDir}/T1w_brain.nii \
-  -o ${tmpDir}/T1w_brain_biascorrected.nii
+  -i ${tmpDir}/T1w.nii \
+  -x $mask \
+  -o ${tmpDir}/T1w_biascorrected_pre.nii
+
+my_do_cmd mrcalc \
+  ${tmpDir}/T1w_biascorrected_pre.nii \
+  $mask -mul \
+  ${tmpDir}/T1w_brain_biascorrected.nii
+
+my_do_cmd DenoiseImage -d 3 -v \
+  -i ${tmpDir}/T1w_brain_biascorrected.nii \
+  -o ${tmpDir}/T1w_denoised_brain_biascorrected.nii
+
 
 
 wm_mask=${SUBJECTS_DIR}/${sID}/mri/wm.seg.mgz
 wm_value=110; # this is the value of WM in the fs automatic segmentation
 my_do_cmd mrcalc $wm_mask $wm_value -eq ${tmpDir}/wm_mask.nii
-median_wm_value=$(mrstats -mask ${tmpDir}/wm_mask.nii ${tmpDir}/T1w_brain_biascorrected.nii -output median)
+median_wm_value=$(mrstats -mask ${tmpDir}/wm_mask.nii ${tmpDir}/T1w_denoised_brain_biascorrected.nii -output median)
 echolor green "[INFO] Median T1w value in white matter: $median_wm_value"
 my_do_cmd mrcalc \
-  ${tmpDir}/T1w_brain_biascorrected.nii \
+  ${tmpDir}/T1w_denoised_brain_biascorrected.nii \
   $median_wm_value -div \
   $outT1w
 
