@@ -401,9 +401,9 @@ def _csd_in_use(cortical_dwi_dir):
 
 def _normative_paths(cortical_dwi_dir, subjects_dir):
     """The exact paths rules/zscore.smk declares for COHORT_FILE/NORMATIVE_H5/
-    ZSCORE_STATS, computed directly here (same formula, same target_type
+    NORMATIVE_STATS, computed directly here (same formula, same target_type
     config key) rather than via Snakemake discovery — build_normative_data
-    and zscore_stats must always appear in --status's group-wise section
+    and normative_stats must always appear in --status's group-wise section
     (see group_rule_status), including when COHORT_FILE doesn't exist yet
     and a forced dry-run through either rule can't resolve at all."""
     sys.path.insert(0, cortical_dwi_dir)
@@ -411,9 +411,9 @@ def _normative_paths(cortical_dwi_dir, subjects_dir):
     params, _, _, _ = load_conf(cortical_dwi_dir, subjects_dir)
     target_type = params.get("target_type", "ico6_sym")
     normative_h5 = os.path.join(subjects_dir, "templates", "normative", f"{target_type}_multivariate.h5")
-    zscore_stats = normative_h5[: -len(".h5")] + "_zscore_stats.npz"
+    normative_stats = normative_h5[: -len(".h5")] + "_normative_stats.npz"
     cohort_file = os.path.join(subjects_dir, "templates", "subjects_to_average.txt")
-    return cohort_file, normative_h5, zscore_stats
+    return cohort_file, normative_h5, normative_stats
 
 
 def group_rule_status(rules, cortical_dwi_dir, subjects_dir):
@@ -427,7 +427,7 @@ def group_rule_status(rules, cortical_dwi_dir, subjects_dir):
       - csd_average_response is left out entirely when this study's
         browser_metrics has no CSD metric (_csd_in_use()) — CSD rules exist
         in the repo, but aren't "playing" for a study that never uses them.
-      - build_normative_data/zscore_stats are always included — even when
+      - build_normative_data/normative_stats are always included — even when
         discover() couldn't resolve them at all (cohort file missing, see
         _normative_paths()) — rather than silently vanishing from the
         listing; a caller checks the returned `warning` for that case.
@@ -436,7 +436,7 @@ def group_rule_status(rules, cortical_dwi_dir, subjects_dir):
     missing."""
     results = []
     for name, info in rules.items():
-        if name in ("build_normative_data", "zscore_stats"):
+        if name in ("build_normative_data", "normative_stats"):
             continue  # always handled below, regardless of discovery
         outs = info.get("outputs", [])
         if not outs or subject_scoped(outs):
@@ -446,15 +446,15 @@ def group_rule_status(rules, cortical_dwi_dir, subjects_dir):
         n_existing = sum(1 for p in outs if os.path.exists(p))
         results.append((name, n_existing, len(outs)))
 
-    cohort_file, normative_h5, zscore_stats_path = _normative_paths(cortical_dwi_dir, subjects_dir)
+    cohort_file, normative_h5, normative_stats_path = _normative_paths(cortical_dwi_dir, subjects_dir)
     results.append(("build_normative_data", int(os.path.exists(normative_h5)), 1))
-    results.append(("zscore_stats", int(os.path.exists(zscore_stats_path)), 1))
+    results.append(("normative_stats", int(os.path.exists(normative_stats_path)), 1))
 
     warning = None
     if not os.path.isfile(cohort_file):
         warning = (
             f"{cohort_file} does not exist — build_normative_data has no "
-            "cohort to build from, so zscore_stats/zscore_tsf have no "
+            "cohort to build from, so normative_stats/zscore_tsf have no "
             "normative data to compare against either."
         )
     return sorted(results), warning

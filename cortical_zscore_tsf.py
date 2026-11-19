@@ -248,14 +248,14 @@ def _block_stats_adj(h5_path, hemi, mi, covariate):
 def load_normative_stats(h5_path, metrics, use_cache=True, workers=4, needed=None):
     """{(hemi, metric_index): (mu, sd, n)} for the whole normative file.
 
-    Cached in <h5 stem>_zscore_stats.npz beside the HDF5 (keyed on its size and
+    Cached in <h5 stem>_normative_stats.npz beside the HDF5 (keyed on its size and
     mtime, so it is rebuilt if the normative data changes); the HDF5 itself is
     never modified. Without a valid cache the stats are computed in parallel,
     which is the slow part of a run (gzip decompression of the full stack).
     `needed` (set of (hemi, metric_index)) limits what is read from a valid cache."""
     st = os.stat(h5_path)
     key = np.array([st.st_size, st.st_mtime_ns], dtype=np.int64)
-    cache = h5_path[:-len('.h5')] + '_zscore_stats.npz'
+    cache = h5_path[:-len('.h5')] + '_normative_stats.npz'
     if use_cache and os.path.isfile(cache):
         try:
             z = np.load(cache)
@@ -300,7 +300,7 @@ def load_normative_stats_adj(h5_path, metrics, covariate, covariate_label, use_c
     the z-scoring path itself (cortical_zscore_tsf.py's main()) only uses
     a/resid_sd/n.
 
-    Cached separately, in <h5 stem>_zscore_stats_adj-<covariate_label>.npz,
+    Cached separately, in <h5 stem>_normative_stats_adj-<covariate_label>.npz,
     keyed on the HDF5's (size, mtime) same as load_normative_stats, PLUS a
     hash of the actual covariate values used (so an edited participants.tsv,
     or a different file supplying the same column name, invalidates it
@@ -314,7 +314,7 @@ def load_normative_stats_adj(h5_path, metrics, covariate, covariate_label, use_c
     st = os.stat(h5_path)
     key = np.array([st.st_size, st.st_mtime_ns], dtype=np.int64)
     cov_key = hashlib.sha1(np.ascontiguousarray(covariate).tobytes()).hexdigest()
-    cache = h5_path[:-len('.h5')] + f'_zscore_stats_adj-{_sanitize_label(covariate_label)}.npz'
+    cache = h5_path[:-len('.h5')] + f'_normative_stats_adj-{_sanitize_label(covariate_label)}.npz'
     if use_cache and os.path.isfile(cache):
         try:
             z = np.load(cache)

@@ -14,7 +14,7 @@ next to each:
                                          depth axis, so no absmean/abssum)
 
 That HDF5 is not produced automatically by any subject-dependent rule (the
-cohort is chosen by hand, in templates/subjects_to_average.txt) — zscore_stats,
+cohort is chosen by hand, in templates/subjects_to_average.txt) — normative_stats,
 zscore_tsf, and zscore_scalar_gii only enter a subject's DAG once it already
 exists, see zscore_eligible(). Cohort subjects ARE z-scored too, same as
 everyone else — a cohort subject's own value is part of the mean/std it's
@@ -23,7 +23,7 @@ deviation), but seeing them land near 0 is itself a useful sanity check on
 the normative stats, see cortical_zscore_tsf.py's own docstring.
 
 There IS a rule to build it, build_normative_data below, but it is deliberately
-never an input of zscore_stats/zscore_tsf/zscore_scalar_gii, nor of any
+never an input of normative_stats/zscore_tsf/zscore_scalar_gii, nor of any
 subject's default target — it must be triggered by name
 (`cortical_snakerun.py build_normative_data` or `snakemake
 build_normative_data`). Wiring it in automatically would mean the normative
@@ -39,7 +39,7 @@ Four rules:
                 cohort subject's .tsf/.func.gii files, so Snakemake has no way
                 to notice a changed/added one on its own and won't rebuild
                 for you.
-  zscore_stats  once per dataset: control mean/SD/n per vertex+depth, cached
+  normative_stats  once per dataset: control mean/SD/n per vertex+depth, cached
                 beside the HDF5. A rule of its own so parallel subject jobs
                 never race to build it, and so it is rebuilt automatically
                 whenever the HDF5 is newer.
@@ -65,7 +65,7 @@ described above. Set zscore_adjust_for to a continuous covariate column
 <metric>_zscore_adj-<col>.* sibling.
 
 That sibling is no longer a cheap per-vertex OLS computed on the fly — it's
-gated on a real group-level significance test. A new rule, zscore_glm_stats,
+gated on a real group-level significance test. A new rule, normative_glm_stats,
 fits a BrainStat SLM (metric ~ covariate, both hemispheres combined into one
 bilateral mesh, smoothed, FDR+RFT corrected — see cortical_glm_covariate.py)
 once per metric/depth and writes slope/intercept/r/p-uncorrected/p-fdr/
@@ -75,13 +75,13 @@ cortical_zscore_tsf.py, which reads those GIFTIs and uses the BrainStat
 slope/intercept/resid-sd as the predicted value+SD ONLY where that vertex/
 depth's RFT CLUSTER-corrected p-value (p-rft) is below --rft-threshold
 (zscore_adjust_rft_threshold, default 0.05); everywhere else it's not
-adjusted at all (same as the plain z-score there). zscore_glm_stats must
+adjusted at all (same as the plain z-score there). normative_glm_stats must
 therefore complete, for every metric zscore_tsf/zscore_scalar_gii touch,
 before --adjust-for can be used — cortical_zscore_tsf.py hard-errors if a
 metric's GLM stats are missing rather than silently skipping the adjustment.
 
-zscore_stats still separately builds/caches the OLD fast per-vertex OLS
-(ZSCORE_ADJUST_STATS) when zscore_adjust_for is set — that one is no longer
+normative_stats still separately builds/caches the OLD fast per-vertex OLS
+(NORMATIVE_ADJUST_STATS) when zscore_adjust_for is set — that one is no longer
 read by the production z-scoring path above, but cortical_var_explorer.py
 still uses it for its own interactive, no-BrainStat-run-required exploration
 of any covariate; see that script's own docstring.
@@ -90,7 +90,7 @@ of any covariate; see that script's own docstring.
 import re
 
 NORMATIVE_H5 = f"{SUBJECTS_DIR}/templates/normative/{TARGET_TYPE}_multivariate.h5"
-ZSCORE_STATS = NORMATIVE_H5[: -len(".h5")] + "_zscore_stats.npz"
+NORMATIVE_STATS = NORMATIVE_H5[: -len(".h5")] + "_normative_stats.npz"
 COHORT_FILE = f"{SUBJECTS_DIR}/templates/subjects_to_average.txt"
 
 # Optional covariate adjustment (see corticalDWI_params.conf's own comment
@@ -105,8 +105,8 @@ ZSCORE_ADJUST_RFT_THRESHOLD = config.get("zscore_adjust_rft_threshold", "0.05").
 # Same sanitizing as cortical_zscore_tsf.py's _sanitize_label — must match,
 # since that script is what actually names the files this predicts.
 ZSCORE_ADJUST_TAG = re.sub(r"[^A-Za-z0-9_.-]+", "_", ZSCORE_ADJUST_FOR) if ZSCORE_ADJUST_FOR else ""
-ZSCORE_ADJUST_STATS = (NORMATIVE_H5[: -len(".h5")] + f"_zscore_stats_adj-{ZSCORE_ADJUST_TAG}.npz"
-                        if ZSCORE_ADJUST_FOR else None)
+NORMATIVE_ADJUST_STATS = (NORMATIVE_H5[: -len(".h5")] + f"_normative_stats_adj-{ZSCORE_ADJUST_TAG}.npz"
+                           if ZSCORE_ADJUST_FOR else None)
 ZSCORE_ADJUST_FLAGS = ""
 if ZSCORE_ADJUST_FOR:
     ZSCORE_ADJUST_FLAGS = f" --adjust-for {ZSCORE_ADJUST_FOR} --rft-threshold {ZSCORE_ADJUST_RFT_THRESHOLD}"
@@ -115,7 +115,7 @@ if ZSCORE_ADJUST_FOR:
 
 # GLM significance stats (cortical_glm_covariate.py): one set of 7 stat
 # .func.gii per hemisphere per metric, same metric list as NORMATIVE_METRICS
-# below (defined once that's read) — see zscore_glm_stats.
+# below (defined once that's read) — see normative_glm_stats.
 GLM_DIR = f"{SUBJECTS_DIR}/templates/normative/glm"
 GLM_STATS = ("slope", "intercept", "r", "p-uncorrected", "p-fdr", "p-rft", "resid-sd")
 CORTEX_LABEL_FILES = [f"{SUBJECTS_DIR}/templates/surf/{h}.cortex.{TARGET_TYPE}.label.gii" for h in ("lh", "rh")]
@@ -154,7 +154,7 @@ def _glm_outputs():
     return outs
 
 
-ZSCORE_GLM_OUTPUTS = _glm_outputs()
+NORMATIVE_GLM_OUTPUTS = _glm_outputs()
 
 
 def zscore_inputs(subject, tsf_files):
@@ -223,7 +223,7 @@ def zscore_scalar_outputs(subject):
 
 rule build_normative_data:
     # Convenience wrapper, not a dependency link — see module docstring above
-    # for why zscore_stats/zscore_tsf must never depend on this. COHORT_FILE
+    # for why normative_stats/zscore_tsf must never depend on this. COHORT_FILE
     # as the only declared input is deliberate too: it makes Snakemake rerun
     # this when the cohort list is edited, without pretending to track every
     # cohort subject's .tsf files (that tracking would just invite the same
@@ -237,35 +237,35 @@ rule build_normative_data:
         "cortical_create_normative_data_from_tsf.py {SUBJECTS_DIR}"
 
 
-rule zscore_stats:
+rule normative_stats:
     input:
         h5=NORMATIVE_H5,
     output:
-        [ZSCORE_STATS] + ([ZSCORE_ADJUST_STATS] if ZSCORE_ADJUST_FOR else []),
+        [NORMATIVE_STATS] + ([NORMATIVE_ADJUST_STATS] if ZSCORE_ADJUST_FOR else []),
     threads: config["python_threads"]  # parallel workers reading the gzip'd HDF5
     shell:
         "cortical_zscore_tsf.py --stats-only {SUBJECTS_DIR} --workers {threads}" + ZSCORE_ADJUST_FLAGS
 
 
 if ZSCORE_ADJUST_FOR:
-    # Only defined when covariate adjustment is on — ZSCORE_GLM_OUTPUTS is []
+    # Only defined when covariate adjustment is on — NORMATIVE_GLM_OUTPUTS is []
     # otherwise, and a rule can't declare zero output files.
-    rule zscore_glm_stats:
+    rule normative_glm_stats:
         # Group-level significance test cortical_zscore_tsf.py's --adjust-for
         # gates on (see module docstring and cortical_glm_covariate.py) — one
-        # whole-dataset invocation, like zscore_stats, not wildcarded per metric.
+        # whole-dataset invocation, like normative_stats, not wildcarded per metric.
         input:
             # ZSCORE_COVARIATES_FILE is NOT declared here even when set: it may
             # contain an unexpanded $SUBJECTS_DIR (a real value seen in this
             # repo's own study configs), which only expands inside the shell:
             # string's actual bash invocation below, not when Snakemake checks
             # an input: path directly against the filesystem — same limitation
-            # zscore_stats/zscore_tsf/zscore_scalar_gii already accept for it.
+            # normative_stats/zscore_tsf/zscore_scalar_gii already accept for it.
             h5=NORMATIVE_H5,
             cortex=CORTEX_LABEL_FILES,
             white=WHITE_SURF_FILES,
         output:
-            ZSCORE_GLM_OUTPUTS,
+            NORMATIVE_GLM_OUTPUTS,
         threads: config["python_threads"]
         shell:
             "cortical_glm_covariate.py {SUBJECTS_DIR} --covariate " + ZSCORE_ADJUST_FOR
@@ -281,7 +281,7 @@ rule zscore_tsf:
         metric="[^/]+",
     input:
         tsf=f"{SUBJECTS_DIR}/{{subject}}/{{subdir}}/{{hemi}}_{TARGET_TYPE}_{{metric}}.tsf",
-        stats=[ZSCORE_STATS] + (ZSCORE_GLM_OUTPUTS if ZSCORE_ADJUST_FOR else []),
+        stats=[NORMATIVE_STATS] + (NORMATIVE_GLM_OUTPUTS if ZSCORE_ADJUST_FOR else []),
     output:
         tsf=f"{SUBJECTS_DIR}/{{subject}}/{{subdir}}/{{hemi}}_{TARGET_TYPE}_{{metric}}_zscore.tsf",
         absmean=f"{SUBJECTS_DIR}/{{subject}}/{{subdir}}/{{hemi}}_{TARGET_TYPE}_{{metric}}_zscore_absmean.func.gii",
@@ -310,7 +310,7 @@ rule zscore_scalar_gii:
         metric="[^/]+",
     input:
         gii=f"{SUBJECTS_DIR}/{{subject}}/surf/{{hemi}}.{{metric}}.ico6_sym.func.gii",
-        stats=[ZSCORE_STATS] + (ZSCORE_GLM_OUTPUTS if ZSCORE_ADJUST_FOR else []),
+        stats=[NORMATIVE_STATS] + (NORMATIVE_GLM_OUTPUTS if ZSCORE_ADJUST_FOR else []),
     output:
         gii=f"{SUBJECTS_DIR}/{{subject}}/surf/{{hemi}}.{{metric}}.ico6_sym_zscore.func.gii",
         **(dict(
