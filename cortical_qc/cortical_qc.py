@@ -18,6 +18,12 @@ Usage:
 """
 import os, sys, glob, json, argparse, subprocess, tempfile, shutil
 from PIL import Image, ImageDraw
+import matplotlib
+matplotlib.use('Agg')
+import matplotlib.pyplot as plt
+import nibabel as nib
+from nibabel.orientations import io_orientation, axcodes2ornt, ornt_transform, apply_orientation
+import numpy as np
 
 _REPO_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'cortical_browser'))
@@ -194,6 +200,185 @@ def build_combined_gif(seq_t1, seq_fa, out_path):
     )
 
 
+# ── WM intensity QC figure ──────────────────────────────────────────────────
+
+AP_AXIS = 2   # A-P: index increases toward Anterior
+LR_AXIS = 0   # L-R: index increases toward Left
+
+WM_LABELS = {'lh': 2, 'rh': 41}   # FreeSurfer aseg: 2=Left-Cerebral-WM, 41=Right-Cerebral-WM
+
+
+def slice_profile(data, mask, axis):
+    """Mean of data[mask] per slice along `axis`; NaN for slices with no masked voxels."""
+    other_axes = tuple(a for a in range(data.ndim) if a != axis)
+    masked = np.where(mask, data, np.nan)
+    with np.errstate(invalid='ignore'):
+        return np.nanmean(masked, axis=other_axes)
+
+
+def triplanar_composite(vol, pad_value=0.0):
+    """Mid-volume sagittal | coronal | axial, hstacked into one array, all
+    oriented for a single imshow(..., origin='upper') call: superior up,
+    anterior right (sagittal) / up (axial), left on the right-hand side of
+    each panel (neurological convention). `vol` must already be in LIA voxel
+    order (see `to_lia`) — true as-is for FreeSurfer-conformed (256^3)
+    volumes, and after reorientation for anything else (e.g. DWI-space FA,
+    which isn't cubic, hence the row-padding below)."""
+    li, ii, ai = (s // 2 for s in vol.shape)   # L-R, I, A-P mid-indices
+    sag = vol[li, :, :]                 # rows=I (sup->inf), cols=A-P (post->ant)
+    cor = vol[:, :, ai].T                # rows=I (sup->inf), cols=L-R (R->L)
+    axl = np.flipud(vol[:, ii, :].T)     # rows=A-P flipped (ant->post), cols=L-R (R->L)
+
+    height = max(sag.shape[0], cor.shape[0], axl.shape[0])
+
+    def pad_rows(a):
+        extra = height - a.shape[0]
+        if extra == 0:
+            return a
+        top = extra // 2
+        return np.pad(a, ((top, extra - top), (0, 0)), constant_values=pad_value)
+
+    return np.hstack([pad_rows(sag), pad_rows(cor), pad_rows(axl)])
+
+
+def to_lia(data, affine):
+    """Reorients a data array to LIA voxel order/direction (axis0=L-R,
+    incr->L; axis1=S-I, incr->I; axis2=P-A, incr->A) regardless of the
+    volume's native orientation, so slice_profile/triplanar_composite's axis
+    assumptions always hold. A no-op for already-LIA data (e.g.
+    FreeSurfer-conformed T1w_proc/flair_proc/aparc+aseg), and required for
+    anything else (e.g. DWI-space FA, which is typically RAS)."""
+    transform = ornt_transform(io_orientation(affine), axcodes2ornt(('L', 'I', 'A')))
+    return apply_orientation(data, transform)
+
+
+def _build_profile_figure(vol, aseg, vol_label, subj_id, out_path,
+                           display_clamp, profile_ylim, ref_value):
+    """Shared plotting core for build_wm_profile/build_fa_profile: triplanar
+    view of `vol` (clamped to `display_clamp` for the colormap and
+    histogram x-axis) plus, masked by the aparc+aseg WM labels, intensity
+    profiles along the A-P/L-R axes (clamped to `profile_ylim`) and an
+    intensity histogram — all referenced against `ref_value` (a dashed
+    line), not necessarily 1.0. `vol` and `aseg` must already share a grid
+    and be in LIA voxel order (see `to_lia`)."""
+    fig = plt.figure(figsize=(16, 10))
+    gs = fig.add_gridspec(2, 3, height_ratios=[1, 1.2])
+
+    ax_tri = fig.add_subplot(gs[0, :])
+    im = ax_tri.imshow(triplanar_composite(vol), cmap='turbo',
+                        vmin=display_clamp[0], vmax=display_clamp[1], origin='upper')
+    ax_tri.set_title(f'Triplanar (mid-volume) — sagittal | coronal | axial — {vol_label}')
+    ax_tri.axis('off')
+    fig.colorbar(im, ax=ax_tri, fraction=0.025, pad=0.01)
+
+    axes = [fig.add_subplot(gs[1, i]) for i in range(3)]
+    for hemi, label in WM_LABELS.items():
+        mask = aseg == label
+        ap_profile = slice_profile(vol, mask, AP_AXIS)
+        lr_profile = slice_profile(vol, mask, LR_AXIS)
+        axes[0].plot(np.arange(len(ap_profile)), ap_profile, label=hemi)
+        axes[1].plot(np.arange(len(lr_profile)), lr_profile, label=hemi)
+        axes[2].hist(vol[mask], bins=100, alpha=0.5, label=hemi)
+
+    axes[0].axhline(ref_value, color='gray', linestyle='--', linewidth=1)
+    axes[0].set_title(f'WM intensity, A-P axis — {vol_label}')
+    axes[0].set_xlabel('slice index (posterior -> anterior)')
+    axes[0].set_ylabel('mean WM intensity')
+    axes[0].set_ylim(*profile_ylim)
+    axes[0].legend()
+
+    axes[1].axhline(ref_value, color='gray', linestyle='--', linewidth=1)
+    axes[1].set_title(f'WM intensity, L-R axis — {vol_label}')
+    axes[1].set_xlabel('slice index (right -> left)')
+    axes[1].set_ylabel('mean WM intensity')
+    axes[1].set_ylim(*profile_ylim)
+    axes[1].legend()
+
+    axes[2].axvline(ref_value, color='gray', linestyle='--', linewidth=1)
+    axes[2].set_title(f'WM intensity distribution — {vol_label}')
+    axes[2].set_xlabel('intensity')
+    axes[2].set_ylabel('voxel count')
+    axes[2].set_xlim(*display_clamp)
+    axes[2].legend()
+
+    fig.suptitle(subj_id)
+    fig.tight_layout()
+    fig.savefig(out_path, dpi=120)
+    plt.close(fig)
+
+
+def build_wm_profile(subj_dir, subj_id, out_path, vol_name='T1w_proc.nii.gz'):
+    """Per-hemisphere WM-intensity QC figure for one subject: a triplanar
+    view of `vol_name` plus, masked by the aparc+aseg WM labels, intensity
+    profiles along the A-P and L-R axes and an intensity histogram,
+    referenced against 1.0 (this pipeline normalizes T1w_proc/flair_proc so
+    WM's median is ~1.0). Returns False (without writing anything) if
+    aparc+aseg.nii.gz or vol_name is missing from the subject's mri/
+    directory."""
+    mri_dir = os.path.join(subj_dir, 'mri')
+    aseg_path = os.path.join(mri_dir, 'aparc+aseg.nii.gz')
+    vol_path = os.path.join(mri_dir, vol_name)
+    if not (os.path.isfile(aseg_path) and os.path.isfile(vol_path)):
+        return False
+
+    aseg_img, vol_img = nib.load(aseg_path), nib.load(vol_path)
+    aseg = to_lia(np.asarray(aseg_img.dataobj), aseg_img.affine)
+    vol = to_lia(np.asarray(vol_img.dataobj), vol_img.affine)
+
+    _build_profile_figure(vol, aseg, vol_name, subj_id, out_path,
+                           display_clamp=(0.2, 1.2), profile_ylim=(0.8, 1.2), ref_value=1.0)
+    return True
+
+
+def build_fa_profile(subj_dir, subj_id, out_path):
+    """Same WM-intensity QC figure as build_wm_profile, for the DTI FA map
+    (dwi/dti/fa.nii.gz). FA lives in DWI space, not the T1-conformed grid
+    aparc+aseg.nii.gz is on, so the WM labels are first warped onto the FA
+    grid with the pipeline's own T1->b0 SyN transform
+    (cortical_register_t1_to_dwi.sh's dwi/t1native_to_b0_{1Warp,0GenericAffine}),
+    nearest-neighbor since it's a label map. Unlike T1w_proc/flair_proc, FA
+    isn't normalized to a WM median of 1.0, so the reference line/axis
+    clamp are instead anchored to this subject's own WM-median FA on a
+    [0, 1] scale. Returns False (without writing anything) if any required
+    input is missing or the warp step fails (e.g. antsApplyTransforms isn't
+    on PATH)."""
+    mri_dir = os.path.join(subj_dir, 'mri')
+    dwi_dir = os.path.join(subj_dir, 'dwi')
+    aseg_path = os.path.join(mri_dir, 'aparc+aseg.nii.gz')
+    fa_path = os.path.join(dwi_dir, 'dti', 'fa.nii.gz')
+    warp_path = os.path.join(dwi_dir, 't1native_to_b0_1Warp.nii.gz')
+    affine_path = os.path.join(dwi_dir, 't1native_to_b0_0GenericAffine.mat')
+    if not all(os.path.isfile(p) for p in (aseg_path, fa_path, warp_path, affine_path)):
+        return False
+
+    tmp_dir = tempfile.mkdtemp(prefix='cortical_qc_fa_')
+    try:
+        aseg_dwispace = os.path.join(tmp_dir, 'aparc+aseg_dwispace.nii.gz')
+        cmd = ['antsApplyTransforms', '-d', '3',
+               '-i', aseg_path, '-r', fa_path, '-o', aseg_dwispace,
+               '-t', warp_path, '-t', affine_path, '-n', 'NearestNeighbor']
+        try:
+            subprocess.run(cmd, check=True, timeout=120,
+                            stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+        except (subprocess.CalledProcessError, FileNotFoundError, subprocess.TimeoutExpired):
+            return False
+
+        fa_img, aseg_img = nib.load(fa_path), nib.load(aseg_dwispace)
+        fa = to_lia(np.asarray(fa_img.dataobj), fa_img.affine)
+        aseg = to_lia(np.asarray(aseg_img.dataobj), aseg_img.affine)
+
+        wm_mask = np.isin(aseg, list(WM_LABELS.values()))
+        if not wm_mask.any():
+            return False
+        ref_value = float(np.median(fa[wm_mask]))
+
+        _build_profile_figure(fa, aseg, 'fa.nii.gz', subj_id, out_path,
+                               display_clamp=(0.0, 1.0), profile_ylim=(0.0, 1.0), ref_value=ref_value)
+        return True
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
 # ── index page ────────────────────────────────────────────────────────────────
 
 def build_index(out_dir, subjects_dir):
@@ -215,6 +400,9 @@ def build_index(out_dir, subjects_dir):
         if d.startswith('sub-') and os.path.isdir(os.path.join(subjects_dir, d))
     )
     have_gif = {f[:-len('_qc.gif')] for f in os.listdir(out_dir) if f.endswith('_qc.gif')}
+    have_profile_t1 = {f[:-len('_wm_profile_t1.png')] for f in os.listdir(out_dir) if f.endswith('_wm_profile_t1.png')}
+    have_profile_flair = {f[:-len('_wm_profile_flair.png')] for f in os.listdir(out_dir) if f.endswith('_wm_profile_flair.png')}
+    have_profile_fa = {f[:-len('_wm_profile_fa.png')] for f in os.listdir(out_dir) if f.endswith('_wm_profile_fa.png')}
     is_skipped = lambda s: os.path.isfile(os.path.join(subjects_dir, s, 'skip'))
     n_skipped = sum(1 for s in all_subj if s not in have_gif and is_skipped(s))
     n_missing = sum(1 for s in all_subj if s not in have_gif) - n_skipped
@@ -258,7 +446,14 @@ def build_index(out_dir, subjects_dir):
             marks = mark(mri_ok)
             if show_dwi_col:
                 marks += (mark(None) if status is None else mark(status.get('dwi'), na=True))
-            return (f'<button data-gif="{s}_qc.gif">'
+            attrs = f' data-gif="{s}_qc.gif"'
+            if s in have_profile_t1:
+                attrs += f' data-profile-t1="{s}_wm_profile_t1.png"'
+            if s in have_profile_flair:
+                attrs += f' data-profile-flair="{s}_wm_profile_flair.png"'
+            if s in have_profile_fa:
+                attrs += f' data-profile-fa="{s}_wm_profile_fa.png"'
+            return (f'<button{attrs}>'
                     f'<span class="row"><span class="name">{s}</span>'
                     f'<span class="marks">{marks}</span></span></button>')
         if is_skipped(s):
@@ -298,8 +493,14 @@ def build_index(out_dir, subjects_dir):
   .mark-label {{ font-size: 10px; color: #888; text-transform: uppercase; letter-spacing: .03em; }}
   #search {{ display: block; width: 100%; box-sizing: border-box; padding: 6px 8px; margin: 0 0 8px;
              background: #111; border: 1px solid #333; border-radius: 4px; color: #ddd; font-size: 13px; }}
+  #main {{ flex: 1; display: flex; flex-direction: column; min-width: 0; }}
+  #view-controls {{ flex: none; display: flex; gap: 6px; padding: 10px 16px; border-bottom: 1px solid #333; }}
+  .view-btn {{ display: inline-block; width: auto; padding: 6px 14px; background: #1a1a1a;
+               border: 1px solid #333; border-radius: 4px; color: #ddd; font-size: 13px; cursor: pointer; }}
+  .view-btn:hover {{ background: #2a2a2a; }}
+  .view-btn.active {{ background: #e9c46a; color: #111; font-weight: 600; border-color: #e9c46a; }}
   #viewer {{ flex: 1; display: flex; align-items: center; justify-content: center; padding: 16px; overflow: auto; }}
-  #viewer img {{ max-width: 100%; }}
+  #viewer img {{ max-width: 100%; max-height: 100%; }}
   #placeholder {{ color: #666; font-size: 13px; }}
 </style></head>
 <body>
@@ -309,26 +510,60 @@ def build_index(out_dir, subjects_dir):
   {col_headers}
   {buttons}
 </div>
-<div id="viewer"><span id="placeholder">Click a subject</span></div>
+<div id="main">
+  <div id="view-controls">
+    <button class="view-btn active" data-view="gif">Streamlines</button>
+    <button class="view-btn" data-view="profileT1">T1</button>
+    <button class="view-btn" data-view="profileFlair">FLAIR</button>
+    <button class="view-btn" data-view="profileFa">FA</button>
+  </div>
+  <div id="viewer"><span id="placeholder">Click a subject</span></div>
+</div>
 <script>
   const viewer = document.getElementById('viewer')
   const search = document.getElementById('search')
   const allButtons = () => Array.from(document.querySelectorAll('#sidebar button'))
   const navigable = () => allButtons().filter(b => !b.disabled && b.style.display !== 'none')
+  const viewBtns = Array.from(document.querySelectorAll('.view-btn'))
+  const viewLabels = {{ gif: 'Streamlines', profileT1: 'T1', profileFlair: 'FLAIR', profileFa: 'FA' }}
+  let currentView = 'gif'
+
+  function renderViewer() {{
+    const btn = allButtons().find(b => b.classList.contains('active'))
+    viewer.innerHTML = ''
+    if (!btn) {{
+      viewer.innerHTML = '<span id="placeholder">Click a subject</span>'
+      return
+    }}
+    const src = btn.dataset[currentView]
+    if (!src) {{
+      viewer.innerHTML = `<span id="placeholder">${{viewLabels[currentView]}} not available for ${{btn.querySelector('.name').textContent}}</span>`
+      return
+    }}
+    const img = document.createElement('img')
+    img.src = src
+    viewer.appendChild(img)
+  }}
 
   function selectButton(btn) {{
     if (!btn) return
     allButtons().forEach(b => b.classList.remove('active'))
     btn.classList.add('active')
     btn.scrollIntoView({{ block: 'nearest' }})
-    viewer.innerHTML = ''
-    const img = document.createElement('img')
-    img.src = btn.dataset.gif
-    viewer.appendChild(img)
+    renderViewer()
   }}
 
   allButtons().forEach(btn => {{
     if (!btn.disabled) btn.addEventListener('click', () => selectButton(btn))
+  }})
+
+  viewBtns.forEach(vb => {{
+    vb.addEventListener('click', () => {{
+      viewBtns.forEach(b => b.classList.remove('active'))
+      vb.classList.add('active')
+      currentView = vb.dataset.view
+      renderViewer()
+    }})
   }})
 
   search.addEventListener('input', () => {{
@@ -470,6 +705,25 @@ def main():
             with open(status_path, 'w') as f:
                 json.dump({'mri': True, 'dwi': dwi_status}, f)
             print(f'  -> {out_path}')
+
+            for view_key, vol_name in (('t1', 'T1w_proc.nii.gz'), ('flair', 'flair_proc.nii.gz')):
+                profile_path = os.path.join(out_dir, f'{subj_id}_wm_profile_{view_key}.png')
+                try:
+                    if build_wm_profile(os.path.join(args.subjects_dir, subj_id), subj_id, profile_path, vol_name=vol_name):
+                        print(f'  -> {profile_path}')
+                    else:
+                        print(f'  [INFO] No aparc+aseg.nii.gz or {vol_name} — skipping {view_key} WM intensity profile')
+                except Exception as exc:   # noqa: BLE001 — optional figure, shouldn't kill the GIF result
+                    print(f'  [WARN] WM intensity profile ({view_key}) failed: {exc}')
+
+            fa_profile_path = os.path.join(out_dir, f'{subj_id}_wm_profile_fa.png')
+            try:
+                if build_fa_profile(os.path.join(args.subjects_dir, subj_id), subj_id, fa_profile_path):
+                    print(f'  -> {fa_profile_path}')
+                else:
+                    print('  [INFO] No FA map and/or T1->b0 transform — skipping FA WM intensity profile')
+            except Exception as exc:   # noqa: BLE001 — optional figure, shouldn't kill the GIF result
+                print(f'  [WARN] FA WM intensity profile failed: {exc}')
         except Exception as exc:   # noqa: BLE001 — one bad subject shouldn't kill the batch
             print(f'  [ERROR] {subj_id}: {exc}')
 
