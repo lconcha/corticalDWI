@@ -18,7 +18,7 @@ the two-sided p-value for the slope (H0: slope == 0).
 
 At startup this loads into memory:
   - every metric's (a, b, resid_sd, se_b, p, n) arrays from each
-    <TEMPLATE>_multivariate_zscore_stats_adj-<tag>.npz already built under
+    <TEMPLATE>_multivariate_normative_stats_adj-<tag>.npz already built under
     templates/normative/ — one such cache exists per covariate you've
     already run `cortical_zscore_tsf.py --stats-only --adjust-for <col>`
     for; the covariate dropdown is empty until at least one exists. A cache
@@ -92,13 +92,13 @@ def _metric_is_scalar(h5f, mi, sample=8):
 
 def load_adjusted_caches(normative_dir, template, metrics):
     """{covariate_label: {(hemi, metric_idx): {'a':.., 'b':.., 'rs':.., 'se':.., 'p':.., 'n':..}}}
-    from every *_zscore_stats_adj-*.npz already built under normative_dir.
+    from every *_normative_stats_adj-*.npz already built under normative_dir.
     Each array for every (hemi, metric_idx) pair is loaded fully into
     memory (small — one float per vertex+depth, no subject axis), keyed by
     the covariate's own stored label (recovered from inside the file, not
     guessed from its sanitized filename tag)."""
     adj = {}
-    pattern = os.path.join(normative_dir, f'{template}_multivariate_zscore_stats_adj-*.npz')
+    pattern = os.path.join(normative_dir, f'{template}_multivariate_normative_stats_adj-*.npz')
     for path in sorted(glob.glob(pattern)):
         try:
             z = np.load(path)
