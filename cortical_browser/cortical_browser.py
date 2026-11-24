@@ -95,18 +95,31 @@ def kill_other_instances():
             pass
 
 
+# Orthoslice volumes, in dropdown order; the first one found is shown when the
+# browser opens. The processed T1w/FLAIR images are the ones the mri/ metrics
+# are sampled from; brain.* (FreeSurfer) stays available after them.
+ORTHO_VOLUMES = (
+    ('T1w_proc.nii.gz',),
+    ('T1w_proc_grad.nii.gz',),
+    ('flair_proc.nii.gz',),
+    ('brain.nii.gz', 'brain.nii', 'brain.mgz'),   # first existing variant
+)
+
+
 def find_files(subj_dir, template=TEMPLATE):
+    """(vol_paths, lh_white, rh_white). vol_paths lists every ORTHO_VOLUMES
+    entry that exists under mri/, in that order (missing ones are skipped)."""
     mri_dir  = os.path.join(subj_dir, 'mri')
     surf_dir = os.path.join(subj_dir, 'surf')
-    vol_path = None
-    for fname in ('brain.nii.gz', 'brain.nii', 'brain.mgz'):
-        p = os.path.join(mri_dir, fname)
-        if os.path.isfile(p):
-            vol_path = p; break
+    vol_paths = []
+    for variants in ORTHO_VOLUMES:
+        p = next((q for f in variants if os.path.isfile(q := os.path.join(mri_dir, f))), None)
+        if p:
+            vol_paths.append(p)
     def surf(name):
         p = os.path.join(surf_dir, name)
         return p if os.path.isfile(p) else None
-    return vol_path, surf(f'lh_white_{template}.surf.gii'), surf(f'rh_white_{template}.surf.gii')
+    return vol_paths, surf(f'lh_white_{template}.surf.gii'), surf(f'rh_white_{template}.surf.gii')
 
 
 STREAMLINE_FILENAMES = {
@@ -847,7 +860,7 @@ def compute_multivariate(subjects_dir, mv_metrics, subj_cache, vertices,
 
 # ── HTML generation ───────────────────────────────────────────────────────────
 
-def make_html(subj_id, vol_path, lh_path, rh_path, overlay_info, port, surf_types=None,
+def make_html(subj_id, vol_paths, lh_path, rh_path, overlay_info, port, surf_types=None,
               normative_info=None, template=TEMPLATE, cache_bust='', streamline_files=None,
               dwi_available=False, zscore_info=None):
     base = f'http://localhost:{port}/data'
@@ -859,8 +872,10 @@ def make_html(subj_id, vol_path, lh_path, rh_path, overlay_info, port, surf_type
     # file), busting the cache across subjects while keeping it within a session.
     q = f'?v={cache_bust}' if cache_bust else ''
 
+    # vol_paths[0] is loaded at startup; the rest are dropdown entries the
+    # front end loads on first selection.
     volumes = []
-    if vol_path:
+    for vol_path in vol_paths or []:
         volumes.append({'url': f'{base}/{os.path.basename(vol_path)}{q}',
                         'name': os.path.basename(vol_path),
                         'colormap': 'gray', 'opacity': 1})
@@ -1165,9 +1180,10 @@ def main():
     if not os.path.isdir(subj_dir):
         sys.exit(f'Subject directory not found: {subj_dir}')
 
-    vol_path, lh_path, rh_path = find_files(subj_dir)
+    vol_paths, lh_path, rh_path = find_files(subj_dir)
     print(f'Subject  : {args.subj_id}')
-    print(f'Volume   : {vol_path  or "NOT FOUND"}')
+    print(f'Volumes  : {", ".join(os.path.basename(p) for p in vol_paths) or "NOT FOUND"}'
+          + (f'  (default: {os.path.basename(vol_paths[0])})' if vol_paths else ''))
     print(f'LH surf  : {lh_path   or "NOT FOUND"}')
     print(f'RH surf  : {rh_path   or "NOT FOUND"}')
 
@@ -1208,7 +1224,7 @@ def main():
     # except the default (first) metric, which we prepare now so the initial
     # page load has something to show right away.
     file_map = {}
-    for p in (vol_path, lh_path, rh_path):
+    for p in (*vol_paths, lh_path, rh_path):
         if p:
             file_map[f'/data/{os.path.basename(p)}'] = p
     for hemis in surf_types.values():
@@ -1243,7 +1259,7 @@ def main():
     # /data/ URLs differ from any previous subject's on the same port.
     cache_bust = os.path.basename(out_dir)
     html, main_js = make_html(
-        args.subj_id, vol_path, lh_path, rh_path,
+        args.subj_id, vol_paths, lh_path, rh_path,
         overlay_info, args.port, surf_types, normative_info,
         cache_bust=cache_bust, streamline_files=streamline_files,
         dwi_available=bool(dwi_files.get('fa')),

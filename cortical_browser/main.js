@@ -1327,9 +1327,11 @@ async function showVolume(key) {
   syncVolClipInputs()          // reflect the shown volume's color range in the clip boxes
 }
 
-// Seed the dropdown: the already-loaded brain volume (if any), then "other…".
-// Its NVImage is already resident (from the startup loadVolumes), so link it
-// directly rather than re-adding it.
+// Seed the dropdown with every server-discovered volume (T1w_proc,
+// T1w_proc_grad, flair_proc, brain — see ORTHO_VOLUMES in cortical_browser.py),
+// then "other…". VOLUMES[0] is already resident (from the startup
+// loadVolumes), so it's linked directly rather than re-added; the rest are
+// URL-only entries that showVolume() decodes on first selection.
 if (VOL_URL) {
   const initName = VOLUMES[0].name || decodeURIComponent(VOL_URL.split('?')[0].split('/').pop())
   const img = nvSlices.volumes[0] || null
@@ -1337,6 +1339,9 @@ if (VOL_URL) {
     name: initName, url: VOL_URL, image: img,
     defCalMin: img ? img.cal_min : null, defCalMax: img ? img.cal_max : null,
   }, true)
+  for (const v of VOLUMES.slice(1))
+    addVolumeOption({ name: v.name || decodeURIComponent(v.url.split('?')[0].split('/').pop()), url: v.url }, false)
+  volSel.value = currentVolKey
 }
 {
   const other = document.createElement('option')
