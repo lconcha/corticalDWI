@@ -84,9 +84,11 @@ function activeMetricInfo(metric) {
 // Collapse-depth mode: the lh/rh/asym surfaces show one value per vertex
 // (the mean across every depth) instead of a depth-indexed frame — works for
 // whatever's currently displayed, z-scored or raw (see meanPerVertex). The
-// depth-profile plots are untouched: they stay depth-resolved, and the depth
-// slider/+-/plot-click still move their reference marker — setDepth() just
-// stops pushing that depth onto the surfaces (frame4D) while this is on.
+// depth-profile plots follow suit: each vertex's mean is broadcast to every
+// depth (flat line, see rowsOf in selectVertex), like single-scalar gifti
+// metrics. The depth slider/+-/plot-click still move their reference marker —
+// setDepth() just stops pushing that depth onto the surfaces (frame4D) while
+// this is on.
 let collapseDepth = false
 function canCollapseDepth(metric) { return !!metric }
 // When on, the LH/RH depth-profile plots' x-axis is pinned to the surface
@@ -2689,9 +2691,21 @@ async function selectVertex(vertIdx, nvInst) {
     ensureMatrix('rh',   currentMetric, zscore),
     ensureMatrix('asym', currentMetric, zscore),
   ])
+  // Collapse-depth mode: each vertex's row becomes its NaN-ignoring mean
+  // across depth, broadcast to every depth — the client-side counterpart of
+  // how single-scalar gifti metrics are tiled server-side (tile_scalar_matrix
+  // in cortical_browser.py), so the plots show a flat line at exactly the
+  // value painted on the surface. Same averaging as the surface overlay
+  // (meanPerVertex): |z| in z-score mode, plain value otherwise. The ring
+  // mean/sd (meanStd) is then taken across these per-vertex means.
   const rowsOf = mat => ringSet.map(vi => {
     const row = new Array(nd)
     for (let d = 0; d < nd; d++) row[d] = mat[vi*nd+d]
+    if (collapseDepth) {
+      let sum = 0, count = 0
+      for (const v of row) if (!Number.isNaN(v)) { sum += zscore ? Math.abs(v) : v; count++ }
+      row.fill(count > 0 ? sum / count : NaN)
+    }
     return row
   })
   const lhArea = ringArea('lh', ringSet)
