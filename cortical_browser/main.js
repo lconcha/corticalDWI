@@ -84,9 +84,9 @@ function activeMetricInfo(metric) {
 // Collapse-depth mode: the lh/rh/asym surfaces show one value per vertex
 // (the mean across every depth) instead of a depth-indexed frame — works for
 // whatever's currently displayed, z-scored or raw (see meanPerVertex). The
-// depth-profile plots follow suit: each vertex's mean is broadcast to every
-// depth (flat line, see rowsOf in selectVertex), like single-scalar gifti
-// metrics. The depth slider/+-/plot-click still move their reference marker —
+// depth-profile plots keep their depth-resolved profile and add the collapsed
+// value as a dashed vertical line (trace 6, see profileTraces/setProfiles).
+// The depth slider/+-/plot-click still move their reference marker —
 // setDepth() just stops pushing that depth onto the surfaces (frame4D) while
 // this is on.
 let collapseDepth = false
@@ -2053,7 +2053,7 @@ function updateCollapseDepthToggleAvailability(metric) {
   chk.disabled = !available
   label.style.opacity = available ? '' : 0.4
   label.title = available
-    ? 'Show the mean value across all depths per vertex instead of one depth-slice (depth-profile plots stay depth-resolved)'
+    ? 'Show the mean value across all depths per vertex instead of one depth-slice (depth-profile plots add that mean as a dashed line)'
     : 'No metric selected'
   if (!available && collapseDepth) {
     collapseDepth = false
@@ -2163,7 +2163,7 @@ document.getElementById('metricSel').addEventListener('change', async e => {
     document.getElementById('pos-val').textContent = '—'
     resetPivot(nvLhL); resetPivot(nvRhL); resetPivot(nvAsym)
     for (const chart of [chartLH, chartRH, chartAsym]) {
-      Plotly.restyle(chart, { x: [[], [], [], [], [], []], y: [[], [], [], [], [], []] }, [0, 1, 2, 3, 4, 5])
+      Plotly.restyle(chart, { x: [[], [], [], [], [], [], []], y: [[], [], [], [], [], [], []] }, [0, 1, 2, 3, 4, 5, 6])
       Plotly.restyle(chart, { name: [chart.baseLabel] }, [0])
     }
     clearMultivariate()
@@ -2691,23 +2691,31 @@ async function selectVertex(vertIdx, nvInst) {
     ensureMatrix('rh',   currentMetric, zscore),
     ensureMatrix('asym', currentMetric, zscore),
   ])
-  // Collapse-depth mode: each vertex's row becomes its NaN-ignoring mean
-  // across depth, broadcast to every depth — the client-side counterpart of
-  // how single-scalar gifti metrics are tiled server-side (tile_scalar_matrix
-  // in cortical_browser.py), so the plots show a flat line at exactly the
-  // value painted on the surface. Same averaging as the surface overlay
-  // (meanPerVertex): |z| in z-score mode, plain value otherwise. The ring
-  // mean/sd (meanStd) is then taken across these per-vertex means.
   const rowsOf = mat => ringSet.map(vi => {
     const row = new Array(nd)
     for (let d = 0; d < nd; d++) row[d] = mat[vi*nd+d]
-    if (collapseDepth) {
-      let sum = 0, count = 0
-      for (const v of row) if (!Number.isNaN(v)) { sum += zscore ? Math.abs(v) : v; count++ }
-      row.fill(count > 0 ? sum / count : NaN)
-    }
     return row
   })
+  // Collapse-depth mode: the value painted on the surface for this vertex/
+  // ring — each vertex's NaN-ignoring mean across depth (same as the surface
+  // overlay's meanPerVertex: |z| in z-score mode, plain value otherwise),
+  // then averaged over the ring's vertices. Drawn as a dashed vertical line
+  // on top of the (unchanged) depth profile; null when collapse is off.
+  const collapsedOf = mat => {
+    let tot = 0, nv = 0
+    for (const vi of ringSet) {
+      let sum = 0, count = 0
+      for (let d = 0; d < nd; d++) {
+        const v = mat[vi*nd+d]
+        if (!Number.isNaN(v)) { sum += zscore ? Math.abs(v) : v; count++ }
+      }
+      if (count > 0) { tot += sum / count; nv++ }
+    }
+    return nv > 0 ? tot / nv : NaN
+  }
+  const collapsed = collapseDepth
+    ? { lh: collapsedOf(lhMat), rh: collapsedOf(rhMat), asym: collapsedOf(asymMat) }
+    : null
   const lhArea = ringArea('lh', ringSet)
   const rhArea = ringArea('rh', ringSet)
 
@@ -2730,7 +2738,7 @@ async function selectVertex(vertIdx, nvInst) {
     }
   }
 
-  setProfiles(meanStd(rowsOf(lhMat)), meanStd(rowsOf(rhMat)), meanStd(rowsOf(asymMat)), ringSet.length, lhArea, rhArea, normStat)
+  setProfiles(meanStd(rowsOf(lhMat)), meanStd(rowsOf(rhMat)), meanStd(rowsOf(asymMat)), ringSet.length, lhArea, rhArea, normStat, collapsed)
   // Both hemispheres' world coordinates for this vertex index, regardless of
   // which surface panel was actually clicked — the ico6_sym template shares
   // vertex indices across LH/RH, but the two hemispheres have distinct (mirror-
@@ -3463,6 +3471,11 @@ function profileTraces(color, label, fillToZero) {
     { x: [], y: [], mode: 'lines', legendgroup: 'normative', line: { width: 0 }, showlegend: false, hoverinfo: 'skip' },
     { x: [], y: [], mode: 'lines', legendgroup: 'normative', line: { width: 0 }, fill: 'tonextx',
       fillcolor: 'rgba(160,160,160,0.30)', showlegend: false, hoverinfo: 'skip' },
+    // 6: collapse-depth value (mean across depth), a dashed vertical line —
+    // populated by setProfiles only while "Collapse depth" is on.
+    { x: [], y: [], name: 'Depth mean', mode: 'lines', legendgroup: 'collapsed',
+      line: { color, width: 2, dash: 'dash' },
+      hovertemplate: 'depth mean: %{x:.3g}<extra></extra>' },
   ]
 }
 
@@ -3756,7 +3769,7 @@ function applyChartTheme() {
   })
 
   for (const [chart, color] of [[chartLH, chartLhColor], [chartRH, chartRhColor], [chartAsym, chartAsymColor]]) {
-    Plotly.restyle(chart, { 'line.color': [color, CT.normative] }, [0, 3])
+    Plotly.restyle(chart, { 'line.color': [color, CT.normative, color] }, [0, 3, 6])
     Plotly.restyle(chart, { fillcolor: [hexToRgba(color, 0.16), hexToRgba(color, 0.18), CT.normativeFill] }, [0, 2, 5])
   }
   Plotly.restyle(chartMahal, { 'line.color': [chartLhColor, chartRhColor] }, [0, 3])
@@ -3829,22 +3842,22 @@ function updateDepthMarker(mm) {
   if (mvCurrent) renderRadarBar(mvCurrent, currentDepth)
 }
 
-function setProfiles(lhStat, rhStat, asymStat, count, lhArea, rhArea, normStat) {
+function setProfiles(lhStat, rhStat, asymStat, count, lhArea, rhArea, normStat, collapsed = null) {
   // Non-finite (NaN "no data", or a band edge built from one) → null so the
   // chart draws a gap at that depth rather than a spurious point.
   const xs = vals => vals.map(v => Number.isFinite(v) ? v : null)
   const depthsFor = vals => vals.map((_, i) => i * STEP_MM)
   const entries = [
-    [chartLH,   lhStat,   lhArea,  normStat?.lh],
-    [chartRH,   rhStat,   rhArea,  normStat?.rh],
-    [chartAsym, asymStat, null,    normStat?.asym],
+    [chartLH,   lhStat,   lhArea,  normStat?.lh,   collapsed?.lh],
+    [chartRH,   rhStat,   rhArea,  normStat?.rh,   collapsed?.rh],
+    [chartAsym, asymStat, null,    normStat?.asym, collapsed?.asym],
   ]
   // LH and RH share one x range (covering both, bands and normative included)
   // so the two profiles are directly comparable; asym is pinned separately to
   // the asym colormap limits (applyAsymValueLimits).
   const zscore = showZscore && hasZscore(currentMetric)
   let lo = Infinity, hi = -Infinity
-  for (const [chart, stat, area, norm] of entries) {
+  for (const [chart, stat, area, norm, coll] of entries) {
     let label = chart.baseLabel
     if (zscore) label += ' (z)'
     if (count > 1) label += ` (nVert=${count})`
@@ -3864,15 +3877,21 @@ function setProfiles(lhStat, rhStat, asymStat, count, lhArea, rhArea, normStat) 
     const normMinus = norm ? xs(norm.mean.map((m, i) => m - norm.sd[i])) : []
     const normLabel = norm ? `Normative (±1 SD, nSubj=${Math.max(...norm.n)})` : 'Normative (±1 SD)'
 
+    // Collapse-depth value: a vertical line spanning the profile's depths.
+    const hasColl = Number.isFinite(coll)
+    const collX = hasColl ? [coll, coll] : []
+    const collY = hasColl ? [0, (stat.mean.length - 1) * STEP_MM] : []
+    const collLabel = zscore ? 'Depth mean |z|' : 'Depth mean'
+
     if (chart !== chartAsym)
-      for (const arr of [mean, plus, minus, normMean, normPlus, normMinus])
+      for (const arr of [mean, plus, minus, normMean, normPlus, normMinus, collX])
         for (const v of arr) if (v !== null) { if (v < lo) lo = v; if (v > hi) hi = v }
 
     Plotly.restyle(chart, {
-      x: [mean, plus, minus, normMean, normPlus, normMinus],
-      y: [depth, sdDepth, sdDepth, normDepth, normDepth, normDepth],
-    }, [0, 1, 2, 3, 4, 5])
-    Plotly.restyle(chart, { name: [label, normLabel] }, [0, 3])
+      x: [mean, plus, minus, normMean, normPlus, normMinus, collX],
+      y: [depth, sdDepth, sdDepth, normDepth, normDepth, normDepth, collY],
+    }, [0, 1, 2, 3, 4, 5, 6])
+    Plotly.restyle(chart, { name: [label, normLabel, collLabel] }, [0, 3, 6])
     // LH/RH shade the area under the curve (against x=0) the same way the
     // Asymmetry plot always does, but only in z-score mode — a raw metric's
     // x=0 isn't a meaningful reference line the way "0 deviation" is for a
