@@ -14,6 +14,10 @@ average over whatever subjects currently exist on disk, not just the
 snapshot list. This is a limitation of the wrapped script, not the Snakemake
 layer — flagged here rather than silently patched, per the port's "wrap
 as-is" scope.
+
+Without a snapshot file, csd_average_response depends on the
+csd_individual_response outputs of every non-skipped sub-* that has
+dwi/dwi.nii.gz (see the CSD_SNAPSHOT_SUBJECTS fallback below).
 """
 
 import sys
@@ -21,7 +25,7 @@ import sys
 RESPONSE_TISSUES = ["wm", "gm", "csf"]
 
 
-def _validate_csd_snapshot_subjects(subjects):
+def _validate_csd_snapshot_subjects(subjects, source=None):
     """Cross-check each snapshot subject against the raw files
     csd_individual_response actually needs. csd_average_response's input
     list is NOT scoped by --config subjects=[...] the way most other rules
@@ -48,10 +52,11 @@ def _validate_csd_snapshot_subjects(subjects):
         missing = [name for name, path in required.items() if not os.path.exists(path)]
         if missing:
             print(
-                f"WARNING: {CSD_SNAPSHOT_FILE} lists '{subject}' for the CSD group "
+                f"WARNING: {source or CSD_SNAPSHOT_FILE} lists '{subject}' for the CSD group "
                 f"average, but it's missing {', '.join(missing)} — excluding it from "
                 "csd_average_response's dependencies so this doesn't break the DAG for "
-                "every other subject. Fix or remove that line from the snapshot file.",
+                "every other subject."
+                + (" Fix or remove that line from the snapshot file." if source is None else ""),
                 file=sys.stderr,
             )
             continue
@@ -75,11 +80,27 @@ if os.path.exists(CSD_SNAPSHOT_FILE):
         if line.strip() and not line.strip().startswith("#")
     ])
 else:
-    # No snapshot yet for this dataset — csd_average_response simply has no
-    # input to depend on until one is created (see that file's own header,
-    # written once you're ready: cp the neighbor template in $SUBJECTS_DIR/.corticalDWI/ or just
-    # `ls "$SUBJECTS_DIR" | grep '^sub-' > "$SUBJECTS_DIR/.corticalDWI/csd_average_response_subjects.txt"`).
-    CSD_SNAPSHOT_SUBJECTS = []
+    # No snapshot for this dataset: the group average depends on every
+    # non-skipped sub-* in $SUBJECTS_DIR that has DWI data, so
+    # csd_individual_response is part of the DAG (before 2026-11-24 the
+    # fallback was an empty list, which left csd_individual_response with no
+    # consumer at all: never scheduled, never listed by cortical_snakerun.py).
+    # Deliberately NOT the --config subjects=[...] scoped SUBJECTS list: the
+    # input set must not change from one invocation to the next, or Snakemake
+    # (rerun trigger "input") would rebuild the average, and with it every
+    # subject's FOD, each time a different subject is targeted. Trade-off: a
+    # newly added DWI subject does change the set, so it triggers that
+    # rebuild; create the snapshot file to freeze the list instead, e.g.
+    # `ls "$SUBJECTS_DIR" | grep '^sub-' > "$SUBJECTS_DIR/.corticalDWI/csd_average_response_subjects.txt"`.
+    CSD_SNAPSHOT_SUBJECTS = _validate_csd_snapshot_subjects(
+        [
+            s
+            for s in sorted(os.path.basename(d) for d in glob.glob(f"{SUBJECTS_DIR}/sub-*") if os.path.isdir(d))
+            if not os.path.exists(f"{SUBJECTS_DIR}/{s}/skip")
+            and os.path.exists(f"{SUBJECTS_DIR}/{s}/dwi/dwi.nii.gz")   # no DWI = T1/FLAIR-only subject, not an error
+        ],
+        source=f"{SUBJECTS_DIR} (no {CSD_SNAPSHOT_FILE}, so every non-skipped DWI subject)",
+    )
 
 
 def csd_individual_response_outputs(subject):
